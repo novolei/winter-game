@@ -33,6 +33,17 @@ func test_configure_sets_the_initial_state() -> void:
 	var machine = _build()
 	assert_eq(machine.current(), &"walking", "initial state should be walking")
 
+func test_configure_rejects_an_initial_state_not_in_the_list() -> void:
+	var machine = StateMachineScript.new()
+	var ok: bool = machine.configure(
+		[&"walking"] as Array[StringName],
+		{&"walking": [] as Array[StringName]},
+		&"swimming"
+	)
+	assert_false(ok, "configure must reject an initial state that is not in the state list")
+	assert_eq(machine.current(), &"", "a rejected configure must leave the machine unconfigured, not half-set")
+	assert_false(machine.can_transition_to(&"walking"), "an unconfigured machine must reject every transition")
+
 func test_legal_transition_succeeds() -> void:
 	var machine = _build()
 	var ok: bool = machine.transition_to(&"running")

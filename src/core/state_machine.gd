@@ -4,9 +4,9 @@ extends RefCounted
 ## A transition table with a cursor. Knows nothing about what the states
 ## mean.
 ##
-## The player's walk/run/flounder states and a bear's roam/alert/charge
-## states are the same machine holding different data -- which is why
-## adding a third threat type needs no new behaviour code.
+## Callers configure it with their own state names and transition data, so
+## two entities with completely different behaviour share this one file and
+## differ only in the data they pass to configure().
 
 signal state_changed(from: StringName, to: StringName)
 
@@ -14,11 +14,13 @@ var _valid_states: Array[StringName] = []
 var _transitions: Dictionary = {}
 var _current: StringName = &""
 
-func configure(states: Array[StringName], transitions: Dictionary, initial: StringName) -> void:
-	assert(states.has(initial), "initial state '%s' is not in the configured state list" % initial)
+func configure(states: Array[StringName], transitions: Dictionary, initial: StringName) -> bool:
+	if not states.has(initial):
+		return false
 	_valid_states = states.duplicate()
 	_transitions = transitions.duplicate(true)
 	_current = initial
+	return true
 
 func current() -> StringName:
 	return _current
