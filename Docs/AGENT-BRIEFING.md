@@ -27,6 +27,14 @@ Run the test suite:
 "D:/Godot_v4.7.1/Godot_v4.7.1-stable_win64_console.exe" --headless --path "D:/Godot resource/winter-time" --script res://tests/framework/test_runner.gd
 ```
 
+**Run it through the wrapper, not by invoking Godot directly:**
+
+```bash
+bash tools/run_tests.sh          # or, to pin the count: bash tools/run_tests.sh 89
+```
+
+`tools/run_tests.sh` runs exactly the command above and echoes it through unchanged, then *additionally* fails the run if the console holds `SCRIPT ERROR`, `ERROR:`, `WARNING:`, `Parse Error`, `leaked` or `still in use`, if Godot exits non-zero, or if the `N passed, M failed` line is missing or disagrees with an expected pass count given as its first argument — **because the runner cannot see engine-level errors, so a test aborted by a runtime error *after* its first assertion still reports PASS and only the console shows it.** A clean run prints nothing extra; exit 0 is the whole signal.
+
 Reimport after declaring a new `class_name` (see trap 2):
 
 ```bash
@@ -36,10 +44,14 @@ Reimport after declaring a new `class_name` (see trap 2):
 Verify the project boots and autoloads load cleanly:
 
 ```bash
-"D:/Godot_v4.7.1/Godot_v4.7.1-stable_win64_console.exe" --headless --path "D:/Godot resource/winter-time" --quit
+timeout 30 "D:/Godot_v4.7.1/Godot_v4.7.1-stable_win64_console.exe" --headless --path "D:/Godot resource/winter-time" --quit
 ```
 
-`--quit` exits 1 with *"no main scene defined"* — that is expected and unrelated to your work until a wave adds a main scene. What matters is that **no autoload, parse, or script error appears above it**.
+**`--quit` does not terminate on this setup — always wrap it in a timeout.** It prints *"no main scene defined"*, then a `PagedAllocator` shutdown error, then hangs. This was reproduced byte-identically with a bare five-line throwaway project, so it is an engine/environment behaviour, not a defect in this project.
+
+The "no main scene" line is expected until a wave adds one. What matters is that **no autoload, parse, or script error appears above it**.
+
+Note also what this check cannot tell you: it exercises autoload *loading*, not autoload *wiring*. If you need to prove one system actually resolves another at runtime (see trap 3), build a throwaway scene, verify, and delete it — do not commit it.
 
 ---
 
