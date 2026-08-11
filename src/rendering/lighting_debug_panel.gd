@@ -207,7 +207,12 @@ func _slide(column: Node, text: String, field: StringName, low: float, high: flo
 	var slider := HSlider.new()
 	slider.min_value = low
 	slider.max_value = high
-	slider.step = (high - low) / 400.0
+	# Continuous. A quantised slider silently rounds the preset's own value when
+	# the panel syncs -- DEEP NIGHT's 0.42 exposure read back as 0.4183 on a
+	# 400-step slider -- and a readout that disagrees with the .tres by a
+	# thousandth is worse than no readout, because it is the number a person
+	# types back into the generator.
+	slider.step = 0.0
 	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	slider.set_meta(&"field", field)
 	row.add_child(slider)

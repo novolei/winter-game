@@ -370,6 +370,13 @@ func _process(delta: float) -> void:
 		_from = null
 		_to = null
 		_write(arrived)
+		# The debug panel's sliders must not go on claiming a look the clock has
+		# moved away from. Synced when the fade ARRIVES, not when it starts: at
+		# the start the frame is still the old preset, and the readouts exist to
+		# be typed back into tools/generate_lighting_presets.gd, so the number
+		# worth showing is a whole preset's rather than a frame of a blend.
+		if _panel != null:
+			(_panel as LightingDebugPanel).sync()
 		return
 	_write(blend(_from, _to, t))
 
@@ -494,12 +501,7 @@ func _change_to(day: int, night: bool) -> void:
 	var pair: Array = _days.get(day, [])
 	if pair.size() != 2:
 		return
-	if crossfade_to(pair[1] if night else pair[0]) and _panel != null:
-		# The panel's sliders must not go on claiming a look the clock has moved
-		# away from. Synced at the START of the fade rather than at its end: the
-		# readouts are for typing into the generator, and the number worth having
-		# is the preset's own, not a frame of the blend.
-		_panel.call_deferred(&"sync")
+	crossfade_to(pair[1] if night else pair[0])
 
 
 # --- the debug controls -----------------------------------------------------
