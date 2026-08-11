@@ -16,7 +16,7 @@ var _modifiers: Array[Modifier] = []
 ## loading the same modifier resource get the SAME instance. Keying by
 ## object identity would collapse two independent slots into one expiry
 ## entry, consuming the duration twice as fast and then stranding the
-## survivor so it never expires at all.
+## remaining slot so it never expires at all.
 var _remaining: Array[float] = []
 
 func add(mod: Modifier) -> void:

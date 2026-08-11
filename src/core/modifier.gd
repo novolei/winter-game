@@ -3,9 +3,11 @@ extends Resource
 
 ## One adjustment to one numeric value, from one identified source.
 ##
-## This is the unit that makes the survival model data-driven: "low hunger
-## makes body heat drain faster" is a Modifier stored in a .tres file, not
-## a branch in GDScript.
+## A Modifier says only *how* a value changes -- add this, scale by that,
+## replace it outright -- never which value it changes or why. That belongs
+## to whoever owns the ModifierStack. Because the whole adjustment is data,
+## a rule of the form "condition X changes quantity Y" can live in a .tres
+## file rather than a branch in GDScript.
 
 enum Operation { ADD, MULTIPLY, OVERRIDE }
 

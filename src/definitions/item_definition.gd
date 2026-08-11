@@ -18,5 +18,7 @@ enum Category { FUEL, FOOD, WATER, MEDICINE, TOOL }
 @export var nutrition := 0.0
 @export var hydration := 0.0
 
-## Applied to the player's stats when used.
-@export var use_modifiers: Array[Modifier] = []
+## Applied to the player's stats when used. StatModifier, not Modifier: a
+## bare Modifier carries no target, so a file with three of them could not
+## say which stat each one hits.
+@export var use_modifiers: Array[StatModifier] = []

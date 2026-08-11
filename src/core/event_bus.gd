@@ -23,6 +23,12 @@ func unsubscribe(event: StringName, callback: Callable) -> void:
 	if list.is_empty():
 		_subscribers.erase(event)
 
+## The payload contract, which nothing can enforce at compile time:
+## emit_event ALWAYS calls back with exactly one argument, even when the
+## payload is null. Every subscribed Callable must therefore declare exactly
+## one parameter -- `func _on_thing(payload) -> void` -- and one taking zero
+## or two is a runtime "too few/many arguments" error at dispatch time, not a
+## parse error. Name it `_payload` when unused; do not drop it.
 func emit_event(event: StringName, payload: Variant = null) -> void:
 	if not _subscribers.has(event):
 		return

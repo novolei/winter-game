@@ -52,6 +52,73 @@ func _build_clock(day_count := 2):
 	_clock.load_schedules(schedules)
 	return _clock
 
+## The regression test for briefing trap 3, the defect that cost this wave
+## the most and had no test until now.
+##
+## _ready() resolves the bus with get_node_or_null("/root/EventBus"). Written
+## the plausible-looking wrong way -- Engine.get_singleton / has_singleton --
+## it returns null forever, because a project [autoload] entry is a node
+## under /root and never enters the engine's singleton registry. _emit()'s
+## null guard would then swallow every clock event, silently, with no
+## diagnostic. Every other test in this file injects a bus via
+## set_event_bus() and never puts the clock in a tree, so _ready() never runs
+## and not one of them can see this.
+##
+## This one deliberately does NOT call set_event_bus(). It uses the real
+## arrangement: the actual EventBus autoload at /root/EventBus, resolved by
+## the actual _ready(), proven by an event actually arriving.
+##
+## Two measured facts about --script make this possible, and correct one the
+## briefing gets wrong. First, project autoloads ARE instantiated under
+## --script on 4.7.1: /root's children are exactly EventBus, ServiceRegistry
+## and WorldClock. Second, they are nonetheless unreachable during the
+## SceneTree's _initialize(), because the root Window is not in the tree yet;
+## the runner therefore runs the suite from _process(), where it is. See the
+## comment on test_runner.gd's _process().
+func test_ready_resolves_the_autoloaded_bus_from_root() -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	assert_not_null(tree, "the runner is a SceneTree, so a real /root must be reachable")
+	if tree == null:
+		# Return rather than fall through. Dereferencing a null tree would
+		# abort this method, and with one assertion already counted the
+		# runner's zero-assertion guard would let it print PASS -- the exact
+		# false-PASS shape this wave fixed in test_definitions.gd.
+		return
+
+	# Untyped on purpose: statically this is a Node, and a Node has no
+	# subscribe(). Left untyped, the call dispatches dynamically.
+	var bus = tree.root.get_node_or_null("EventBus")
+	assert_not_null(bus, "the EventBus autoload must be present at /root/EventBus")
+	if bus == null:
+		return
+
+	# NOT assigned to _bus: after_each() frees _bus, and this one is the
+	# live autoload, not ours to free.
+	bus.subscribe(&"clock.day_started", _record_day)
+
+	_clock = WorldClockScript.new()
+	# No set_event_bus() on purpose. Entering the tree fires _ready(), which
+	# is the code path under test.
+	tree.root.add_child(_clock)
+	_clock.load_schedules([_make_schedule(1, 10.0, 5.0)])
+	_clock.start()
+
+	# Unwind before asserting, not after: the bus is global state shared with
+	# every later test, and the clock is a Node under /root, which leaks at
+	# exit if it is still there (briefing constraint 2). Assertions record and
+	# continue, so putting them last costs nothing.
+	bus.unsubscribe(&"clock.day_started", _record_day)
+	tree.root.remove_child(_clock)
+
+	assert_eq(_events.size(), 1, "start() must reach the bus that _ready() resolved from /root")
+	if _events.is_empty():
+		# The failure is already recorded above. Stop rather than index into
+		# an empty array: that aborts the method with a SCRIPT ERROR, which
+		# is noise on top of a failure the reader already has.
+		return
+	assert_eq(_events[0][0], "day", "the event that arrived should be clock.day_started")
+	assert_eq(_events[0][1], 1, "payload should be day 1")
+
 func test_starts_on_day_one_in_daylight() -> void:
 	var clock = _build_clock()
 	clock.start()

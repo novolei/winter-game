@@ -14,7 +14,9 @@ extends Resource
 @export var fade_duration := 15.0
 
 @export_group("Effects")
-@export var stat_modifiers: Array[Modifier] = []
+## StatModifier, not Modifier: a bare Modifier carries no target, so a file
+## with three of them could not say which stat each one hits.
+@export var stat_modifiers: Array[StatModifier] = []
 @export var visibility_multiplier := 1.0
 @export var wind_speed_multiplier := 1.0
 @export var snowfall_rate := 0.0

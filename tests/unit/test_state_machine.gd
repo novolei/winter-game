@@ -44,6 +44,66 @@ func test_configure_rejects_an_initial_state_not_in_the_list() -> void:
 	assert_eq(machine.current(), &"", "a rejected configure must leave the machine unconfigured, not half-set")
 	assert_false(machine.can_transition_to(&"walking"), "an unconfigured machine must reject every transition")
 
+## The transition table is the half of configure() that Wave 2 and Wave 5 will
+## feed from .tres. A key naming a state that does not exist is a graph the
+## machine can never leave by that route, and it fails silently -- which is
+## exactly what configure()'s bool return exists to stop one level up.
+func test_configure_rejects_a_transition_key_not_in_the_state_list() -> void:
+	var machine = StateMachineScript.new()
+	var ok: bool = machine.configure(
+		[&"walking", &"running"] as Array[StringName],
+		{
+			&"walking": [&"running"] as Array[StringName],
+			&"swimming": [&"walking"] as Array[StringName],
+		},
+		&"walking"
+	)
+	assert_false(ok, "configure must reject a transition key that is not a declared state")
+	assert_eq(machine.current(), &"", "a rejected configure must leave the machine unconfigured, not half-set")
+	assert_false(machine.can_transition_to(&"running"), "an unconfigured machine must reject every transition")
+
+func test_configure_rejects_a_transition_target_not_in_the_state_list() -> void:
+	var machine = StateMachineScript.new()
+	var ok: bool = machine.configure(
+		[&"walking", &"running"] as Array[StringName],
+		{
+			&"walking": [&"running", &"swimming"] as Array[StringName],
+			&"running": [&"walking"] as Array[StringName],
+		},
+		&"walking"
+	)
+	assert_false(ok, "configure must reject a transition target that is not a declared state")
+	assert_eq(machine.current(), &"", "a rejected configure must leave the machine unconfigured, not half-set")
+	assert_false(machine.can_transition_to(&"running"), "an unconfigured machine must reject every transition")
+
+## configure() deep-copies the transition table. Without that, every entity
+## configured from one shared dictionary -- the normal case once graphs come
+## from a cached .tres, see briefing trap 6 -- would share one graph, and
+## mutating one machine's transitions would silently rewrite the others'.
+## Swapping duplicate(true) for duplicate() copies the outer dictionary but
+## leaves the inner Arrays aliased, which nothing else here would notice.
+func test_configure_deep_copies_the_transition_table() -> void:
+	var transitions := {
+		&"walking": [&"running", &"floundering"] as Array[StringName],
+		&"running": [&"walking"] as Array[StringName],
+		&"floundering": [&"walking"] as Array[StringName],
+	}
+	var machine = StateMachineScript.new()
+	machine.configure(
+		[&"walking", &"running", &"floundering"] as Array[StringName],
+		transitions,
+		&"walking"
+	)
+	# Mutate the arrays INSIDE the caller's dictionary, both directions:
+	# grant a transition the machine must not gain, and revoke one it must
+	# not lose. A shallow copy shares these arrays and would follow both.
+	(transitions[&"running"] as Array).append(&"floundering")
+	(transitions[&"walking"] as Array).erase(&"running")
+	assert_true(machine.can_transition_to(&"running"), "revoking a target in the caller's array must not revoke it in the machine")
+	machine.transition_to(&"running")
+	assert_eq(machine.current(), &"running", "the transition the caller revoked must still work")
+	assert_false(machine.can_transition_to(&"floundering"), "granting a target in the caller's array must not grant it in the machine")
+
 func test_legal_transition_succeeds() -> void:
 	var machine = _build()
 	var ok: bool = machine.transition_to(&"running")
