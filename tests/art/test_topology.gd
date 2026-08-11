@@ -18,7 +18,12 @@ const BUDGETS := {
 	# asset that is split across meshes.
 	"res://assets/models/buildings/farmhouse": 1500,
 	"res://assets/models/props": 200,
-	"res://assets/models/vegetation": 300,
+	# Rule 6 raised the tree tier from 300 to 600, and says why in its own
+	# paragraph: a tree is pure silhouette (rule 7), 300 triangles bought about
+	# 35 twig tips, and `Refs/game ref/level.jpg` draws well over a hundred. 600
+	# x the ~20 trees a scene carries is 12,000 triangles, which is nothing.
+	# This key follows that spec change; no asset was over 300 and needed it.
+	"res://assets/models/vegetation": 600,
 	"res://assets/models/characters": 8000,
 }
 

@@ -11,7 +11,7 @@ extends Node
 ##
 ## and everything else is derived from them:
 ##
-##   ground  = (terrain - 0.5) * terrain_amplitude_m
+##   ground  = drift_relief(terrain - 0.5) * terrain_amplitude_m
 ##   depth   = max_depth_m * scour(terrain) * (1 - packed)
 ##   surface = ground + depth
 ##
@@ -48,7 +48,8 @@ const RECENTER_SLACK_M := 8.0
 
 const FOOTPRINT_EVENT := &"player.footprint"
 
-## Peak-to-trough relief of the bare ground, in metres.
+## Peak-to-trough relief of the bare ground, in metres -- reached only at the
+## noise's extremes. See drift_flatten: most of the field gets a fraction of it.
 ##
 ## This and noise_frequency are a pair, and the pair is set by the *camera*, not
 ## by the terrain. The orthographic frame shows about 16 m by 14 m of ground, so
@@ -57,10 +58,55 @@ const FOOTPRINT_EVENT := &"player.footprint"
 ## Relief is only visible when a crest and a hollow are in frame together.
 ##
 ## Slope, which is what the light actually draws, is roughly PI * amplitude /
-## wavelength: 2.4 m over 22 m is about 19 degrees at the steepest. With the sun
-## 11 degrees up that puts the away-facing side of every swell firmly in the
-## shadow band, and the surface becomes legible.
-@export var terrain_amplitude_m := 3.2
+## wavelength -- but only out where the drift profile below has opened the gain
+## up. 2.4 m over a 28 m wavelength is 15 degrees at the drifts and, at the 0.34
+## gain the rest of the field runs at, 5 degrees everywhere else. The sun is 21.5
+## degrees up and the cel band turns at 14 (terrain_renderer.gd), so the drifts
+## shade and the field does not, which is the whole arrangement.
+@export var terrain_amplitude_m := 2.4
+
+## ---------------------------------------------------------------------------
+## THE DRIFT PROFILE -- why the relief is not proportional to the noise
+## ---------------------------------------------------------------------------
+## A straight `(terrain - 0.5) * amplitude` gives every part of the field the
+## same slope statistics, and that cannot serve both framings at once. Tuned for
+## the 16 m gameplay frame it needs metres of swing, and the 70 m establishing
+## shot then contains three whole swells whose away-facing flanks all cross the
+## cel band: measured, 21% of the frame shaded itself. `Refs/game ref/level.jpg`
+## shades none of it -- the painting's field is flat but for the occasional
+## drift, and every dark shape on it is something's cast shadow.
+##
+## So the relief is a *curve* on the noise rather than a multiple of it:
+##
+##     relief(s) = s * (drift_flatten + (1 - drift_flatten) * |2s|^drift_sharpness)
+##
+## where s is the noise about its mean, in [-0.5, 0.5]. Near the mean -- which is
+## most of the field -- the gain is drift_flatten and the ground undulates
+## gently. Out at the tails, where the noise rarely goes, the gain climbs to 1
+## and the full amplitude arrives as a bank of drifted snow with a real edge on
+## it. One field, two behaviours, and the transition is smooth: the derivative at
+## s = 0 is exactly drift_flatten, so there is no crease down the middle of the
+## world.
+##
+## **This is not a flattening.** Nothing about the depth mechanic goes through
+## here: depth is a function of the *normalised* height, which is untouched, so
+## the wade-through-a-hollow gradient and the footprint depths still run their
+## full range. What changes is only how much of that height the eye is shown.
+## Measured over the 70 m frame: 79% of it lit before, 97.1% after, with the
+## surface still running -0.60 to +1.20 m between its 5th and 95th percentiles
+## and 2.4 m corner to corner out in the tails.
+##
+## The alternative considered and rejected was varying the amplitude by distance
+## from the farmstead. It makes the ground a function of where the buildings are,
+## which stops being true the moment the player walks out of the yard -- and the
+## establishing shot is centred on the farmstead, so the calm part would sit
+## exactly where the composition is and the roll would still fill the frame's
+## edges.
+@export var drift_flatten := 0.34
+
+## How abruptly the gentle field turns into a drift. 1 is no curve at all; the
+## higher it goes the rarer and the steeper the drifts become.
+@export var drift_sharpness := 3.0
 
 ## Snow deep enough to wade through. max_depth_m is what a hollow holds;
 ## deep_depth_m is where the player is reduced to a trudge.
@@ -89,8 +135,18 @@ const FOOTPRINT_EVENT := &"player.footprint"
 ## +0.53, about a fifth of the bare relief -- a 4.7 degree surface under a sun
 ## that needs 15 to cast a band. Widening the ramp is the cheap fix: it costs
 ## nothing in depth range (the snow still runs 0 to max) and it divides the
-## cancelling term. At 3.2 m over a 0.60-wide ramp the surface keeps 2.2 of the
-## 3.2, which is a 17 degree face -- comfortably inside the cel band.
+## cancelling term.
+##
+## The drift profile moved this sum again and it is worth writing down where it
+## landed. The ramp spans the *middle* of the noise, which is exactly where the
+## profile's gain is lowest, so the cancellation now eats a larger share of a
+## smaller number: across the ramp the ground rises about 0.5 m and the snow
+## thins by 0.6, and the drawn surface is very nearly level there. **That is the
+## intended result and not a return of the old defect** -- the relief has moved
+## out to the tails, where the ramp is already saturated and nothing cancels
+## anything. Do not read a flat middle here as the terrain having vanished; read
+## the 5th-to-95th percentile range in drift_flatten above, which is measured on
+## the drawn surface.
 @export var scour_hollow := 0.20
 @export var scour_crest := 0.80
 
@@ -104,12 +160,22 @@ const FOOTPRINT_EVENT := &"player.footprint"
 
 @export var noise_seed := 20260811
 
-## Cycles per metre. 0.05 is a swell about 20 m across. Two constraints meet
-## here: much longer and a crest and a hollow are never in the 16 m frame
-## together so the ground reads flat, much shorter and the slopes get too steep
-## for the amplitude the relief needs. Measured over a 38 m walk at 0.038 the
-## route never reached a scoured crest at all.
-@export var noise_frequency := 0.05
+## Cycles per metre. 0.036 is a swell about 28 m across.
+##
+## It was 0.05, chosen when the relief was proportional to the noise and the
+## constraint was that a crest and a hollow had to be inside the 16 m gameplay
+## frame together or the ground read flat. The drift profile above changes what
+## that constraint asks for: the gameplay frame's relief now comes from the
+## gentle part rather than from a crest, and what the *establishing* frame
+## needs is for drifts to be occasional. One drift per 28 m swell puts four or
+## five in a 70 m frame; at 0.05 there were a dozen and they read as dunes.
+##
+## The thing to keep watching is that the depth mechanic still swings. It does:
+## measured over the 16 m gameplay box the snow still runs the full 0.00 to
+## 0.60 m, because the scour ramp reads normalised height and a 28 m swell
+## crosses it just as completely as a 20 m one -- it simply takes a few more
+## paces to walk from the crest to the hollow.
+@export var noise_frequency := 0.036
 
 var _origin := Vector2.ZERO
 var _terrain: Image
@@ -237,9 +303,19 @@ func terrain_normal_at(world: Vector3) -> float:
 	return clampf((raw - 0.5) * terrain_contrast + 0.5, 0.0, 1.0)
 
 
+## The drift profile, as a pure function of the noise about its mean. Static and
+## contextless on purpose, like sample_bilinear above: it is the one piece of the
+## relief a test can pin down exactly, and assets/shaders/snow_ground.gdshader
+## holds the same three lines.
+static func drift_relief(signed: float, flatten: float, sharpness: float) -> float:
+	var crest := pow(absf(signed * 2.0), sharpness)
+	return signed * (flatten + (1.0 - flatten) * crest)
+
+
 ## The bare ground under the snow, in metres, signed about zero.
 func terrain_height_at(world: Vector3) -> float:
-	return (terrain_normal_at(world) - 0.5) * terrain_amplitude_m
+	return drift_relief(terrain_normal_at(world) - 0.5, drift_flatten, drift_sharpness) \
+		* terrain_amplitude_m
 
 
 ## How much of max_depth_m the wind has left here. 1 in a hollow, 0 on a crest.

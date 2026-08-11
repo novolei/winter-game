@@ -19,7 +19,7 @@ render_mode ambient_light_disabled, specular_disabled, diffuse_lambert;
 // snow_terrain holds normalised ground height. Everything else is derived from
 // it, by the same three lines SnowField uses on the CPU:
 //
-//   ground  = (terrain - 0.5) * terrain_amplitude
+//   ground  = drift_relief(terrain - 0.5) * terrain_amplitude
 //   depth   = max_depth * scour(terrain) * (1 - packed)
 //   surface = ground + depth
 //
@@ -32,6 +32,13 @@ uniform vec2 field_origin = vec2(-60.0, -60.0);
 uniform float field_extent = 120.0;
 uniform float terrain_amplitude = 3.4;
 uniform float terrain_contrast = 1.45;
+// The drift profile. SnowField.drift_relief() is these same three lines: the
+// relief is a curve on the noise, not a multiple of it, so the field is gentle
+// where the noise is near its mean and banks into a real drift only out at the
+// tails. The reasoning is in src/systems/snow_field.gd; the numbers arrive from
+// terrain_renderer.gd so there is one place to change them.
+uniform float drift_flatten = 0.34;
+uniform float drift_sharpness = 3.0;
 uniform float max_depth = 1.05;
 uniform float scour_hollow = 0.36;
 uniform float scour_crest = 0.72;
@@ -139,10 +146,15 @@ float track_at(vec2 w) {
 	);
 }
 
+float drift_relief(float signed_height) {
+	float crest = pow(abs(signed_height * 2.0), drift_sharpness);
+	return signed_height * (drift_flatten + (1.0 - drift_flatten) * crest);
+}
+
 // Metre-scale, and the only part the mesh is asked to draw.
 float ground_height(vec2 w) {
 	float terrain = terrain_at(w);
-	float ground = (terrain - 0.5) * terrain_amplitude;
+	float ground = drift_relief(terrain - 0.5) * terrain_amplitude;
 	float scour = 1.0 - smoothstep(scour_hollow, scour_crest, terrain);
 	return ground + max_depth * scour * (1.0 - packed_at(w));
 }

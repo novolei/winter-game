@@ -61,6 +61,46 @@ extends Node3D
 ## have no ground contact at all.
 @export var wire_root := NodePath("Wires")
 
+## ---------------------------------------------------------------------------
+## The fence
+## ---------------------------------------------------------------------------
+## A fence is the fourth thing this node owns that scenes/main.tscn cannot
+## express, and it is the clearest case of the four: a run of fence is a
+## *direction and a count*, not a list of places. Written out as transforms it
+## would be twenty-two nodes whose only content is an arithmetic series, and
+## moving the corner by a metre would mean editing all of them.
+##
+## The segment is one post at the origin with rails running along its own -Z --
+## the axis `look_at()` aims, the same convention the wire uses. It is never
+## scaled: scaling would stretch the post along with the rails.
+const FENCE_SEGMENT := preload("res://assets/models/props/fence_segment.glb")
+const FENCE_SPAN := 2.6
+
+@export var fence_root := NodePath("Fence")
+
+## Where the two runs meet. West and south of the yard, so the fence reads as
+## the boundary of the ground the farmstead sits on rather than as a line drawn
+## across open country.
+const FENCE_CORNER := Vector3(-16.0, 0.0, -8.0)
+
+## [direction, segments, laid backwards]. Both runs leave the frame rather than
+## stopping in it, which is the honest way to end a fence: a run that stops in
+## open snow needs a reason, and one that goes off the edge of the picture has
+## the same reason as the road.
+##
+## THE `backwards` FLAG IS NOT A FLOURISH. Both runs share the corner, and the
+## segment carries its post at its own origin, so laying both forwards would put
+## two posts in exactly the same place -- coincident faces, which z-fight on some
+## frames and not others. The west run is therefore laid *from the far end back*:
+## its post sits one span out and its rails reach back to the corner, which is
+## served by the south run's post. One post at the corner, no gap in the rails.
+const FENCE_RUNS := [
+	# West, along the top of the frame's lower-left quadrant.
+	[Vector2(-0.6, -0.8), 9, true],
+	# South, down past the well house and off the bottom edge.
+	[Vector2(0.351, 0.936), 13, false],
+]
+
 ## The house is a sibling, not a child -- it has its own placement script -- but
 ## the service drop has to start on its eave.
 @export var farmhouse_path := NodePath("../Farmhouse")
@@ -102,8 +142,53 @@ const BAKE_CENTRE := Vector3(6.0, 0.0, -22.0)
 ## 0.11 m half-width is 3.7 texels on the baked layer and about 3 px in a frame
 ## of this width -- the same weight the reference draws them at. Wider reads as
 ## ridges rather than as a worked field.
+##
+## The strength went from 0.6 to 0.85 when the terrain's band threshold came
+## down (see src/rendering/terrain_renderer.gd). That is not a coincidence and
+## it is worth writing down: the shader mixes a track two palette steps down
+## from *lit* snow and only one down from *shaded* snow, so the field used to
+## read strongest exactly where the ground happened to be dark. Now that the
+## whole field is lit, the same 0.6 produced a barely-there grey. Raising the
+## per-stroke strength is the local fix; raising `track_tint` would have been
+## the global one and would have coarsened every footprint in the game with it.
 @export var furrow_radius := 0.11
-@export var furrow_strength := 0.6
+@export var furrow_strength := 0.85
+
+## ---------------------------------------------------------------------------
+## THE STUBBLE, AND WHY IT IS NOT GEOMETRY
+## ---------------------------------------------------------------------------
+## The brief asked for a snow-covered wheat field -- "stubble poking through
+## snow, short broken stalks in rows" -- and said to look at `level.jpg` first
+## and say so if the field there reads as lines in snow with no standing stalks.
+##
+## **It does, and there is therefore no stubble model in this project.** Magnified
+## three times, the reference's field is several hundred short dark dashes lying
+## in the plane of the snow, running along the furrow direction, in rows. Not one
+## of them stands proud: none has a cast shadow, none breaks the horizon of the
+## rise it sits on, and none has a lit side and a dark side. They are marks, and
+## a mark in the snow is what the track mask is for. It would also be the wrong
+## call at any framing -- a 25 cm stalk under this camera is a third of a pixel
+## at the establishing shot and under two at gameplay.
+##
+## What was missing was not geometry but *granularity*: `bake_furrows` draws 44
+## continuous passes, and the reference's field is broken. So the field gets a
+## second baked pass of short dashes scattered along the same lines, which is
+## the same thing the painting does and costs no triangles and no draw call.
+##
+## Deterministic, from a seeded RNG, because the static layer is baked once and
+## a field that reshuffled itself on every load would be a field nobody could
+## compose against.
+## Measured off the reference at three times magnification: a dash there is
+## about 8 px long and 2 wide in a 1000 px frame covering 70 m, which is 0.55 m
+## by 0.14. The radius below is half-width, so 0.08 draws them 0.16 m across --
+## within a texel of the painting's, and 2.7 texels on the baked layer, which is
+## the least that can carry a shape at all.
+@export var stubble_rows := 34
+@export var stubble_per_row := 34
+@export var stubble_length := 0.75
+@export var stubble_radius := 0.08
+@export var stubble_strength := 0.9
+@export var stubble_seed := 41077
 
 ## The farm road, running along the near edge of the field and off both sides of
 ## the frame. The bend near the middle is the junction the spur leaves from.
@@ -175,6 +260,9 @@ var _painter: CelPainter
 
 
 func _ready() -> void:
+	# Before the painter, so the fence is repainted with everything else rather
+	# than arriving in the world on the glTF importer's materials.
+	_build_fences()
 	_painter = CelPainter.new()
 	_painter.paint(self)
 	_settle_all()
@@ -194,11 +282,30 @@ func _settle_all() -> void:
 	var snow := registry.get_service(&"snow_field") as Node
 	if snow == null:
 		return
+	for prop in _settleable():
+		_settle(prop, snow)
+
+
+## Everything that stands on the ground.
+##
+## Direct children, less the wires (they hang) and less the fence root (it is a
+## container, not a prop, and its origin is nowhere in particular) -- plus each
+## fence segment individually. A post 30 m along a run has to find its own snow;
+## settling the container would drop the whole fence to the lowest ground under
+## any part of it and leave most of it in the air.
+func _settleable() -> Array[Node3D]:
+	var props: Array[Node3D] = []
 	var wires := get_node_or_null(wire_root)
+	var fence := get_node_or_null(fence_root)
 	for child in get_children():
-		if child == wires or not (child is Node3D):
+		if child == wires or child == fence or not (child is Node3D):
 			continue
-		_settle(child as Node3D, snow)
+		props.append(child as Node3D)
+	if fence != null:
+		for segment in fence.get_children():
+			if segment is Node3D:
+				props.append(segment as Node3D)
+	return props
 
 
 ## Sit on the lowest snow surface anywhere under the prop's ground band.
@@ -289,6 +396,59 @@ func _ground_meshes(node: Node, into_prop: Transform3D) -> Array:
 
 
 ## ---------------------------------------------------------------------------
+## The fence
+## ---------------------------------------------------------------------------
+
+
+## Where every fence segment goes, as `{name, at, toward}` in world space.
+##
+## Pure arithmetic, separated from the node-building below so a test can check
+## the layout without instancing twenty-two models -- the same reason
+## `SnowField.sample_bilinear` is static. It is the only part of the fence that
+## can be wrong in a way a screenshot would not show, because two posts in one
+## place look like one post until the day they z-fight.
+func fence_layout() -> Array:
+	var places: Array = []
+	for entry in FENCE_RUNS:
+		var direction: Vector2 = (entry[0] as Vector2).normalized()
+		var count: int = entry[1]
+		var backwards: bool = entry[2]
+		var along := Vector3(direction.x, 0.0, direction.y)
+		for index in range(count):
+			# Backwards: post one span further out, rails reaching back toward
+			# the corner. See FENCE_RUNS -- this is what stops the two runs
+			# putting a post in the same place.
+			var step := float(index + 1) if backwards else float(index)
+			var at := FENCE_CORNER + along * (FENCE_SPAN * step)
+			places.append({
+				"name": "Segment%s%d" % ["W" if backwards else "S", index],
+				"at": at,
+				"toward": at - along if backwards else at + along,
+			})
+	return places
+
+
+## Lays both runs out from the corner. Called before the painter and before
+## _settle_all(), so the segments are repainted and dropped onto the snow with
+## everything else and nothing here has to know about either.
+func _build_fences() -> void:
+	var fence := get_node_or_null(fence_root)
+	if fence == null:
+		return
+	for place in fence_layout():
+		var segment := FENCE_SEGMENT.instantiate() as Node3D
+		if segment == null:
+			return
+		segment.name = place["name"]
+		fence.add_child(segment)
+		# Global rather than local, for the same reason _span() is: the
+		# constants here are world XZ read off the reference, and look_at()
+		# aims in world space whatever the parent's transform happens to be.
+		segment.global_position = place["at"]
+		segment.look_at(place["toward"], Vector3.UP)
+
+
+## ---------------------------------------------------------------------------
 ## The wires
 ## ---------------------------------------------------------------------------
 
@@ -365,6 +525,7 @@ func _draw_the_lines() -> void:
 		furrow_origin, furrow_direction, furrow_length, furrow_spacing, furrow_count,
 		furrow_radius, furrow_strength, 0.22
 	)
+	_bake_stubble(tracks)
 	# The yard goes down first so the ruts and the prints composite over it. With
 	# max() the order does not change the result, but it is the order the world
 	# happened in.
@@ -374,6 +535,39 @@ func _draw_the_lines() -> void:
 
 	_stamp_trail(tracks, TRAIL_TO_THE_EAST, 0.0)
 	_stamp_trail(tracks, TRAIL_TO_THE_WELL, 17.0)
+
+
+## Broken stalks in the snow, along the furrows. See the note on the stubble
+## constants above for why this is a bake and not a model.
+##
+## Every stroke lands inside the furrow band by construction -- the rows are
+## spread across the same span `bake_furrows` uses -- so nothing here can fall
+## outside the baked window that the furrows themselves fit in.
+func _bake_stubble(tracks: Node) -> void:
+	if stubble_rows <= 0 or stubble_per_row <= 0:
+		return
+	var along := furrow_direction.normalized()
+	var across := Vector2(-along.y, along.x)
+	var band := furrow_spacing * float(maxi(furrow_count - 1, 1))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = stubble_seed
+	for row in range(stubble_rows):
+		# Offset half a furrow spacing so a dash sits *between* two passes as
+		# often as on one. Stubble left standing is what the plough missed.
+		var lane := across * (band * (float(row) + 0.5) / float(stubble_rows))
+		for index in range(stubble_per_row):
+			var travel := furrow_length * (float(index) + rng.randf()) / float(stubble_per_row)
+			var wander := across * rng.randf_range(-furrow_spacing * 0.55, furrow_spacing * 0.55)
+			var at := furrow_origin \
+				+ Vector3(lane.x, 0.0, lane.y) \
+				+ Vector3(wander.x, 0.0, wander.y) \
+				+ Vector3(along.x, 0.0, along.y) * travel
+			var run := stubble_length * rng.randf_range(0.45, 1.0)
+			tracks.bake_stroke(
+				at, at + Vector3(along.x, 0.0, along.y) * run,
+				stubble_radius, stubble_strength * rng.randf_range(0.6, 1.0),
+				0.5, 0.5, rng.randf() * 97.0
+			)
 
 
 ## The tyre tracks that curve in from the road, ending under the truck wherever

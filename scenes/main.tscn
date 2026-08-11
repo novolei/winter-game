@@ -18,6 +18,9 @@
 [ext_resource type="PackedScene" uid="uid://coq3v21y2ik72" path="res://assets/models/vegetation/tree_bare_a.glb" id="17_tree_a"]
 [ext_resource type="PackedScene" uid="uid://ckcc4dwmddw15" path="res://assets/models/vegetation/tree_bare_b.glb" id="18_tree_b"]
 [ext_resource type="PackedScene" uid="uid://kqyuddtbg2mc" path="res://assets/models/vegetation/tree_bare_c.glb" id="19_tree_c"]
+[ext_resource type="PackedScene" uid="uid://bh0jlvu5vmc8l" path="res://assets/models/vegetation/tree_bare_d.glb" id="20_tree_d"]
+[ext_resource type="PackedScene" uid="uid://8f6s67vpwpy8" path="res://assets/models/vegetation/tree_bare_e.glb" id="21_tree_e"]
+[ext_resource type="PackedScene" uid="uid://om3b6intvn5p" path="res://assets/models/props/flatbed_truck.glb" id="22_flatbed"]
 
 [node name="Main" type="Node3D" unique_id=1508188971]
 
@@ -68,7 +71,7 @@ transform = Transform3D(0.92718385, 0, 0.37460659, 0, 1, 0, -0.37460659, 0, 0.92
 transform = Transform3D(0.96592583, 0, 0.25881905, 0, 1, 0, -0.25881905, 0, 0.96592583, 28.35, 0, -16.725)
 
 [node name="TireSwing" parent="Farmstead/TreeA" instance=ExtResource("16_tire_swing") unique_id=1902244606]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.9, 2.8, -0.14)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.07, 3.56, -0.12)
 
 [node name="TreeB" parent="Farmstead" instance=ExtResource("18_tree_b") unique_id=1902244607]
 transform = Transform3D(0.76604444, 0, -0.64278761, 0, 1, 0, 0.64278761, 0, 0.76604444, -12.49, 0, -15.475)
@@ -78,6 +81,22 @@ transform = Transform3D(0.42261826, 0, 0.90630779, 0, 1, 0, -0.90630779, 0, 0.42
 
 [node name="TreeD" parent="Farmstead" instance=ExtResource("19_tree_c") unique_id=1902244609]
 transform = Transform3D(-0.90630779, 0, -0.42261826, 0, 1, 0, 0.42261826, 0, -0.90630779, -6.39, 0, -26.025)
+
+[node name="FlatbedTruck" parent="Farmstead" instance=ExtResource("22_flatbed") unique_id=1902244620]
+transform = Transform3D(-0.17364818, 0, -0.98480775, 0, 1, 0, 0.98480775, 0, -0.17364818, 24.5, 0, -31)
+[node name="TreeE" parent="Farmstead" instance=ExtResource("20_tree_d") unique_id=1902244621]
+transform = Transform3D(0.92718385, 0, -0.37460659, 0, 1, 0, 0.37460659, 0, 0.92718385, -22, 0, -24)
+[node name="TreeF" parent="Farmstead" instance=ExtResource("21_tree_e") unique_id=1902244622]
+transform = Transform3D(-0.90630779, 0, 0.42261826, 0, 1, 0, -0.42261826, 0, -0.90630779, -17.4, 0, -21.6)
+[node name="TreeG" parent="Farmstead" instance=ExtResource("18_tree_b") unique_id=1902244623]
+transform = Transform3D(-0.61566148, 0, -0.78801075, 0, 1, 0, 0.78801075, 0, -0.61566148, -2.4, 0, -31.6)
+[node name="TreeH" parent="Farmstead" instance=ExtResource("20_tree_d") unique_id=1902244624]
+transform = Transform3D(-0.30901699, 0, 0.95105652, 0, 1, 0, -0.95105652, 0, -0.30901699, 31, 0, 3.4)
+[node name="TreeI" parent="Farmstead" instance=ExtResource("21_tree_e") unique_id=1902244625]
+transform = Transform3D(0.4539905, 0, -0.89100652, 0, 1, 0, 0.89100652, 0, 0.4539905, 23.6, 0, -1.2)
+[node name="TreeJ" parent="Farmstead" instance=ExtResource("19_tree_c") unique_id=1902244626]
+transform = Transform3D(0.65605903, 0, 0.75470958, 0, 1, 0, -0.75470958, 0, 0.65605903, -25, 0, -1.5)
+[node name="Fence" type="Node3D" parent="Farmstead" unique_id=1902244630]
 
 [node name="Wires" type="Node3D" parent="Farmstead" unique_id=1902244610]
 

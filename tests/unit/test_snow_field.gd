@@ -179,3 +179,85 @@ func test_wade_factor_is_bounded() -> void:
 	for step in range(20):
 		var factor: float = _field.wade_factor(Vector3(float(step) * 3.0, 0.0, float(step) * -2.0))
 		assert_true(factor >= 0.0 and factor <= 1.0, "wade factor %f is outside 0..1" % factor)
+
+
+## ---------------------------------------------------------------------------
+## The drift profile
+## ---------------------------------------------------------------------------
+
+
+## `drift_relief` is the one piece of the relief that is pure arithmetic, so it
+## is the one piece that can be pinned exactly. The shape is the whole tuning:
+## gentle near the noise's mean, full amplitude only out at its tails.
+func test_the_drift_profile_is_gentle_at_the_mean_and_full_at_the_extremes() -> void:
+	var flatten := 0.34
+	var sharpness := 3.0
+	# At the mean the ground is flat whatever the gain is.
+	assert_almost_eq(SnowField.drift_relief(0.0, flatten, sharpness), 0.0)
+	# At the extremes the gain reaches exactly 1, so amplitude means what its
+	# name says: peak-to-trough over the whole range.
+	assert_almost_eq(SnowField.drift_relief(0.5, flatten, sharpness), 0.5)
+	assert_almost_eq(SnowField.drift_relief(-0.5, flatten, sharpness), -0.5)
+	# And halfway out it is far below the straight line, which is the point --
+	# a straight line here is what made the 70 m frame read as rolling dunes.
+	var midway := SnowField.drift_relief(0.25, flatten, sharpness)
+	assert_true(
+		midway < 0.25 * 0.5,
+		"halfway out the profile gives %f of the amplitude; anything near the linear 0.25 is not a drift profile" % midway
+	)
+
+
+## Odd, and monotonic. Odd because a hollow is the mirror of a crest and a field
+## that rose faster than it fell would drift upward everywhere; monotonic
+## because a non-monotonic profile turns a single noise peak into a ring, and
+## the symptom would be a crater where a drift should be.
+func test_the_drift_profile_is_odd_and_monotonic() -> void:
+	var flatten := 0.34
+	var sharpness := 3.0
+	var previous := -INF
+	for step in range(101):
+		var signed := -0.5 + float(step) / 100.0
+		var here := SnowField.drift_relief(signed, flatten, sharpness)
+		assert_almost_eq(here, -SnowField.drift_relief(-signed, flatten, sharpness), 0.0001)
+		assert_true(here > previous - 0.0001, "the profile falls back at %f" % signed)
+		previous = here
+
+
+## THE CLAIM THE WHOLE CHANGE RESTS ON, and the one a reviewer should be able to
+## check without reading a screenshot: flattening the *drawn* relief does not
+## touch the snow depth. Deep snow is a function of the normalised height, which
+## the profile never sees, so the wade gradient and the footprint depths still
+## run their full range no matter how flat the field is made to look.
+##
+## If this ever fails, the relief tuning has quietly become a gameplay change.
+func test_the_drift_profile_does_not_touch_the_snow_depth() -> void:
+	var spots: Array[Vector3] = []
+	for step in range(40):
+		spots.append(Vector3(-40.0 + float(step) * 2.1, 0.0, -30.0 + float(step) * 1.4))
+	var before: Array[float] = []
+	for spot in spots:
+		before.append(_field.depth_at(spot))
+	var flatten := _field.drift_flatten
+	var sharpness := _field.drift_sharpness
+	var amplitude := _field.terrain_amplitude_m
+	_field.drift_flatten = 1.0
+	_field.drift_sharpness = 1.0
+	_field.terrain_amplitude_m = amplitude * 3.0
+	var moved := 0.0
+	for index in range(spots.size()):
+		moved = maxf(moved, absf(_field.depth_at(spots[index]) - before[index]))
+	_field.drift_flatten = flatten
+	_field.drift_sharpness = sharpness
+	_field.terrain_amplitude_m = amplitude
+	assert_almost_eq(moved, 0.0, 0.0001)
+	# ...and the sample line has to have had real depth variation in it, or the
+	# assertion above passes over a row of zeroes.
+	var lowest := INF
+	var highest := -INF
+	for value in before:
+		lowest = minf(lowest, value)
+		highest = maxf(highest, value)
+	assert_true(
+		highest - lowest > _field.max_depth_m * 0.5,
+		"the sampled line only swings %.3f m of depth; it cannot show that the profile left the depth alone" % (highest - lowest)
+	)

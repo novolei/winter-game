@@ -28,21 +28,32 @@ const SnowFieldScript := preload("res://src/systems/snow_field.gd")
 const TrackMaskScript := preload("res://src/systems/track_mask.gd")
 
 ## Every model the reference calls for, and the frame is short of one if any is
-## missing. The three trees are listed separately because "scattering one tree
+## missing. The five trees are listed separately because "scattering one tree
 ## three times reads as wallpaper" was the props task's whole argument for
-## building three.
+## building more than one, and because the owner asked for varied heights --
+## dropping a variant from the scene would put the range back where it was with
+## nothing saying so.
+##
+## `fence_segment.glb` is deliberately NOT here. It is the one model the scene
+## file never instances: a fence is a run, and Farmstead builds it from
+## `fence_layout()`. It has its own tests below.
 const REQUIRED_MODELS: Array[String] = [
 	"res://assets/models/buildings/farmhouse/farmhouse.glb",
 	"res://assets/models/buildings/tool_shed/tool_shed.glb",
 	"res://assets/models/buildings/well_house/well_house.glb",
 	"res://assets/models/props/pickup_truck.glb",
+	"res://assets/models/props/flatbed_truck.glb",
 	"res://assets/models/props/power_pole.glb",
 	"res://assets/models/props/power_wire.glb",
 	"res://assets/models/props/tire_swing.glb",
 	"res://assets/models/vegetation/tree_bare_a.glb",
 	"res://assets/models/vegetation/tree_bare_b.glb",
 	"res://assets/models/vegetation/tree_bare_c.glb",
+	"res://assets/models/vegetation/tree_bare_d.glb",
+	"res://assets/models/vegetation/tree_bare_e.glb",
 ]
+
+const FENCE_MODEL := "res://assets/models/props/fence_segment.glb"
 
 
 ## name -> {path, parent, instance, transform, has_transform}
@@ -254,4 +265,95 @@ func test_every_baked_line_falls_inside_the_baked_window() -> void:
 		"%s fall outside the %.0f m baked window centred on (%.1f, %.1f), so they would draw nothing at all" % [
 			", ".join(offenders), TrackMaskScript.STATIC_EXTENT_M, centre.x, centre.z,
 		]
+	)
+
+
+## ---------------------------------------------------------------------------
+## The fence
+## ---------------------------------------------------------------------------
+
+
+## The defect the `backwards` flag in FENCE_RUNS exists to prevent, asserted
+## rather than described.
+##
+## Both runs start at the same corner and the segment carries its post at its own
+## origin, so laying both forwards puts two posts in exactly the same place. That
+## is invisible in a screenshot -- two coincident posts look like one post -- right
+## up until the depth buffer picks a different winner on a different frame and the
+## post flickers. Anyone tidying the flag away gets this instead of a bug report
+## three weeks later.
+func test_the_two_fence_runs_do_not_stand_two_posts_in_one_place() -> void:
+	var farmstead: Farmstead = FarmsteadScript.new()
+	var places := farmstead.fence_layout()
+	var span: float = FarmsteadScript.FENCE_SPAN
+	var offenders := PackedStringArray()
+	for a in range(places.size()):
+		for b in range(a + 1, places.size()):
+			var one: Vector3 = places[a]["at"]
+			var two: Vector3 = places[b]["at"]
+			var gap := Vector2(one.x - two.x, one.z - two.z).length()
+			if gap < span * 0.9:
+				offenders.append("%s and %s are %.2f m apart, under the %.2f m span" % [
+					places[a]["name"], places[b]["name"], gap, span,
+				])
+	farmstead.free()
+	assert_eq(
+		offenders.size(), 0,
+		"%s -- two posts on one spot z-fight on some frames and not others" % "; ".join(offenders)
+	)
+
+
+## A fence segment outside the height field settles on a clamped border texel,
+## which is a height with nothing to do with the ground under it. Same rule the
+## props are held to, applied to the twenty-two nodes no transform in the scene
+## file covers.
+func test_every_fence_segment_stands_inside_the_height_field() -> void:
+	var farmstead: Farmstead = FarmsteadScript.new()
+	var places := farmstead.fence_layout()
+	var reach: float = SnowFieldScript.EXTENT_M * 0.5 - 8.0
+	var offenders := PackedStringArray()
+	assert_true(places.size() > 0, "the fence layout is empty, so this test checks nothing")
+	for place in places:
+		var at: Vector3 = place["at"]
+		var distance := Vector2(at.x, at.z).length()
+		if distance > reach:
+			offenders.append("%s is %.1f m out, past the %.0f m the height field covers" % [
+				place["name"], distance, reach,
+			])
+	farmstead.free()
+	assert_eq(offenders.size(), 0, "; ".join(offenders))
+
+
+## The fence is the only thing in the composition placed by direction and count
+## rather than by a transform somebody looked at, so it is the only thing that
+## can walk through a building without anyone noticing.
+func test_no_fence_segment_stands_on_top_of_a_prop() -> void:
+	var farmstead: Farmstead = FarmsteadScript.new()
+	var places := farmstead.fence_layout()
+	var placed := _placed()
+	var offenders := PackedStringArray()
+	for name in placed:
+		var entry: Dictionary = placed[name]
+		if entry["instance"] == "" or entry["instance"] == WIRE_MODEL or entry["instance"] == SWING_MODEL:
+			continue
+		if not entry["has_transform"]:
+			continue
+		var spot: Vector3 = (entry["transform"] as Transform3D).origin
+		for place in places:
+			var at: Vector3 = place["at"]
+			var gap := Vector2(at.x - spot.x, at.z - spot.z).length()
+			if gap < 2.5:
+				offenders.append("%s is %.2f m from %s" % [place["name"], gap, name])
+	farmstead.free()
+	assert_eq(offenders.size(), 0, "%s -- a fence run through a prop" % "; ".join(offenders))
+
+
+## The model exists and imports. A null PackedScene here would make
+## `_build_fences` return on its first instantiate() and produce no fence at all,
+## silently, because the scene file has nothing to say about it.
+func test_the_fence_model_imports() -> void:
+	var resource := ResourceLoader.load(FENCE_MODEL, "", ResourceLoader.CACHE_MODE_IGNORE)
+	assert_true(
+		resource is PackedScene,
+		"%s must import as a PackedScene; the fence is built from a preload and a null here produces no fence and no error" % FENCE_MODEL
 	)

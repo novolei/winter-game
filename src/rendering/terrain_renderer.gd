@@ -19,18 +19,32 @@ const SHADER_PATH := "res://assets/shaders/snow_ground.gdshader"
 @export var ground_size := 140.0
 
 ## 140 m at 320 subdivisions is a 44 cm quad. That is set by the terrain, which
-## is what the mesh draws: swells 22 m across need roughly half-metre quads
+## is what the mesh draws: swells 28 m across need roughly half-metre quads
 ## before the silhouette stops looking polygonal. Footprints are deliberately
 ## *not* a consideration here -- they are 29 cm long, no affordable mesh
 ## resolves them, and trying is what produced the shards. They live in the
 ## normal instead.
 @export var subdivisions := 320
 
-## Flat ground sits at N.L = sin(sun elevation) = 0.37, and the swells swing it
-## between about 0.04 and 0.65. The threshold has to sit inside that swing or
-## the terrain has no shading at all -- at 0.09 (which suited the old 11-degree
-## sun) only the very steepest face went dark and the dunes disappeared.
-@export var band_threshold := 0.22
+## Flat ground sits at N.L = sin(sun elevation) = 0.37, and the field's slopes
+## swing it either side of that. The threshold has to sit inside the swing or the
+## terrain has no shading at all -- at 0.09 (which suited the old 11-degree sun)
+## only the very steepest face went dark and the dunes disappeared.
+##
+## **This number and SnowField.drift_flatten are a pair, and they were retuned
+## together.** The threshold is the slope at which the ground turns dark:
+## sin(elevation - slope) = threshold, so 0.22 shades everything past 8.8 degrees
+## and 0.12 everything past 14.6. When the relief was proportional to the noise
+## the field's median slope was 11 degrees, so 0.22 put half of every away-facing
+## swell into shade and the 70 m frame read as rolling dunes. The drift profile
+## drops the median to 4 degrees and keeps the steep ground for the drifts, and a
+## threshold left at 0.22 would have thrown that away by shading the gentle part
+## anyway. Measured over the establishing frame: 79% of it lit before, 97% after.
+##
+## It moves the *cast* shadows not at all. A texel inside one has ATTENUATION 0,
+## so its band value is 0 whatever the threshold is; this only ever decides how
+## much of its own slope the snow shades itself with.
+@export var band_threshold := 0.12
 @export var band_softness := 0.07
 
 ## How deep a print dents the *normal*. Never the mesh -- see the shader. This
@@ -130,6 +144,8 @@ func _process(_delta: float) -> void:
 	# the drift you see is not the drift you walk in.
 	_material.set_shader_parameter("terrain_amplitude", _snow.terrain_amplitude_m)
 	_material.set_shader_parameter("terrain_contrast", _snow.terrain_contrast)
+	_material.set_shader_parameter("drift_flatten", _snow.drift_flatten)
+	_material.set_shader_parameter("drift_sharpness", _snow.drift_sharpness)
 	_material.set_shader_parameter("max_depth", _snow.max_depth_m)
 	_material.set_shader_parameter("scour_hollow", _snow.scour_hollow)
 	_material.set_shader_parameter("scour_crest", _snow.scour_crest)
