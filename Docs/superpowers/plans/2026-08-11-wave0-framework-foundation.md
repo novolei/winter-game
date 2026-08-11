@@ -19,6 +19,8 @@
 - **12-color palette** (authoritative): snow `#8FB0D8 #7FA0C9 #748FBB #6987B4 #5D7BA6`; structure `#33496E #2A3854 #1C2A45 #131C30`; warm `#6E2F2E #A05A35 #FFB257`.
 - **Triangle budgets:** buildings ≤ 500, props ≤ 200, vegetation ≤ 300, characters ≈ 8000.
 - **Banned material features:** normal maps, roughness/metallic maps, environment/screen-space reflections, specular highlights, color gradients.
+- **Free every `Node` a test allocates.** `Node` is not reference-counted. An un-freed instance produces `WARNING: N ObjectDB instances were leaked at exit` and `ERROR: N resources still in use at exit`, which violates the pristine-output rule above. `RefCounted` subclasses — including `Resource`, `TestCase`, and `ModifierStack` — clean themselves up and need no `free()`. In this wave the Node-derived scripts are `EventBus`, `ServiceRegistry`, and `WorldClock`; anything instantiated from those in a test must be freed, either at the end of the test or in `after_each()`.
+- **Test output must be pristine.** No `SCRIPT ERROR`, no `WARNING`, no `ERROR` — only the runner's own lines.
 - **Commit after every task.** Never skip hooks or bypass signing.
 
 ## Deviations from the spec (deliberate, with reasoning)
@@ -825,24 +827,38 @@ const ServiceRegistryScript := preload("res://src/core/service_registry.gd")
 class FakeService extends RefCounted:
 	var label := "real"
 
+## ServiceRegistry extends Node, which is not reference-counted. Every
+## instance a test builds is freed in after_each(), or the suite reports
+## leaked ObjectDB instances and the output stops being pristine.
+var _registry = null
+
+func after_each() -> void:
+	if _registry != null:
+		_registry.free()
+		_registry = null
+
+func _build():
+	_registry = ServiceRegistryScript.new()
+	return _registry
+
 func test_registered_service_is_returned() -> void:
-	var registry = ServiceRegistryScript.new()
+	var registry = _build()
 	var service := FakeService.new()
 	registry.register(&"snow_field", service)
 	assert_eq(registry.get_service(&"snow_field"), service, "the registered instance should come back")
 
 func test_unknown_key_returns_null() -> void:
-	var registry = ServiceRegistryScript.new()
+	var registry = _build()
 	assert_eq(registry.get_service(&"nothing_here"), null, "an unregistered key should resolve to null")
 
 func test_has_reports_registration() -> void:
-	var registry = ServiceRegistryScript.new()
+	var registry = _build()
 	assert_false(registry.has(&"snow_field"), "nothing is registered yet")
 	registry.register(&"snow_field", FakeService.new())
 	assert_true(registry.has(&"snow_field"), "the key should now be present")
 
 func test_register_replaces_previous_binding() -> void:
-	var registry = ServiceRegistryScript.new()
+	var registry = _build()
 	var first := FakeService.new()
 	var second := FakeService.new()
 	second.label = "fake"
@@ -851,13 +867,13 @@ func test_register_replaces_previous_binding() -> void:
 	assert_eq(registry.get_service(&"snow_field").label, "fake", "re-registering must replace, so tests can inject fakes")
 
 func test_unregister_removes_the_binding() -> void:
-	var registry = ServiceRegistryScript.new()
+	var registry = _build()
 	registry.register(&"snow_field", FakeService.new())
 	registry.unregister(&"snow_field")
 	assert_false(registry.has(&"snow_field"), "unregister should remove the key")
 
 func test_clear_removes_everything() -> void:
-	var registry = ServiceRegistryScript.new()
+	var registry = _build()
 	registry.register(&"a", FakeService.new())
 	registry.register(&"b", FakeService.new())
 	registry.clear()
@@ -1755,8 +1771,22 @@ const DayScheduleScript := preload("res://src/definitions/day_schedule.gd")
 
 var _events: Array = []
 
+## WorldClock and EventBus both extend Node, which is not reference-counted.
+## Both are freed in after_each(), or the suite reports leaked ObjectDB
+## instances and the output stops being pristine.
+var _clock = null
+var _bus = null
+
 func before_each() -> void:
 	_events = []
+
+func after_each() -> void:
+	if _clock != null:
+		_clock.free()
+		_clock = null
+	if _bus != null:
+		_bus.free()
+		_bus = null
 
 func _record_day(payload) -> void:
 	_events.append(["day", payload])
@@ -1775,17 +1805,17 @@ func _make_schedule(day: int, daylight: float, night: float):
 	return schedule
 
 func _build_clock(day_count := 2):
-	var clock = WorldClockScript.new()
-	var bus = EventBusScript.new()
-	bus.subscribe(&"clock.day_started", _record_day)
-	bus.subscribe(&"clock.night_started", _record_night)
-	bus.subscribe(&"clock.run_finished", _record_finish)
-	clock.set_event_bus(bus)
+	_bus = EventBusScript.new()
+	_bus.subscribe(&"clock.day_started", _record_day)
+	_bus.subscribe(&"clock.night_started", _record_night)
+	_bus.subscribe(&"clock.run_finished", _record_finish)
+	_clock = WorldClockScript.new()
+	_clock.set_event_bus(_bus)
 	var schedules := []
 	for day in range(1, day_count + 1):
 		schedules.append(_make_schedule(day, 10.0, 5.0))
-	clock.load_schedules(schedules)
-	return clock
+	_clock.load_schedules(schedules)
+	return _clock
 
 func test_starts_on_day_one_in_daylight() -> void:
 	var clock = _build_clock()
