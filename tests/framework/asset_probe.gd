@@ -69,6 +69,17 @@ extends RefCounted
 ## it.
 const EXEMPT_SHADERS: Array[String] = []
 
+## Atmosphere, not surfaces. These carry no albedo a palette gate could read,
+## and they are judged by eye against the lighting presets. Every outdoor scene
+## has a WorldEnvironment, so reporting them would make the gate cry on normal
+## work.
+const NON_SURFACE_MATERIALS: Array[String] = [
+	"ProceduralSkyMaterial",
+	"PanoramaSkyMaterial",
+	"PhysicalSkyMaterial",
+	"FogMaterial",
+]
+
 ## Guards against a resource graph that cycles back on itself. Nothing in a
 ## sane asset comes close; this only has to stop a pathological file from
 ## hanging the suite instead of failing it.
@@ -139,6 +150,12 @@ static func unreadable_reason(material: Material, exempt_shaders: Array[String] 
 		if exempt_shaders.has(shader_path):
 			return ""
 		return "is a ShaderMaterial using %s, which is not on AssetProbe.EXEMPT_SHADERS; no art gate can read its colours or its banned features, so it is an offender until someone reviews that shader and writes it down" % shader_path
+	# Sky and fog materials are not surface materials. They describe the
+	# atmosphere, are judged by eye against the lighting presets, and carry no
+	# albedo a palette gate could check. Reporting them would flag every scene
+	# that has a WorldEnvironment -- which is every outdoor scene.
+	if NON_SURFACE_MATERIALS.has(material.get_class()):
+		return ""
 	return "is a %s, which neither art gate knows how to read" % material.get_class()
 
 

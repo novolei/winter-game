@@ -212,6 +212,12 @@ func test_a_shader_material_with_no_shader_is_not_readable() -> void:
 ## is no gate for it, and "no gate for it" must read as an offence rather than
 ## as a pass.
 func test_an_unknown_material_type_is_not_readable() -> void:
-	var reason := AssetProbeScript.unreadable_reason(ProceduralSkyMaterial.new())
+	var reason := AssetProbeScript.unreadable_reason(ParticleProcessMaterial.new())
 	assert_true(reason != "", "a material type no gate covers must be named")
-	assert_true(reason.contains("ProceduralSkyMaterial"), "and named by class, got: %s" % reason)
+	assert_true(reason.contains("ParticleProcessMaterial"), "and named by class, got: %s" % reason)
+
+## Sky and fog materials are atmosphere, not surfaces. They are judged by eye
+## against the lighting presets, so a surface gate reporting them would fire on
+## every outdoor scene.
+func test_a_sky_material_is_exempt_rather_than_unreadable() -> void:
+	assert_eq(AssetProbeScript.unreadable_reason(ProceduralSkyMaterial.new()), "", "sky materials are out of a surface gate's scope")
