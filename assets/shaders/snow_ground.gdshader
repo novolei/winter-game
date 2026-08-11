@@ -88,19 +88,88 @@ uniform float track_tint = 0.5;
 uniform float ground_normal_epsilon = 0.8;
 uniform float track_normal_epsilon = 0.06;
 
-// All four from data/palette/color_bible.tres, uploaded by terrain_renderer.gd.
+// All five from data/palette/color_bible.tres, uploaded by terrain_renderer.gd.
 uniform vec4 snow_lit : source_color;
 uniform vec4 snow_shade : source_color;
 uniform vec4 track_lit : source_color;
 uniform vec4 track_shade : source_color;
+// The grain's second tone -- one step down the same family from snow_lit. See
+// the grain block in light().
+uniform vec4 snow_grain_tone : source_color;
 
 // The sun sits ~11 degrees above the horizon, so N.L on flat ground is only
 // about 0.19. The threshold has to sit below that or the whole field reads as
 // shadow; the softness is what gives the shadow edge its feathered border.
+//
+// DRIVEN PER PRESET. LightingDirector pushes LightingPreset.cel_band_threshold
+// and .cel_band_softness through TerrainRenderer every frame, so more of the
+// field falls into the shadow band as the light goes. The values here are the
+// fallback for a frame before anything is lit.
 uniform float band_threshold = 0.09;
 uniform float band_softness = 0.05;
 
+// THE COLOUR THE LIT BAND TAKES FROM THE LIGHT, and the only route warm light
+// has to the snow.
+//
+// The two bands SELECT palette colours, so a preset could change the world's
+// brightness and its haze and never its hue -- which is why SUNRISE warmed the
+// buildings (fog moves dark surfaces further than light ones) and left the snow
+// cold lavender. This multiplies the LIT band only. LightingDirector normalises
+// it to unit luminance before pushing it, so it rotates the hue and does not
+// touch the brightness the preset's exposure was tuned against.
+//
+// The SHADE band is deliberately untinted: warm sun on cold shadow is what a
+// winter dawn is, and it is what keeps Art Bible section 4.1's promise that the
+// shadow band is a palette colour chosen outright rather than a computed one.
+//
+// Not `source_color`: this is a linear multiplier, not a colour to be looked at,
+// and its red channel goes above 1.0 whenever the light is warm.
+uniform vec3 light_tint = vec3(1.0);
+
+// THE SNOW GRAIN -- style document section 15, made legal.
+//
+// The field was one flat fill. The document asks for it to vary slightly, and
+// says in as many words that you should barely be able to see it. Interpolating
+// the snow colour by a noise is the obvious implementation and it breaks two
+// rules at once: Art Bible rule 8 forbids gradients, and every value in the
+// document's own example is outside the twelve.
+//
+// So the noise moves a BAND BOUNDARY instead. The lit band splits across a
+// second, higher threshold that flat ground straddles -- flat ground is at
+// N.L = sin(21.5) = 0.366 -- and the noise jitters where that boundary falls.
+// Which of two adjacent palette tones a patch of snow takes then varies, every
+// pixel is still exactly a palette entry, and it is dithering between discrete
+// steps rather than a ramp between them.
+//
+// grain_amount is measured against the Lambert spread the terrain's own slopes
+// produce, about +/-0.06. Much past that and the jitter reads as bumpiness the
+// ground does not have and fights the drifts that are actually there.
+uniform float grain_threshold = 0.38;
+uniform float grain_softness = 0.03;
+uniform float grain_amount = 0.05;
+uniform float grain_scale = 0.14;
+
 varying vec3 v_world;
+
+// Value noise, and nothing else borrowed from the style document's shader --
+// its render_mode line carries `specular_schlick_ggx` and its fragment() sets
+// ROUGHNESS and SPECULAR, all three of which Art Bible rule 8 forbids outright.
+float grain_hash(vec2 p) {
+	p = fract(p * vec2(123.34, 456.21));
+	p += dot(p, p + 45.32);
+	return fract(p.x * p.y);
+}
+
+float grain_noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(
+		mix(grain_hash(i), grain_hash(i + vec2(1.0, 0.0)), f.x),
+		mix(grain_hash(i + vec2(0.0, 1.0)), grain_hash(i + vec2(1.0, 1.0)), f.x),
+		f.y
+	);
+}
 
 // The heightfield covers 120 m; the drawn plane is wider than that so the
 // frame never contains the field's own edge or the horizon behind it. Outside
@@ -247,16 +316,38 @@ void light() {
 	// ATTENUATION carries the directional light's shadow term, already
 	// softened by the shadow filter, so folding it in here is what makes the
 	// long cast shadows land in the dark band with a soft edge.
-	float band = smoothstep(band_threshold - band_softness, band_threshold + band_softness, lambert * ATTENUATION);
+	float shaded = lambert * ATTENUATION;
+	float band = smoothstep(band_threshold - band_softness, band_threshold + band_softness, shaded);
+
+	// The grain, as a second boundary inside the lit band. Two octaves so the
+	// patches do not all arrive at one wavelength, mapped to -1..1 and added to
+	// the Lambert term -- which is the same thing as subtracting it from the
+	// threshold, written the way round that keeps `grain_threshold` readable as
+	// "the slope this splits at".
+	//
+	// It composes with band_threshold rather than replacing it: the preset
+	// decides where the shadow starts, this decides how the lit field varies.
+	float grain = grain_noise(v_world.xz * grain_scale)
+		+ 0.35 * grain_noise(v_world.xz * grain_scale * 2.7);
+	grain = (grain / 1.35 - 0.5) * 2.0;
+	float grain_band = smoothstep(
+		grain_threshold - grain_softness,
+		grain_threshold + grain_softness,
+		shaded + grain * grain_amount
+	);
+	vec3 snow_surface = mix(snow_grain_tone.rgb, snow_lit.rgb, grain_band);
+
 	// Scaled down by track_tint: the print is a dent now, drawn by the normal,
 	// and the colour is only there to keep it readable at a distance where the
 	// shading detail is a pixel wide. At full strength it went back to being a
 	// sticker on the snow.
 	float t = track_at(v_world.xz) * track_tint;
-	vec3 lit = mix(snow_lit.rgb, track_lit.rgb, t);
+	vec3 lit = mix(snow_surface, track_lit.rgb, t);
 	vec3 shade = mix(snow_shade.rgb, track_shade.rgb, t);
 	// LIGHT_COLOR is deliberately not a factor: the band picks a palette
 	// colour outright. That is the only way the shadow band is guaranteed to
-	// still be a palette colour once it reaches the screen.
-	DIFFUSE_LIGHT += mix(shade, lit, band);
+	// still be a palette colour once it reaches the screen. `light_tint` is not
+	// LIGHT_COLOR -- it is an authored, luminance-normalised hue rotation on the
+	// lit band alone, and the shade band never sees it.
+	DIFFUSE_LIGHT += mix(shade, lit * light_tint, band);
 }

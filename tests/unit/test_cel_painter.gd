@@ -120,3 +120,69 @@ func test_the_farmhouse_asks_for_the_same_steps_the_painter_defaults_to() -> voi
 		_painter.shade_for(_bible.structure_tones[0])
 	)
 	house.free()
+
+
+## ---------------------------------------------------------------------------
+## THE WORLD'S SHADING, WHICH ARRIVES FROM THE LIGHTING AND NOT FROM HERE
+## ---------------------------------------------------------------------------
+## `cel_band_threshold`, `cel_band_softness` and the colour the lit band takes
+## from the light are authored on the six LightingPresets. They have to reach
+## every material this painter has ever made, including the ones made before the
+## preset landed and the ones made after it -- a building instanced at runtime
+## has to be lit like the buildings that were already standing.
+##
+## The state is deliberately STATIC. A painter is a RefCounted created and
+## dropped by whoever is placing a building, so there is no instance for the
+## director to hold; and there is exactly one lighting rig in the game, so one
+## set of values is the truth for all of them. The alternative -- every building
+## script growing a _process that pulls from the ServiceRegistry -- puts the same
+## four lines in five files and is the shape a contract drifts out of.
+
+func test_a_material_built_after_the_light_lands_already_carries_it() -> void:
+	CelPainterScript.set_world_shading(0.31, 0.09, Color(1.2, 0.98, 0.8))
+	var material := _painter.material_for(_bible.snow_tones[0])
+	assert_almost_eq(
+		float(material.get_shader_parameter("band_threshold")),
+		0.31 + CelPainterScript.SOLID_BAND_OFFSET, 0.0001,
+		"a wall's band is the ground's plus the offset -- see CelPainter.SOLID_BAND_OFFSET"
+	)
+	assert_almost_eq(float(material.get_shader_parameter("band_softness")), 0.09, 0.0001)
+	var tint: Vector3 = material.get_shader_parameter("light_tint")
+	assert_almost_eq(tint.x, 1.2, 0.0001, "the light's red")
+	CelPainterScript.set_world_shading(0.12, 0.07, Color.WHITE)
+
+
+## The other direction, and the one that actually matters in play: the farmstead
+## is painted in _ready() and the light changes twice a day for the next seven
+## days.
+func test_a_material_built_before_the_light_changes_is_repainted_by_it() -> void:
+	CelPainterScript.set_world_shading(0.12, 0.07, Color.WHITE)
+	var material := _painter.material_for(_bible.structure_tones[0])
+	CelPainterScript.set_world_shading(0.24, 0.10, Color(1.1, 1.0, 0.85))
+	assert_almost_eq(
+		float(material.get_shader_parameter("band_threshold")),
+		0.24 + CelPainterScript.SOLID_BAND_OFFSET, 0.0001,
+		"a material already in the world kept the band it was built with"
+	)
+	var tint: Vector3 = material.get_shader_parameter("light_tint")
+	assert_almost_eq(tint.z, 0.85, 0.0001, "the light's blue never reached a standing building")
+	CelPainterScript.set_world_shading(0.12, 0.07, Color.WHITE)
+
+
+## Materials are Resources and nothing frees them by hand, so the register that
+## makes the broadcast possible must not be the thing that keeps them alive. It
+## holds weak references and drops the dead ones on every broadcast.
+func test_the_register_does_not_keep_a_dropped_material_alive() -> void:
+	var before := CelPainterScript.live_material_count()
+	var scratch: CelPainter = CelPainterScript.new()
+	scratch.material_for(_bible.warm_tones[2])
+	assert_true(
+		CelPainterScript.live_material_count() > before,
+		"a new material did not register itself, so a broadcast would never reach it"
+	)
+	scratch = null
+	CelPainterScript.set_world_shading(0.12, 0.07, Color.WHITE)
+	assert_eq(
+		CelPainterScript.live_material_count(), before,
+		"the register is still holding a material whose painter is gone"
+	)

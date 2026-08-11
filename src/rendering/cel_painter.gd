@@ -24,11 +24,87 @@ extends RefCounted
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
 const CEL_SHADER_PATH := "res://assets/shaders/cel_flat.gdshader"
 
+## ---------------------------------------------------------------------------
+## THE WORLD'S SHADING, WHICH ARRIVES FROM THE LIGHTING AND NOT FROM HERE
+## ---------------------------------------------------------------------------
+## LightingPreset carries `cel_band_threshold`, `cel_band_softness` and the
+## colour the lit band takes from the light. They have to reach every material
+## this class has ever made -- the ones made before the preset landed and the
+## ones made after it, because a building instanced at runtime has to be lit like
+## the buildings already standing.
+##
+## STATIC, and deliberately. A painter is a RefCounted made and dropped by
+## whoever is placing a building, so there is no instance for the director to
+## hold a reference to; and there is exactly one lighting rig in the game, so one
+## set of values is the truth for all of them. The alternative -- every building
+## script growing a _process that pulls the same four lines out of the
+## ServiceRegistry -- is how a contract drifts, and it would have meant editing
+## five files instead of this one.
+##
+## The register holds WEAK references. A strong one would make this the reason
+## every material the game has ever built stays alive for the process's lifetime,
+## which is a leak with a tidy name.
+## HOW FAR ABOVE THE GROUND'S BAND A SOLID'S BAND SITS, and the reason the two
+## are not the same number.
+##
+## A ground plane and a wall meet a 21.5-degree sun at completely different
+## angles: flat snow sits at N.L = 0.37 whatever the azimuth, while a wall runs
+## from 0.93 down to 0 depending on which way it faces. The ground was tuned to
+## 0.12 by screenshot against `Refs/game ref/level.jpg`; `cel_flat.gdshader` has
+## shipped at 0.30 since it was written, and at 0.12 a wall stays lit until it is
+## 83 degrees off the sun instead of 71 -- which is a different building.
+##
+## So the preset moves BOTH and the gap between them is held. Daylight is
+## 0.12 + 0.18 = 0.30, which is exactly what the farmstead ships with today, and
+## the dark presets carry the solids up with the ground rather than leaving them
+## behind.
+const SOLID_BAND_OFFSET := 0.18
+
+static var _band_threshold := 0.30
+static var _band_softness := 0.07
+static var _light_tint := Vector3(1.0, 1.0, 1.0)
+static var _register: Array[WeakRef] = []
+
 var _bible: ColorBible
 var _shader: Shader
 var _materials: Dictionary = {}
 var _snow_step: int
 var _structure_step: int
+
+
+## Called by LightingDirector on every write -- once per preset change, and once
+## per frame for the eight seconds a crossfade runs.
+##
+## `ground_threshold` is the preset's own value, the one the SNOW takes;
+## SOLID_BAND_OFFSET above is what turns it into a wall's.
+static func set_world_shading(ground_threshold: float, softness: float, tint: Color) -> void:
+	_band_threshold = ground_threshold + SOLID_BAND_OFFSET
+	_band_softness = softness
+	_light_tint = Vector3(tint.r, tint.g, tint.b)
+	var living: Array[WeakRef] = []
+	for handle in _register:
+		var material := handle.get_ref() as ShaderMaterial
+		if material == null:
+			continue
+		_stamp(material)
+		living.append(handle)
+	_register = living
+
+
+## How many materials the broadcast would currently reach. Exists so a test can
+## prove the register drops what it no longer holds.
+static func live_material_count() -> int:
+	var alive := 0
+	for handle in _register:
+		if handle.get_ref() != null:
+			alive += 1
+	return alive
+
+
+static func _stamp(material: ShaderMaterial) -> void:
+	material.set_shader_parameter("band_threshold", _band_threshold)
+	material.set_shader_parameter("band_softness", _band_softness)
+	material.set_shader_parameter("light_tint", _light_tint)
 
 
 ## How far down the palette the shadow band sits, per family.
@@ -84,6 +160,11 @@ func material_for(lit: Color) -> ShaderMaterial:
 	material.shader = _shader
 	material.set_shader_parameter("lit_color", lit)
 	material.set_shader_parameter("shade_color", shade_for(lit))
+	# Stamped with whatever the light currently is, then registered so the next
+	# preset change finds it. Both halves matter: a building placed at midnight
+	# must not arrive lit for noon, and it must not stay lit for midnight either.
+	_stamp(material)
+	_register.append(weakref(material))
 	_materials[key] = material
 	return material
 

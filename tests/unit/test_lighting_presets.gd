@@ -194,6 +194,12 @@ func test_flat_is_the_reference_and_has_no_atmosphere() -> void:
 	var flat = presets["flat"]
 	assert_false(flat.fog_enabled, "FLAT is the reference; fog is a look")
 	assert_false(flat.glow_enabled, "FLAT is the reference; bloom is a look")
+	assert_false(flat.volumetric_fog_enabled, "FLAT is the reference; air is a look")
+	assert_almost_eq(
+		flat.world_light_strength, 0.0, 0.001,
+		"FLAT is what the palette looks like before anyone has an opinion, so its light "
+			+ "may not tint the world"
+	)
 	assert_true(flat.shadows_enabled, "FLAT is correct, and shadows are correct")
 	assert_almost_eq(flat.warm_accent_energy, 0.0, 0.001, "FLAT holds no warm accent")
 
@@ -390,6 +396,152 @@ func test_the_seven_days_light_the_way_the_gdd_says() -> void:
 			schedules[day].night_lighting_preset, expected[day][1],
 			"day %d night" % day
 		)
+
+# --- the air, the sky and the light the world takes -------------------------
+
+## THE GRADIENT SKY, AND WHICH WAY UP IT GOES.
+##
+## The background used to be one flat palette colour. A vertical gradient --
+## deeper at the zenith, pale at the horizon -- is what puts air above the
+## landscape, and it is per-preset because PALE DAY and DEEP NIGHT cannot share
+## one sky.
+##
+## The direction is the assertion, not the values: a sky that is lighter at the
+## top than at the horizon is a sky lit from above the camera, which this game
+## never is -- the sun is 21.5 degrees up.
+func test_every_sky_is_a_gradient_and_the_horizon_is_the_pale_end() -> void:
+	var presets := _load_presets()
+	assert_false(presets.is_empty(), "no presets loaded, so this gate inspected nothing")
+	for name in presets:
+		var zenith: Color = presets[name].sky_zenith_color
+		var horizon: Color = presets[name].sky_horizon_color
+		var zenith_luma := 0.2126 * zenith.r + 0.7152 * zenith.g + 0.0722 * zenith.b
+		var horizon_luma := 0.2126 * horizon.r + 0.7152 * horizon.g + 0.0722 * horizon.b
+		assert_true(
+			horizon_luma > zenith_luma,
+			"%s puts %f at the zenith and %f at the horizon, so its sky is not a gradient "
+				% [name, zenith_luma, horizon_luma]
+				+ "in the direction air actually goes"
+		)
+
+
+## The sky, the fog and the ambient are ATMOSPHERE, not surface colour, so they
+## are not bound by the twelve. What they must not do is drift out of the frame's
+## own colour family: a sky the frame never resolves toward is a sky that reads
+## as a hole in the picture.
+## SUNRISE is the exception and is required to be one, on exactly the rule
+## test_sunrise_is_the_only_warm_light_in_the_run states: it is the single warm
+## beat in a seven-day run, and a dawn with a blue horizon is not a dawn. Its
+## ZENITH still has to be cold -- the warmth is at the horizon, where the sun is.
+func test_every_sky_but_the_dawn_stays_in_the_cold_blue_the_frame_is() -> void:
+	var presets := _load_presets()
+	assert_false(presets.is_empty(), "no presets loaded, so this gate inspected nothing")
+	assert_true(presets.has("sunrise"), "there is no sunrise, so the exception below is untested")
+	for name in presets:
+		var zenith: Color = presets[name].sky_zenith_color
+		assert_true(
+			zenith.b >= zenith.r,
+			"%s's zenith is #%s, which is warmer than it is cold" % [name, zenith.to_html(false)]
+		)
+		var horizon: Color = presets[name].sky_horizon_color
+		if name == "sunrise":
+			assert_true(
+				horizon.r > horizon.b,
+				"SUNRISE's horizon is #%s, which is not the warm end of the one warm day in "
+					% horizon.to_html(false)
+					+ "the run"
+			)
+			continue
+		assert_true(
+			horizon.b >= horizon.r,
+			"%s's horizon is #%s, which is warmer than it is cold"
+				% [name, horizon.to_html(false)]
+		)
+
+
+## The fog's own brightness. At 1.0 the fog target is exactly the palette tone,
+## so distant SNOW is unchanged and only the dark things move -- which is what
+## aerial perspective is. Pull it down and the whole field darkens with distance
+## instead, which is a different effect and not the one asked for.
+func test_no_preset_dims_its_own_air_below_the_snow_it_fogs_toward() -> void:
+	var presets := _load_presets()
+	assert_false(presets.is_empty(), "no presets loaded, so this gate inspected nothing")
+	for name in presets:
+		assert_true(
+			presets[name].fog_light_energy >= 0.85,
+			"%s burns its fog at %f; below about 0.85 the distant snow goes darker than "
+				% [name, presets[name].fog_light_energy]
+				+ "the near snow, which is not aerial perspective"
+		)
+
+
+## THE WORLD'S LIGHT COLOUR -- concern 3 of the clock/lighting report, as a gate.
+##
+## SUNRISE went warm on the buildings and left the snow cold lavender, because
+## fog was the world's only hue control and fog moves dark surfaces further than
+## light ones. `world_light_color` is the other half: the colour the LIT cel band
+## is multiplied by, which is a LIGHT and not an albedo, and it reaches the snow.
+##
+## The shade band is deliberately NOT tinted. Warm sun on blue shadow is what a
+## winter dawn looks like, and it is also what keeps Art Bible section 4.1's
+## promise that the shadow band is a palette colour chosen outright.
+func test_only_sunrise_puts_a_warm_light_on_the_world() -> void:
+	var bible = ResourceLoader.load(PALETTE_PATH, "", ResourceLoader.CACHE_MODE_IGNORE)
+	if bible == null:
+		return
+	var presets := _load_presets()
+	assert_false(presets.is_empty(), "no presets loaded, so this gate inspected nothing")
+	assert_true(presets.has("sunrise"), "there is no sunrise to check")
+	if presets.has("sunrise"):
+		assert_true(
+			presets["sunrise"].world_light_strength > 0.0,
+			"SUNRISE puts no warm light on the world, so the snow stays cold lavender "
+				+ "while the buildings go warm -- which is the defect this field exists for"
+		)
+		assert_true(
+			bible.is_warm(presets["sunrise"].world_light_color),
+			"SUNRISE's world light is #%s, which is not one of the three warm tones"
+				% presets["sunrise"].world_light_color.to_html(false)
+		)
+	for name in presets:
+		if name == "sunrise":
+			continue
+		assert_almost_eq(
+			presets[name].world_light_strength, 0.0, 0.0001,
+			"%s also tints the world's light, so sunrise is not a beat any more" % name
+		)
+
+
+## Style document section 39, and the number it is emphatic about. The goal is a
+## little cold moisture in the air; at 0.01 the player cannot see the ground.
+##
+## CHECKED WHETHER OR NOT THE PRESET HAS IT SWITCHED ON, and that is deliberate.
+## All six ship with it OFF -- it lifts the nearest tree in the frame from
+## #182239 to #2F3A4F, and the foreground staying near-black is the whole point
+## of the aerial perspective it would be sitting on top of. So these numbers are
+## the authored intent for whoever turns it back on, and a gate that skipped a
+## disabled preset would inspect nothing at all and report PASS, which is a shape
+## this project has now met five times.
+func test_the_volumetric_air_stays_within_the_document_it_came_from() -> void:
+	var presets := _load_presets()
+	assert_false(presets.is_empty(), "no presets loaded, so this gate inspected nothing")
+	for name in presets:
+		var preset = presets[name]
+		if name == "flat":
+			# FLAT is the reference and carries no atmosphere to author.
+			continue
+		assert_true(
+			preset.volumetric_fog_density > 0.0 and preset.volumetric_fog_density <= 0.002,
+			"%s asks for a volumetric density of %f; the style document's band is "
+				% [name, preset.volumetric_fog_density]
+				+ "0.0008 to 0.002 and is emphatic that 0.01 is a whiteout"
+		)
+		assert_true(
+			preset.volumetric_fog_anisotropy >= 0.0 and preset.volumetric_fog_anisotropy <= 0.3,
+			"%s scatters its volumetric air at %f, outside the document's 0.1 to 0.2"
+				% [name, preset.volumetric_fog_anisotropy]
+		)
+
 
 ## FLAT is a debug reference. A day that used it would be a day with no weather
 ## and no time of day at all -- Art Bible section 4.2 says 非游戏内使用 in as

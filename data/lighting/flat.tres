@@ -13,4 +13,7 @@ fog_enabled = false
 fog_density = 0.0
 glow_enabled = false
 glow_strength = 0.0
+sky_horizon_color = Color(0.71450984, 0.7986275, 0.9005883, 1)
+volumetric_fog_density = 0.0
+volumetric_fog_albedo = Color(0.7364706, 0.81411767, 0.9082353, 1)
 warm_accent_energy = 0.0

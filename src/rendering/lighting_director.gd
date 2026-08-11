@@ -144,6 +144,7 @@ var _fade_elapsed := 0.0
 var _fade_duration := 0.0
 
 var _panel: Node = null
+var _sky_material: ProceduralSkyMaterial = null
 
 
 func _ready() -> void:
@@ -175,29 +176,77 @@ func _exit_tree() -> void:
 
 func _build_environment() -> void:
 	var env := Environment.new()
-	env.background_mode = Environment.BG_COLOR
+	# A GRADIENT SKY RATHER THAN A FLAT COLOUR. The stops come off the preset and
+	# are rewritten on every _write(), so the six do not all share one sky.
+	#
+	# Honest about its reach: the ground plane is 140 m across and the camera is
+	# pitched 45 degrees into it, so at every framing the game currently uses the
+	# frame is entirely ground and NONE of this is on screen. It earns its place
+	# anyway -- it is what the fog resolves toward as `fog_sky_affect` comes up in
+	# the storm, and it is what stops the first shot that tips the camera finding
+	# six presets with the same sky.
+	_sky_material = ProceduralSkyMaterial.new()
+	_sky_material.use_debanding = true
+	# No sun disc. The sun is 21.5 degrees up and its light is the frame's
+	# subject; a white blob on the horizon is not.
+	_sky_material.sun_angle_max = 0.0
+	_sky_material.sun_curve = 1.0
+	var sky := Sky.new()
+	sky.sky_material = _sky_material
+	# The sky is a backdrop, not a light -- the radiance cubemap exists to be
+	# sampled by ambient and by reflections, and both are switched off below. It
+	# is REALTIME anyway because the gradient is rewritten every frame of a
+	# crossfade, and a realtime sky is the cheap path for that. 256 is not a
+	# choice: anything smaller draws
+	# "WARNING: Realtime Skies can only use a radiance size of 256" on the first
+	# frame, which the test and capture runs are required to be free of.
+	sky.process_mode = Sky.PROCESS_MODE_REALTIME
+	sky.radiance_size = Sky.RADIANCE_SIZE_256
+	env.sky = sky
+	env.background_mode = Environment.BG_SKY
 	env.background_color = _bible.snow_tones[0]
 	# Ambient is the CHARACTER's fill and nothing else's -- every world shader
 	# declares ambient_light_disabled. The colour and the energy come off the
 	# preset; the source mode is what makes them mean anything.
+	#
+	# THE SKY MUST NOT TAKE THIS OVER. Switching the background from a flat
+	# colour to a sky is exactly the change that would quietly start lighting the
+	# character from the sky instead of from the authored fill, and
+	# tests/art/test_character_lighting.gd would then be measuring a number
+	# nothing uses. Both lines below are that, said out loud.
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_sky_contribution = 0.0
+	# The character is the one stock StandardMaterial3D in the game, so he is the
+	# one thing a sky reflection could reach. Art Bible rule 8 bans environment
+	# reflections in the world and the character has no business acquiring one
+	# from a backdrop nobody can see.
+	env.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
 	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
 	env.ssao_enabled = false
 	env.ssil_enabled = false
 	env.sdfgi_enabled = false
-	# EXPONENTIAL, not DEPTH, and the difference matters at this camera. The rig
-	# is orthographic on a 90 m boom, so every fragment in the frame sits within
-	# a few metres of the same depth. Under DEPTH mode, with its begin/end
-	# window, that lands the whole frame on one point of the ramp and
-	# `fog_density` stops behaving like a density at all. Exponential fog is
-	# 1 - exp(-density * depth), so at 90 m a density of 0.0016 is 13% of the way
-	# to the fog colour and 0.045 is 98% -- a knob that means the same thing in
-	# every preset and reads as aerial perspective at the bottom of its range and
-	# as a whiteout at the top.
-	env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
-	# The sky is behind a 140 m ground plane and never in shot; fogging it would
-	# only wash the horizon the frame does not contain.
-	env.fog_sky_affect = 0.0
+	# DEPTH, NOT EXPONENTIAL, AND THE REASON IS THE BOOM.
+	#
+	# The rig is orthographic 90 m back, so the whole farmstead sits between
+	# about 69 m and 100 m from the camera -- not because anything is far away,
+	# but because the camera is. Over that stretch 1 - exp(-density * depth) is
+	# very nearly a straight line that starts a long way above zero: fog enough
+	# to blue the far tree already greys the near one, and the near one is the
+	# one that has to stay black. That is why every tree in the scene was the
+	# same near-black whatever its distance, and it is the main reason the frame
+	# read flat.
+	#
+	# A depth window can begin its ramp in front of the nearest thing in the
+	# frame and end it past the furthest, which is what aerial perspective is.
+	# The price is that the window is measured from the CAMERA and is therefore
+	# tied to CameraRig.boom_length -- see tests/art/test_aerial_perspective.gd,
+	# which is that coupling written down.
+	#
+	# Note what this does to `fog_density`: in DEPTH mode it is the fog's OPACITY
+	# at the far edge of the window, a 0..1 blend, not a density. Every preset's
+	# value was re-authored for it.
+	env.fog_mode = Environment.FOG_MODE_DEPTH
+	env.fog_depth_curve = 1.0
 	env.fog_aerial_perspective = 0.0
 	# Bloom off whatever is brightest in the frame. The threshold sits just under
 	# 1.0 so a palette colour at full intensity -- a lit window, snow in a storm
@@ -205,6 +254,28 @@ func _build_environment() -> void:
 	env.glow_hdr_threshold = 0.95
 	env.glow_bloom = 0.05
 	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
+	# THE MIPS THE BLOOM IS BUILT FROM, authored rather than left at Godot's
+	# default of levels 3 and 5.
+	#
+	# Level 5 is a 1/32 buffer, which for a small very bright source -- a lit
+	# window, a firebox seen through a door -- upsamples into a visibly BLOCKY
+	# rectangle tens of pixels across rather than a halo. It is plainly a
+	# rendering artifact rather than a look, and it is what a wide frame of the
+	# farmstead shows around the house the moment anything inside it emits.
+	# Levels 2 to 4 give the same soft spread at a quarter the radius and no
+	# staircase. Style document section 13 asks for exactly this restraint --
+	# a small glow on the warm points, and none on the snow.
+	#
+	# set_glow_level() is ZERO-based while the inspector's `glow_levels/N` is
+	# one-based, so index 1..3 here is the inspector's levels 2 to 4. Godot's
+	# own default is indices 2 and 4. Getting that wrong is not silent: index 7
+	# prints "Index p_level = 7 is out of bounds" on every frame, which is how
+	# this comment came to be written.
+	for level in range(0, 7):
+		env.set_glow_level(level, 0.0)
+	env.set_glow_level(1, 1.0)
+	env.set_glow_level(2, 1.0)
+	env.set_glow_level(3, 0.5)
 	environment = env
 
 
@@ -307,6 +378,46 @@ func target_preset_id() -> StringName:
 ## consumer -- a stove or a lit window scales its own energy by it.
 func warm_accent_energy() -> float:
 	return _active.warm_accent_energy if _active != null else 0.0
+
+
+# --- what the world's shaders read off the light ----------------------------
+#
+# The three values the two cel shaders take from a preset. TerrainRenderer pulls
+# them every frame for the ground; CelPainter is handed them in _write() for
+# every solid, because a painter is a RefCounted nobody holds.
+
+func cel_band_threshold() -> float:
+	return _active.cel_band_threshold if _active != null else 0.12
+
+
+func cel_band_softness() -> float:
+	return _active.cel_band_softness if _active != null else 0.07
+
+
+## THE COLOUR THE LIT CEL BAND IS MULTIPLIED BY -- normalised so it cannot dim.
+##
+## A raw multiply by an amber light darkens snow as much as it warms it, and the
+## exposure would have to be re-tuned to pay for it, per preset, by hand.
+## Dividing the light colour by its own luminance first makes the tint a pure hue
+## rotation: white and a unit-luminance colour both have luminance 1, so every
+## point on the lerp between them does too.
+##
+## In LINEAR space, because that is where the shader multiplies. The uniform is
+## deliberately not `source_color` -- it is a multiplier, and its red channel
+## goes above 1.0 whenever the light is warm.
+func world_light_tint() -> Color:
+	return tint_for(_active) if _active != null else Color.WHITE
+
+
+static func tint_for(look: LightingPreset) -> Color:
+	if look.world_light_strength <= 0.0:
+		return Color.WHITE
+	var target := look.world_light_color.srgb_to_linear()
+	var luma := 0.2126 * target.r + 0.7152 * target.g + 0.0722 * target.b
+	if luma <= 0.0:
+		return Color.WHITE
+	var unit := Color(target.r / luma, target.g / luma, target.b / luma)
+	return Color.WHITE.lerp(unit, clampf(look.world_light_strength, 0.0, 1.0))
 
 
 ## Snaps to one of the six, abandoning any crossfade. False if there is no such
@@ -417,6 +528,34 @@ static func blend(from: LightingPreset, to: LightingPreset, t: float) -> Lightin
 		to.fog_density if to.fog_enabled else 0.0,
 		k
 	)
+	result.fog_light_energy = lerpf(from.fog_light_energy, to.fog_light_energy, k)
+	# The window travels with the fade. Two presets whose windows differ would
+	# otherwise snap the whole depth ramp at the midpoint -- every distant tree
+	# in the frame changing colour in one tick, which is the pop the crossfade
+	# exists to prevent.
+	result.fog_depth_begin = lerpf(from.fog_depth_begin, to.fog_depth_begin, k)
+	result.fog_depth_end = lerpf(from.fog_depth_end, to.fog_depth_end, k)
+	result.fog_sky_affect = lerpf(from.fog_sky_affect, to.fog_sky_affect, k)
+	result.sky_zenith_color = from.sky_zenith_color.lerp(to.sky_zenith_color, k)
+	result.sky_horizon_color = from.sky_horizon_color.lerp(to.sky_horizon_color, k)
+	result.sky_curve = lerpf(from.sky_curve, to.sky_curve, k)
+	result.sky_energy = lerpf(from.sky_energy, to.sky_energy, k)
+	# Volumetric air, on the same rule as the fog switch above: on the moment
+	# either end wants it, with the density carrying the fade, because volumetric
+	# fog off IS volumetric fog at density zero.
+	result.volumetric_fog_enabled = from.volumetric_fog_enabled or to.volumetric_fog_enabled
+	result.volumetric_fog_density = lerpf(
+		from.volumetric_fog_density if from.volumetric_fog_enabled else 0.0,
+		to.volumetric_fog_density if to.volumetric_fog_enabled else 0.0,
+		k
+	)
+	result.volumetric_fog_albedo = from.volumetric_fog_albedo.lerp(to.volumetric_fog_albedo, k)
+	result.volumetric_fog_anisotropy = lerpf(
+		from.volumetric_fog_anisotropy, to.volumetric_fog_anisotropy, k)
+	result.volumetric_fog_ambient_inject = lerpf(
+		from.volumetric_fog_ambient_inject, to.volumetric_fog_ambient_inject, k)
+	result.world_light_color = from.world_light_color.lerp(to.world_light_color, k)
+	result.world_light_strength = lerpf(from.world_light_strength, to.world_light_strength, k)
 	result.glow_enabled = from.glow_enabled or to.glow_enabled
 	result.glow_strength = lerpf(
 		from.glow_strength if from.glow_enabled else 0.0,
@@ -440,9 +579,47 @@ func _write(look: LightingPreset) -> void:
 		env.tonemap_exposure = look.tonemap_exposure
 		env.fog_enabled = look.fog_enabled
 		env.fog_light_color = look.fog_color
+		env.fog_light_energy = look.fog_light_energy
 		env.fog_density = look.fog_density
+		env.fog_depth_begin = look.fog_depth_begin
+		env.fog_depth_end = look.fog_depth_end
+		env.fog_sky_affect = look.fog_sky_affect
 		env.glow_enabled = look.glow_enabled
 		env.glow_intensity = look.glow_strength
+		env.volumetric_fog_enabled = look.volumetric_fog_enabled
+		env.volumetric_fog_density = look.volumetric_fog_density
+		env.volumetric_fog_albedo = look.volumetric_fog_albedo
+		env.volumetric_fog_anisotropy = look.volumetric_fog_anisotropy
+		env.volumetric_fog_ambient_inject = look.volumetric_fog_ambient_inject
+		# For the same reason ambient_light_sky_contribution is 0: the sky is a
+		# backdrop nobody can see at any framing this game uses, and it has no
+		# business being a light source. Measured, in case it looks like
+		# superstition: it moves nothing in the current frame either way.
+		env.volumetric_fog_sky_affect = 0.0
+		# The froxel volume is 64 m deep by default and the farmstead starts at
+		# about 69 m from an orthographic camera 90 m back, so at the default
+		# length the volumetric fog is entirely BEHIND the near plane of its own
+		# volume and does nothing at all. It has to reach the end of the depth
+		# window, plus a margin for the far corners of a wide frame.
+		env.volumetric_fog_length = look.fog_depth_end + 20.0
+		env.background_energy_multiplier = look.sky_energy
+	if _sky_material != null:
+		_sky_material.sky_top_color = look.sky_zenith_color
+		_sky_material.sky_horizon_color = look.sky_horizon_color
+		_sky_material.sky_curve = look.sky_curve
+		# Below the horizon is the ground plane's own colour rather than a
+		# default brown: nothing in this game is ever above the horizon line, so
+		# the lower dome only ever shows through as fog and as the sliver past
+		# the plane's edge in a very wide shot.
+		_sky_material.ground_horizon_color = look.sky_horizon_color
+		_sky_material.ground_bottom_color = look.sky_zenith_color
+		_sky_material.ground_curve = look.sky_curve
+	# The world's two cel shaders. The ground pulls these itself every frame
+	# (TerrainRenderer._process); every solid is reached here, because a
+	# CelPainter is a RefCounted nobody keeps a reference to.
+	CelPainter.set_world_shading(
+		look.cel_band_threshold, look.cel_band_softness, tint_for(look)
+	)
 	if _sun == null:
 		return
 	_sun.rotation = Vector3(

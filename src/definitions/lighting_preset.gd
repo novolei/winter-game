@@ -89,15 +89,80 @@ extends Resource
 
 @export_group("Air")
 @export var fog_enabled := true
-@export var fog_density := 0.01
-## The colour the whole frame washes toward. The camera is orthographic on a 90 m
-## boom, so every fragment is at very nearly the same depth and the fog is close
-## to a flat, full-screen tint whose strength is the density -- which makes this
-## the only control in the preset that moves the WORLD's hue at all, the cel
-## bands being palette colours chosen outright. On-palette, therefore, always.
+## THE FOG'S OPACITY AT THE FAR EDGE OF ITS WINDOW -- a 0..1 blend, NOT a
+## density, because the fog is in DEPTH mode. Godot computes
+##
+##     fog = smoothstep(fog_depth_begin, fog_depth_end, distance) * fog_density
+##
+## so this is the most fog the frame can ever hold. A value authored as though it
+## were still an exponential density (0.0016) is invisible.
+@export var fog_density := 0.35
+## The colour the frame washes toward with distance. Fog is additive toward a
+## colour, so it moves DARK surfaces much further than light ones -- fog toward
+## the palette's lightest snow leaves distant snow where it is and turns distant
+## trees blue, which is exactly what aerial perspective is. On-palette, always.
 @export var fog_color := Color(0.56078434, 0.6901961, 0.84705883)
+## How bright the fog burns. At 1.0 the target is exactly the palette tone, so
+## distant snow is unchanged; below about 0.85 the far field goes darker than the
+## near field, which is a different effect and not this one. The style document
+## asks for 0.7 -- that was written for a perspective camera whose far distance
+## really is far away.
+@export var fog_light_energy := 1.0
+
+## THE DEPTH WINDOW, AND WHY IT IS A NINETY-METRE NUMBER FOR A TWENTY-METRE
+## FARMSTEAD.
+##
+## The rig is ORTHOGRAPHIC on a 90 m boom (src/rendering/camera_rig.gd), so the
+## whole scene sits between about 69 m and 100 m from the camera -- not because
+## anything is far away, but because the camera is. Exponential fog cannot make a
+## picture out of that: 1 - exp(-density * depth) over 69..100 m is nearly a
+## straight line starting well above zero, so fog enough to blue the far tree
+## already greys the near one, and the near one has to stay black.
+##
+## A depth window can. Begin the ramp just in front of the nearest thing in the
+## frame and end it past the furthest, and the near tree gets nothing while the
+## far tree gets nearly all of it. The price is that these are measured FROM THE
+## CAMERA and are therefore tied to `CameraRig.boom_length` --
+## tests/art/test_aerial_perspective.gd is that coupling written down.
+@export var fog_depth_begin := 74.0
+@export var fog_depth_end := 118.0
+## How much of the fog colour the sky takes. The sky is behind a 140 m ground
+## plane and is not in shot at any framing the game currently uses, so this is
+## nearly always 0 -- except in the storm, where the horizon has to disappear.
+@export var fog_sky_affect := 0.0
+
 @export var glow_enabled := true
 @export var glow_strength := 0.3
+
+@export_group("Sky")
+## The background used to be one flat palette colour. A vertical gradient is what
+## puts air above the landscape, and it is per-preset because PALE DAY and DEEP
+## NIGHT cannot share one sky.
+##
+## Honest about its reach: at the framings the game uses today the ground plane
+## fills the frame and NONE of this is on screen. It is here so that the first
+## shot that tips the camera or widens the frame does not find six presets that
+## all have the same sky, and so the fog has something to resolve toward.
+@export var sky_zenith_color := Color(0.3647059, 0.48235294, 0.6509804)
+@export var sky_horizon_color := Color(0.7176471, 0.8039216, 0.9019608)
+## Where between the two the gradient turns over. Low values hold the horizon
+## colour up most of the dome, which is what a low winter sun does to a sky.
+@export var sky_curve := 0.15
+@export var sky_energy := 1.0
+
+@export_group("Volumetric Air")
+## Style document section 39, Forward+ only -- and we are Forward+. The goal is a
+## little cold moisture in the air, not a player who cannot see: the document is
+## emphatic that 0.01 is far too much, and its band is 0.0008 to 0.002.
+##
+## The froxel volume is only 64 m deep by default and the whole farmstead is
+## further from the camera than that, so LightingDirector lengthens it to reach
+## the end of the fog window.
+@export var volumetric_fog_enabled := false
+@export var volumetric_fog_density := 0.0012
+@export var volumetric_fog_albedo := Color(0.7176471, 0.8039216, 0.9019608)
+@export var volumetric_fog_anisotropy := 0.15
+@export var volumetric_fog_ambient_inject := 0.15
 
 @export_group("Shading")
 ## Art Bible section 4.2 lists the tonemap among a preset's contents, and it
@@ -110,14 +175,30 @@ extends Resource
 
 ## How much of the world falls into the shadow band, and how soft the border is.
 ##
-## AUTHORED BUT NOT YET WIRED. These belong to the cel shaders' `band_threshold`
-## and `band_softness` uniforms, which TerrainRenderer and CelPainter set once at
-## startup from their own exports. Driving them per preset needs a setter on each
-## and a way for the director to find them; both files were another agent's
-## live work when these presets were authored, so the values ship as the
-## authored intent and the wiring is a named, single-commit job.
+## WIRED. LightingDirector publishes these on every write; TerrainRenderer pushes
+## them into the ground's material and CelPainter broadcasts them to every solid
+## in the world. 0.12 is the daylight value and is what TerrainRenderer itself is
+## tuned to -- tests/unit/test_lighting_presets.gd reads it off the renderer
+## rather than duplicating it, so the two cannot disagree silently.
 @export var cel_band_threshold := 0.12
 @export var cel_band_softness := 0.07
+
+## THE COLOUR THE LIT CEL BAND TAKES FROM THE LIGHT.
+##
+## Concern 3 of the clock/lighting report: SUNRISE warmed the buildings and left
+## the snow cold lavender, because fog was the world's only hue control and fog
+## moves dark surfaces further than light ones. This is the other half. It is a
+## LIGHT and not an albedo -- the Director's boundary is that the twelve govern
+## surface colour, and that sky, fog, ambient and sun colour are atmosphere --
+## and it reaches the LIT band only. The shade band stays the palette colour it
+## was chosen as, which is Art Bible section 4.1 and is also just what a winter
+## dawn looks like: warm sun, cold shadow.
+##
+## LightingDirector normalises it to unit luminance before pushing it, so
+## `world_light_strength` is a hue knob and cannot quietly darken a look the
+## exposure was tuned for. 0.0 is "the palette exactly as authored".
+@export var world_light_color := Color.WHITE
+@export var world_light_strength := 0.0
 
 ## Art Bible rule 12's warm quota: the lit windows and the firebox, the only warm
 ## light in a blue frame. Published by LightingDirector.warm_accent_energy() for

@@ -44,8 +44,38 @@ const SHADER_PATH := "res://assets/shaders/snow_ground.gdshader"
 ## It moves the *cast* shadows not at all. A texel inside one has ATTENUATION 0,
 ## so its band value is 0 whatever the threshold is; this only ever decides how
 ## much of its own slope the snow shades itself with.
+##
+## **DRIVEN PER PRESET SINCE THE ATMOSPHERE WAVE.** This is now the *fallback*,
+## and the value the daylight presets are pinned to -- LightingDirector pushes
+## `LightingPreset.cel_band_threshold` through `apply_world_shading()` every
+## frame, so more of the field falls into the shadow band as the light goes.
+## tests/unit/test_lighting_presets.gd reads this export rather than duplicating
+## it, so the two cannot disagree without going red.
 @export var band_threshold := 0.12
 @export var band_softness := 0.07
+
+## THE SNOW GRAIN -- style document section 15.
+##
+## The field was one flat fill: #9BC3E8 #9BC3E8 #9BC3E8. The document asks for it
+## to vary slightly and says in as many words that you should barely be able to
+## see it. It cannot be done by interpolating the colour -- Art Bible rule 8
+## forbids gradients and rule 9 forbids anything off the twelve -- so the noise
+## jitters a *band boundary* instead and every pixel stays exactly a palette
+## entry. The reasoning is in the shader; these are the knobs.
+##
+## `grain_threshold` is in Lambert terms and flat ground sits at
+## sin(21.5) = 0.366, so 0.38 puts the flat field just below the boundary and the
+## jitter is what carries patches of it over. `grain_amount` is measured against
+## the +/-0.06 of Lambert the drift profile's own slopes produce: much more than
+## half of that and the dither stops reading as surface and starts reading as
+## bumps the ground does not have.
+##
+## `grain_scale` is 1/wavelength: 0.14 is a 7 m patch, which is the soft
+## variation the document's example shows rather than speckle.
+@export var grain_threshold := 0.345
+@export var grain_softness := 0.03
+@export var grain_amount := 0.05
+@export var grain_scale := 0.14
 
 ## How deep a print dents the *normal*. Never the mesh -- see the shader. This
 ## is the knob for "visible tracks versus subtle dents"; it trades against
@@ -66,6 +96,18 @@ const SHADER_PATH := "res://assets/shaders/snow_ground.gdshader"
 var _material: ShaderMaterial
 var _snow: Node
 var _tracks: Node
+var _lighting: Node
+
+
+## The two-band contract's world side, pushed in from the lighting. The preset
+## owns where the shadow band starts and what colour the light is; the grain
+## above is the ground's own and composes with both.
+func apply_world_shading(threshold: float, softness: float, tint: Color) -> void:
+	if _material == null:
+		return
+	_material.set_shader_parameter("band_threshold", threshold)
+	_material.set_shader_parameter("band_softness", softness)
+	_material.set_shader_parameter("light_tint", Vector3(tint.r, tint.g, tint.b))
 
 
 func _ready() -> void:
@@ -86,8 +128,16 @@ func _ready() -> void:
 	_material.set_shader_parameter("snow_shade", bible.snow_tones[3])
 	_material.set_shader_parameter("track_lit", bible.snow_tones[2])
 	_material.set_shader_parameter("track_shade", bible.snow_tones[4])
-	_material.set_shader_parameter("band_threshold", band_threshold)
-	_material.set_shader_parameter("band_softness", band_softness)
+	# The grain's second tone: one step down the same family from the lit band,
+	# so the field dithers between two adjacent entries of the twelve and never
+	# produces a colour that is not one of them.
+	_material.set_shader_parameter("snow_grain_tone", bible.snow_tones[1])
+	_material.set_shader_parameter("grain_threshold", grain_threshold)
+	_material.set_shader_parameter("grain_softness", grain_softness)
+	_material.set_shader_parameter("grain_amount", grain_amount)
+	_material.set_shader_parameter("grain_scale", grain_scale)
+	# The fallback light, until a preset says otherwise on the first frame.
+	apply_world_shading(band_threshold, band_softness, Color.WHITE)
 	_material.set_shader_parameter("field_extent", SnowField.EXTENT_M)
 	_material.set_shader_parameter("track_extent", TrackMask.EXTENT_M)
 	_material.set_shader_parameter("static_extent", TrackMask.STATIC_EXTENT_M)
@@ -101,7 +151,7 @@ func _ready() -> void:
 
 
 func _resolve() -> void:
-	if _snow != null and _tracks != null:
+	if _snow != null and _tracks != null and _lighting != null:
 		return
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry == null:
@@ -110,10 +160,23 @@ func _resolve() -> void:
 		_snow = registry.get_service(&"snow_field") as Node
 	if _tracks == null:
 		_tracks = registry.get_service(&"track_mask") as Node
+	# The director registers itself as `lighting`. Absent -- in a test, or in a
+	# scene with no WorldEnvironment -- the ground keeps its own exports, which is
+	# what makes the pair above a fallback rather than a duplicate.
+	if _lighting == null:
+		_lighting = registry.get_service(&"lighting") as Node
 
 
 func _process(_delta: float) -> void:
 	_resolve()
+	if _lighting != null and _material != null:
+		# Pushed every frame rather than on change, because a crossfade moves all
+		# three for eight seconds twice a day and there is nothing to subscribe to.
+		apply_world_shading(
+			_lighting.cel_band_threshold(),
+			_lighting.cel_band_softness(),
+			_lighting.world_light_tint()
+		)
 	if _snow == null or _tracks == null or _material == null:
 		return
 	var registry := get_node_or_null("/root/ServiceRegistry")

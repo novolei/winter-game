@@ -313,6 +313,203 @@ func test_dropping_the_bus_stops_the_clock_driving_it() -> void:
 	_bus.emit_event(&"clock.day_started", 7)
 	assert_false(director.is_crossfading(), "a detached director still heard the clock")
 
+# --- the air ----------------------------------------------------------------
+
+## DEPTH FOG, NOT EXPONENTIAL, AND THE REASON IS THE BOOM.
+##
+## The rig is orthographic 90 m back, so the whole farmstead sits between about
+## 69 m and 100 m from the camera. Over that stretch 1 - exp(-density * depth) is
+## nearly a straight line that starts well above zero -- fog enough to blue the
+## far tree already greys the near one, and the near one is the one that has to
+## stay black. A depth window can begin its ramp in front of the nearest thing in
+## the frame and end it past the furthest, which is what aerial perspective is.
+func test_the_air_is_a_window_rather_than_a_curve() -> void:
+	var director := _build()
+	director.apply_preset(&"pale_day")
+	var env := director.environment
+	var preset := director.preset(&"pale_day")
+	assert_not_null(env, "no Environment")
+	if env == null or preset == null:
+		return
+	assert_eq(env.fog_mode, Environment.FOG_MODE_DEPTH, "the fog is not in depth mode")
+	assert_almost_eq(env.fog_depth_begin, preset.fog_depth_begin, 0.0001, "fog begins")
+	assert_almost_eq(env.fog_depth_end, preset.fog_depth_end, 0.0001, "fog ends")
+	assert_almost_eq(env.fog_light_energy, preset.fog_light_energy, 0.0001, "fog brightness")
+
+
+## The sky is per-preset because PALE DAY and DEEP NIGHT cannot share one, and it
+## is built in code for the same reason everything else here is: no colour
+## literal may end up in scenes/main.tscn.
+func test_the_director_builds_a_gradient_sky_out_of_the_preset() -> void:
+	var director := _build()
+	director.apply_preset(&"deep_night")
+	var env := director.environment
+	var preset := director.preset(&"deep_night")
+	assert_not_null(env, "no Environment")
+	if env == null or preset == null:
+		return
+	assert_eq(env.background_mode, Environment.BG_SKY, "the background is not a sky")
+	assert_not_null(env.sky, "no Sky resource was built")
+	if env.sky == null:
+		return
+	var material := env.sky.sky_material as ProceduralSkyMaterial
+	assert_not_null(material, "the Sky carries no ProceduralSkyMaterial")
+	if material == null:
+		return
+	assert_eq(material.sky_top_color, preset.sky_zenith_color, "the zenith is not the preset's")
+	assert_eq(material.sky_horizon_color, preset.sky_horizon_color, "the horizon is not the preset's")
+
+
+## The sky must not start lighting the world. Every world shader declares
+## `ambient_light_disabled` and the character's fill is an authored colour, so
+## switching the background from a flat colour to a sky has to leave the ambient
+## source exactly where it was -- otherwise the figure is lit by the sky and the
+## whole of tests/art/test_character_lighting.gd is measuring the wrong number.
+func test_the_new_sky_does_not_take_over_the_characters_fill() -> void:
+	var director := _build()
+	director.apply_preset(&"pale_day")
+	var env := director.environment
+	assert_not_null(env, "no Environment")
+	if env == null:
+		return
+	assert_eq(
+		env.ambient_light_source, Environment.AMBIENT_SOURCE_COLOR,
+		"the ambient now comes from the sky, so the character's authored fill is inert"
+	)
+	assert_almost_eq(
+		env.ambient_light_sky_contribution, 0.0, 0.0001,
+		"the sky contributes to the ambient, which reaches the character and nothing else"
+	)
+
+
+## Style document section 39, Forward+ only, and the number it is emphatic
+## about. The froxel volume is only 64 m deep by default -- the entire farmstead
+## is further away than that -- so the length is the difference between a little
+## cold moisture in the air and nothing at all.
+func test_the_volumetric_air_reaches_as_far_as_the_camera_can_see() -> void:
+	var director := _build()
+	director.apply_preset(&"whiteout")
+	var env := director.environment
+	var preset := director.preset(&"whiteout")
+	if env == null or preset == null:
+		return
+	assert_eq(env.volumetric_fog_enabled, preset.volumetric_fog_enabled, "the volumetric switch")
+	# The length is asserted whether or not the switch is on. All six ship with it
+	# OFF -- it lifts the nearest tree in the frame out of black, which is the one
+	# thing the depth fog exists to preserve -- so the day someone turns it on, the
+	# volume has to already reach the scene rather than sit entirely in front of it.
+	assert_true(
+		env.volumetric_fog_length >= preset.fog_depth_end,
+		"the volumetric air is %.0f m deep against a fog window that ends at %.0f m, so "
+			% [env.volumetric_fog_length, preset.fog_depth_end]
+			+ "the far half of the frame is outside it"
+	)
+	assert_almost_eq(
+		env.volumetric_fog_density, preset.volumetric_fog_density, 0.000001, "volumetric density"
+	)
+
+
+func test_a_blend_carries_the_air_and_the_sky_with_it() -> void:
+	var from := _preset(1.0, 0.0)
+	from.fog_depth_begin = 60.0
+	from.fog_depth_end = 100.0
+	from.fog_light_energy = 1.0
+	from.sky_zenith_color = Color(0.0, 0.0, 0.0)
+	from.sky_horizon_color = Color(0.0, 0.0, 0.0)
+	from.volumetric_fog_enabled = true
+	from.volumetric_fog_density = 0.0
+	var to := _preset(1.0, 0.0)
+	to.volumetric_fog_enabled = true
+	to.fog_depth_begin = 80.0
+	to.fog_depth_end = 140.0
+	to.fog_light_energy = 0.9
+	to.sky_zenith_color = Color(1.0, 1.0, 1.0)
+	to.sky_horizon_color = Color(1.0, 1.0, 1.0)
+	to.volumetric_fog_density = 0.002
+	var halfway := LightingDirectorScript.blend(from, to, 0.5)
+	assert_almost_eq(halfway.fog_depth_begin, 70.0, 0.0001, "the fog window's near edge")
+	assert_almost_eq(halfway.fog_depth_end, 120.0, 0.0001, "the fog window's far edge")
+	assert_almost_eq(halfway.fog_light_energy, 0.95, 0.0001, "the fog's brightness")
+	assert_almost_eq(halfway.sky_zenith_color.r, 0.5, 0.0001, "the zenith")
+	assert_almost_eq(halfway.sky_horizon_color.b, 0.5, 0.0001, "the horizon")
+	assert_almost_eq(halfway.volumetric_fog_density, 0.001, 0.000001, "the volumetric air")
+
+
+# --- the light the world takes ----------------------------------------------
+
+## CONCERN 3 OF THE CLOCK/LIGHTING REPORT, WIRED.
+##
+## `cel_band_threshold` and `cel_band_softness` were authored on all six presets
+## and reached nothing: TerrainRenderer and CelPainter set the uniforms once at
+## startup from their own exports. The director now publishes them, and publishes
+## a third value with them -- the colour the LIT band is multiplied by, which is
+## the only way warm light reaches the snow.
+func test_the_director_publishes_the_band_the_preset_asks_for() -> void:
+	var director := _build()
+	director.apply_preset(&"whiteout")
+	var whiteout := director.preset(&"whiteout")
+	if whiteout == null:
+		return
+	assert_almost_eq(
+		director.cel_band_threshold(), whiteout.cel_band_threshold, 0.0001, "the band threshold"
+	)
+	assert_almost_eq(
+		director.cel_band_softness(), whiteout.cel_band_softness, 0.0001, "the band softness"
+	)
+
+
+## The tint is LUMINANCE-PRESERVING, and that is the whole of why it is safe.
+##
+## A raw multiply by an amber light darkens snow as much as it warms it, and the
+## exposure would have to be re-tuned to pay for it. Normalising the light colour
+## to unit luminance first means the tint rotates the hue of the lit band and
+## leaves its brightness exactly where the preset put it -- so `world_light_
+## strength` is a hue knob and nothing else, and it cannot quietly darken a look.
+func test_an_untinted_preset_leaves_the_palette_exactly_where_it_is() -> void:
+	var director := _build()
+	director.apply_preset(&"pale_day")
+	var tint := director.world_light_tint()
+	assert_almost_eq(tint.r, 1.0, 0.0001, "red")
+	assert_almost_eq(tint.g, 1.0, 0.0001, "green")
+	assert_almost_eq(tint.b, 1.0, 0.0001, "blue")
+
+
+func test_the_warm_light_warms_without_dimming() -> void:
+	var director := _build()
+	director.apply_preset(&"sunrise")
+	var tint := director.world_light_tint()
+	assert_true(
+		tint.r > 1.0 and tint.b < 1.0,
+		"SUNRISE's world light is #%s, which is not warmer than white" % tint.to_html(false)
+	)
+	var luma := 0.2126 * tint.r + 0.7152 * tint.g + 0.0722 * tint.b
+	assert_almost_eq(
+		luma, 1.0, 0.002,
+		"the warm tint carries a luminance of %f, so it does not only shift the hue -- it "
+			% luma
+			+ "changes the brightness the preset's exposure was tuned against"
+	)
+
+
+## The push. `set_shader_parameter` on a uniform nothing reads is silent, so the
+## only honest gate is the one that reads the value back off a material.
+func test_applying_a_preset_reaches_every_solid_in_the_world() -> void:
+	var director := _build()
+	director.apply_preset(&"sunrise")
+	var sunrise := director.preset(&"sunrise")
+	if sunrise == null:
+		return
+	var painter := CelPainter.new()
+	var material := painter.material_for(load(LightingDirectorScript.PALETTE_PATH).snow_tones[0])
+	assert_almost_eq(
+		float(material.get_shader_parameter("band_threshold")),
+		sunrise.cel_band_threshold + CelPainter.SOLID_BAND_OFFSET, 0.0001,
+		"a material built after the preset landed still carries the shader's own default"
+	)
+	var tint: Vector3 = material.get_shader_parameter("light_tint")
+	assert_true(tint.x > 1.0, "the warm light did not reach a solid: got %s" % tint)
+
+
 # --- the warm accent --------------------------------------------------------
 
 ## Art Bible section 4.2 puts the warm OmniLight's strength on the preset,
