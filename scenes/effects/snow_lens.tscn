@@ -1,0 +1,39 @@
+[gd_scene load_steps=2 format=3]
+
+; STYLE DOCUMENT SECTION 23 -- the layer the document says matters, and it is
+; right: 偶尔有一片雪从镜头前经过。这会让截图瞬间有电影感。
+;
+; PARENT THIS TO THE CAMERA. Everything below is authored in CAMERA space:
+; +x is across the frame, +y is up it, -z is in front of the lens. The transform
+; puts the box just above the top of the picture and about two metres in front
+; of the glass, so a flake is born out of shot, falls down through the frame and
+; dies below it -- which is why the count can be as low as the document's 30-60
+; and still read as continuous.
+;
+; The frame is 10.5 m tall and about 17 m wide at 16:10, so the box is a little
+; wider than the picture on purpose: a flake that drifts in from the side has to
+; come from somewhere.
+
+[ext_resource type="Script" path="res://src/rendering/snowfall_layer.gd" id="1_layer"]
+
+[node name="SnowLens" type="GPUParticles3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 6, -2.2)
+script = ExtResource("1_layer")
+camera_space = true
+volume_size = Vector3(26, 3, 3)
+pullback_m = 0.0
+flakes_clear = 6
+flakes_blizzard = 48
+life_seconds = 4.5
+flake_size_min = 0.1
+flake_size_max = 0.18
+fall_speed_clear = 1.9
+fall_speed_blizzard = 2.7
+fall_accel = 0.15
+drift_clear = Vector3(0.3, 0, 0)
+drift_blizzard = Vector3(1.15, 0, 0)
+randomness_clear = 0.45
+randomness_blizzard = 0.6
+spread_degrees = 25.0
+flake_whiteness = 0.7
+flake_alpha = 0.72

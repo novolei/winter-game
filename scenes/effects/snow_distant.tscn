@@ -1,0 +1,35 @@
+[gd_scene load_steps=2 format=3]
+
+; STYLE DOCUMENT SECTION 21 -- the far snow: the texture of the air rather than
+; anything the player watches. Every number is set here rather than left to the
+; script's defaults so the three layers can be read side by side, which is how
+; the six lighting presets are authored and for the same reason.
+;
+; The document asks for 1000-1800 flakes in a 60 x 25 x 60 box. This is 1200 in
+; a 36 x 22 x 36 one, which is a THIRD of the volume, because the camera is
+; orthographic: the frame is a 17 m by 11 m slab lying along the view axis, and
+; a box three times wider than the slab spends three quarters of its flakes
+; outside the picture. Same density on screen, a third of the particles.
+
+[ext_resource type="Script" path="res://src/rendering/snowfall_layer.gd" id="1_layer"]
+
+[node name="SnowDistant" type="GPUParticles3D"]
+script = ExtResource("1_layer")
+camera_space = false
+volume_size = Vector3(36, 22, 36)
+pullback_m = 16.0
+flakes_clear = 90
+flakes_blizzard = 1200
+life_seconds = 11.0
+flake_size_min = 0.035
+flake_size_max = 0.055
+fall_speed_clear = 0.9
+fall_speed_blizzard = 2.1
+fall_accel = 0.2
+drift_clear = Vector3(0.25, 0, 0.08)
+drift_blizzard = Vector3(1.15, 0, 0.35)
+randomness_clear = 0.35
+randomness_blizzard = 0.55
+spread_degrees = 32.0
+flake_whiteness = 0.55
+flake_alpha = 0.62

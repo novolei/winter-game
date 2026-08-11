@@ -1,0 +1,34 @@
+[gd_scene load_steps=2 format=3]
+
+; STYLE DOCUMENT SECTION 22 -- "this is the snow the player actually sees".
+; Bigger, faster and closer to the camera than the distant layer, in a volume
+; less than a fifth the size, which is what makes it read as nearer under a
+; projection where nothing gets smaller with distance.
+;
+; Its flakes are the ones a player can follow individually, so the variation
+; has to come from somewhere -- it comes from `spread` and `randomness`, which
+; vary each flake's own straight path. Not from turbulence: see the note in
+; src/rendering/snowfall_layer.gd, which measured what that actually does.
+
+[ext_resource type="Script" path="res://src/rendering/snowfall_layer.gd" id="1_layer"]
+
+[node name="SnowNear" type="GPUParticles3D"]
+script = ExtResource("1_layer")
+camera_space = false
+volume_size = Vector3(22, 15, 22)
+pullback_m = 9.0
+flakes_clear = 60
+flakes_blizzard = 520
+life_seconds = 7.0
+flake_size_min = 0.05
+flake_size_max = 0.09
+fall_speed_clear = 1.2
+fall_speed_blizzard = 2.6
+fall_accel = 0.25
+drift_clear = Vector3(0.34, 0, 0.11)
+drift_blizzard = Vector3(1.45, 0, 0.42)
+randomness_clear = 0.4
+randomness_blizzard = 0.6
+spread_degrees = 34.0
+flake_whiteness = 0.66
+flake_alpha = 0.8

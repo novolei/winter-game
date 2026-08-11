@@ -25,6 +25,8 @@
 [ext_resource type="PackedScene" uid="uid://dalphxjcfaohp" path="res://scenes/entities/stove/stove.tscn" id="24_stove"]
 [ext_resource type="Script" path="res://src/entities/interior/door.gd" id="25_door"]
 [ext_resource type="Script" path="res://src/entities/interior/interior_warmth.gd" id="26_warmth"]
+[ext_resource type="PackedScene" path="res://scenes/effects/snowfall.tscn" id="27_snowfall"]
+[ext_resource type="PackedScene" path="res://scenes/effects/snow_lens.tscn" id="28_snow_lens"]
 
 ; The two rooms of the farmhouse ground floor, in the model's own coordinates.
 ; The boundary of these boxes IS the threshold -- the front face of MainRoom
@@ -169,3 +171,22 @@ transform = Transform3D(0.65605903, 0, 0.75470958, 0, 1, 0, -0.75470958, 0, 0.65
 [node name="WireDrop" parent="Farmstead/Wires" instance=ExtResource("15_power_wire") unique_id=1902244612]
 
 [node name="WireLeaving" parent="Farmstead/Wires" instance=ExtResource("15_power_wire") unique_id=1902244613]
+
+; --------------------------------------------------------------------------
+; The snow in the air. Style document sections 21-23.
+;
+; TWO INSTANCES AND NOT ONE, and the split is the point rather than an
+; oversight. scenes/effects/snowfall.tscn holds the director and the two layers
+; that fall in WORLD space; it can sit anywhere, because the director places
+; both of them over whatever the camera is looking at, every frame.
+;
+; SnowLens is the third layer and belongs to the CAMERA -- it is the flake that
+; crosses the picture, and style document section 23 is explicit that it does
+; not need to be in world space. It finds the director on its own, through the
+; group SnowfallLayer publishes itself in, so nothing here wires the two
+; together and neither node holds a reference to the other.
+; --------------------------------------------------------------------------
+
+[node name="Snowfall" parent="." instance=ExtResource("27_snowfall")]
+
+[node name="SnowLens" parent="CameraRig/Camera3D" instance=ExtResource("28_snow_lens")]

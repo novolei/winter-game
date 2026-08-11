@@ -1,0 +1,23 @@
+[gd_scene load_steps=4 format=3]
+
+; The world's snow: the director and the two layers that fall in world space.
+;
+; The third layer is NOT here. scenes/effects/snow_lens.tscn goes under the
+; Camera3D instead -- it is the one that rides the lens -- and it finds this
+; director on its own, through the node group SnowfallLayer publishes itself in.
+; So nothing here holds a reference to the camera, which two other systems are
+; already inside.
+;
+; Instance this anywhere in the world. It does not matter where: the director
+; places both layers itself every frame, over whatever the camera is looking at.
+
+[ext_resource type="Script" path="res://src/rendering/snowfall.gd" id="1_snowfall"]
+[ext_resource type="PackedScene" path="res://scenes/effects/snow_distant.tscn" id="2_distant"]
+[ext_resource type="PackedScene" path="res://scenes/effects/snow_near.tscn" id="3_near"]
+
+[node name="Snowfall" type="Node3D"]
+script = ExtResource("1_snowfall")
+
+[node name="SnowDistant" parent="." instance=ExtResource("2_distant")]
+
+[node name="SnowNear" parent="." instance=ExtResource("3_near")]
