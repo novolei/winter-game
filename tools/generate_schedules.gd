@@ -19,6 +19,7 @@ func _initialize() -> void:
 	]
 
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://data/schedule"))
+	var failed := false
 	for row in rows:
 		var schedule = DayScheduleScript.new()
 		schedule.day_number = row[0]
@@ -36,6 +37,13 @@ func _initialize() -> void:
 		var error := ResourceSaver.save(schedule, path)
 		if error != OK:
 			print("generate_schedules: FAILED %s (%d)" % [path, error])
-			quit(1)
+			failed = true
+			continue
 		print("generate_schedules: wrote %s" % path)
-	quit(0)
+	# SceneTree.quit() only *requests* exit at the end of the current iteration
+	# -- it does not return from the function. An early quit(1) inside the loop
+	# therefore fell through to the "wrote" print and was later overwritten by a
+	# trailing quit(0), so a failed save still reported success. Accumulate the
+	# failure and quit exactly once, as the last statement, the same shape
+	# tools/generate_palette.gd uses. This cannot regrow the fall-through bug.
+	quit(1 if failed else 0)

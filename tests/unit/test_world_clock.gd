@@ -130,10 +130,17 @@ func test_phase_duration_reports_the_active_phase() -> void:
 	assert_almost_eq(clock.phase_duration(), 5.0, 0.0001, "night phase is 5 seconds")
 
 func test_shipped_schedule_matches_the_gdd() -> void:
+	## [daylight, night, forced_weather_event, beacon_unlocked], from GDD section 4.
+	## primary_lighting_preset and allowed_weather_events are deliberately left
+	## unguarded here -- those are Wave 3's to pin down.
 	var expected := {
-		1: [600.0, 300.0], 2: [600.0, 300.0], 3: [480.0, 420.0],
-		4: [480.0, 420.0], 5: [420.0, 480.0], 6: [300.0, 600.0],
-		7: [240.0, 660.0],
+		1: [600.0, 300.0, &"", &"farmhouse_chimney"],
+		2: [600.0, 300.0, &"", &"fuel_station"],
+		3: [480.0, 420.0, &"", &"church_tower"],
+		4: [480.0, 420.0, &"", &"logging_camp"],
+		5: [420.0, 480.0, &"", &"power_pylon"],
+		6: [300.0, 600.0, &"", &""],
+		7: [240.0, 660.0, &"blizzard", &""],
 	}
 	for day in expected.keys():
 		var path := "res://data/schedule/day_%02d.tres" % day
@@ -142,3 +149,5 @@ func test_shipped_schedule_matches_the_gdd() -> void:
 		assert_eq(schedule.day_number, day, "%s should declare day %d" % [path, day])
 		assert_almost_eq(schedule.daylight_seconds, expected[day][0], 0.001, "%s daylight length" % path)
 		assert_almost_eq(schedule.night_seconds, expected[day][1], 0.001, "%s night length" % path)
+		assert_eq(schedule.forced_weather_event, expected[day][2], "%s forced weather event" % path)
+		assert_eq(schedule.beacon_unlocked, expected[day][3], "%s beacon unlocked" % path)
