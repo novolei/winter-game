@@ -1542,6 +1542,11 @@ extends RefCounted
 ## Returns an empty result for a missing root rather than erroring: the
 ## gates run against folders that do not exist yet in early waves.
 
+## Shared across the three gates so their coverage cannot silently diverge.
+const SCAN_ROOTS: Array[String] = ["res://assets/models", "res://scenes"]
+const MATERIAL_SUFFIXES: Array[String] = [".tres", ".material", ".res"]
+const MESH_SUFFIXES: Array[String] = [".mesh", ".res", ".tres"]
+
 static func find_files(root: String, suffixes: Array[String]) -> PackedStringArray:
 	var found := PackedStringArray()
 	var dir := DirAccess.open(root)
@@ -1626,9 +1631,6 @@ extends TestCase
 
 const AssetScannerScript := preload("res://tests/framework/asset_scanner.gd")
 
-const SCAN_ROOTS: Array[String] = ["res://assets/models", "res://scenes"]
-const MATERIAL_SUFFIXES: Array[String] = [".tres", ".material", ".res"]
-
 var _bible
 
 func before_each() -> void:
@@ -1646,8 +1648,8 @@ func test_the_gate_accepts_an_on_palette_material() -> void:
 	assert_true(_bible.contains(good.albedo_color), "a palette snow tone must be accepted")
 
 func test_every_material_in_the_project_is_on_palette() -> void:
-	for root in SCAN_ROOTS:
-		for path in AssetScannerScript.find_files(root, MATERIAL_SUFFIXES):
+	for root in AssetScannerScript.SCAN_ROOTS:
+		for path in AssetScannerScript.find_files(root, AssetScannerScript.MATERIAL_SUFFIXES):
 			var resource := ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
 			if resource == null or not (resource is BaseMaterial3D):
 				continue
@@ -1677,35 +1679,63 @@ const BUDGETS := {
 
 const AssetScannerScript := preload("res://tests/framework/asset_scanner.gd")
 
-const MESH_SUFFIXES: Array[String] = [".mesh", ".res", ".tres"]
-
 func _triangle_count(mesh: Mesh) -> int:
 	var total := 0
 	for surface in range(mesh.get_surface_count()):
 		var arrays := mesh.surface_get_arrays(surface)
-		var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
-		if indices.size() > 0:
-			total += indices.size() / 3
+		# surface_get_arrays() returns null for slots the surface does not
+		# use, and assigning null into a typed PackedInt32Array is a runtime
+		# error that aborts this function. Non-indexed meshes hit exactly
+		# that slot, so read it untyped and null-check before casting.
+		var index_slot = arrays[Mesh.ARRAY_INDEX]
+		if index_slot != null and (index_slot as PackedInt32Array).size() > 0:
+			total += (index_slot as PackedInt32Array).size() / 3
 		else:
 			var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 			total += vertices.size() / 3
 	return total
 
-func test_the_gate_counts_triangles_correctly() -> void:
-	# A BoxMesh is 6 quads = 12 triangles. Proves the counter before real assets exist.
+## The gate's actual decision, factored out so it can be tested against a
+## violating and a compliant case. Inlined in the scan loop it would be
+## unreachable while the asset folders are empty, and a reversed or
+## off-by-one comparison would pass forever.
+func _within_budget(triangle_count: int, budget: int) -> bool:
+	return triangle_count <= budget
+
+func test_the_gate_counts_an_indexed_mesh() -> void:
+	# A BoxMesh is 6 quads = 12 triangles, and PrimitiveMesh always indexes.
 	var box := BoxMesh.new()
 	assert_eq(_triangle_count(box), 12, "a box should count as 12 triangles")
+
+func test_the_gate_counts_a_non_indexed_mesh() -> void:
+	# The branch a BoxMesh never reaches. Built without an ARRAY_INDEX entry.
+	var vertices := PackedVector3Array([
+		Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(0, 1, 0),
+		Vector3(1, 0, 0), Vector3(1, 1, 0), Vector3(0, 1, 0),
+	])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	assert_eq(_triangle_count(mesh), 2, "six unindexed vertices are two triangles")
+
+func test_the_gate_rejects_a_count_over_budget() -> void:
+	assert_false(_within_budget(501, 500), "501 triangles must fail a 500 budget")
+
+func test_the_gate_accepts_a_count_at_budget() -> void:
+	assert_true(_within_budget(500, 500), "exactly the budget must pass")
 
 func test_every_mesh_is_within_its_budget() -> void:
 	for root in BUDGETS.keys():
 		var budget: int = BUDGETS[root]
-		for path in AssetScannerScript.find_files(root, MESH_SUFFIXES):
+		for path in AssetScannerScript.find_files(root, AssetScannerScript.MESH_SUFFIXES):
 			var resource := ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
 			if resource == null or not (resource is Mesh):
 				continue
 			var count := _triangle_count(resource as Mesh)
 			assert_true(
-				count <= budget,
+				_within_budget(count, budget),
 				"%s has %d triangles, over the %d budget for %s" % [path, count, budget, root]
 			)
 ```
@@ -1722,11 +1752,15 @@ extends TestCase
 
 const AssetScannerScript := preload("res://tests/framework/asset_scanner.gd")
 
-const SCAN_ROOTS: Array[String] = ["res://assets/models", "res://scenes"]
-const MATERIAL_SUFFIXES: Array[String] = [".tres", ".material", ".res"]
-
 func _violations(material: BaseMaterial3D) -> PackedStringArray:
 	var problems := PackedStringArray()
+	# ORMMaterial3D exists to pack occlusion, roughness, and metallic into a
+	# single texture -- precisely the maps rule 8 forbids. It is a
+	# BaseMaterial3D but not a StandardMaterial3D, so without this branch it
+	# would pass the gate no matter what it contains.
+	if material is ORMMaterial3D:
+		problems.append("ORMMaterial3D packs occlusion/roughness/metallic, which the banned list forbids")
+		return problems
 	if material is StandardMaterial3D:
 		var standard := material as StandardMaterial3D
 		if standard.normal_enabled:
@@ -1754,9 +1788,14 @@ func test_the_gate_accepts_a_compliant_material() -> void:
 	var problems := _violations(good)
 	assert_eq(problems.size(), 0, "a flat, non-metallic, non-specular material must pass")
 
+func test_the_gate_catches_an_orm_material() -> void:
+	var offender := ORMMaterial3D.new()
+	var problems := _violations(offender)
+	assert_true(problems.size() > 0, "ORMMaterial3D packs the exact maps the banned list forbids")
+
 func test_no_material_in_the_project_uses_a_banned_feature() -> void:
-	for root in SCAN_ROOTS:
-		for path in AssetScannerScript.find_files(root, MATERIAL_SUFFIXES):
+	for root in AssetScannerScript.SCAN_ROOTS:
+		for path in AssetScannerScript.find_files(root, AssetScannerScript.MATERIAL_SUFFIXES):
 			var resource := ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
 			if resource == null or not (resource is BaseMaterial3D):
 				continue
@@ -1780,7 +1819,7 @@ touch assets/models/buildings/.gitkeep assets/models/props/.gitkeep assets/model
 "D:/Godot_v4.7.1/Godot_v4.7.1-stable_win64_console.exe" --headless --path "D:/Godot resource/winter-time" --script res://tests/framework/test_runner.gd
 ```
 
-Expected: `65 passed, 0 failed`.
+Expected: `73 passed, 0 failed`.
 
 - [ ] **Step 8: Commit**
 
@@ -1996,8 +2035,17 @@ func set_event_bus(bus) -> void:
 func _ready() -> void:
 	# In a real run the autoload wires itself to the autoloaded bus.
 	# Tests inject their own via set_event_bus() before calling start().
-	if _bus == null and Engine.has_singleton("EventBus"):
-		_bus = Engine.get_singleton("EventBus")
+	#
+	# get_node_or_null, NOT Engine.get_singleton: a project [autoload] entry
+	# is a node under /root and never appears in the engine's singleton
+	# registry, which holds only natively-registered and GDExtension
+	# singletons. Engine.has_singleton("EventBus") is false always, which
+	# would leave _bus null forever -- and _emit()'s null guard would then
+	# swallow every clock event with no diagnostic. That failure is
+	# invisible to this wave's tests, because they all inject a bus and
+	# never add WorldClock to a live scene tree, so _ready() never runs.
+	if _bus == null:
+		_bus = get_node_or_null("/root/EventBus")
 
 func load_schedules(schedules: Array) -> void:
 	_schedules = schedules.duplicate()
@@ -2136,7 +2184,7 @@ The generators stay in `tools/` and stay in version control — regenerating an 
 
 Run the Step 2 command.
 
-Expected: `76 passed, 0 failed`.
+Expected: `84 passed, 0 failed`.
 
 - [ ] **Step 6: Register the autoload**
 
@@ -2170,7 +2218,7 @@ git add src/systems/world_clock.gd data/schedule/ tools/generate_schedules.gd te
 
 All must hold before Wave 1 starts:
 
-- [ ] `76 passed, 0 failed` from the headless runner, exit code 0
+- [ ] `84 passed, 0 failed` from the headless runner, exit code 0
 - [ ] The runner has been observed going **red** and returning exit code 1 (Task 1, Step 5)
 - [ ] `project.godot` lists exactly three autoloads: `EventBus`, `ServiceRegistry`, `WorldClock`
 - [ ] No hardcoded hex color outside `tools/` — the generators in `tools/` are where color values legitimately live, since they are the source that writes `data/palette/color_bible.tres`
