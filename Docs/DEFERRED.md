@@ -50,6 +50,25 @@ These share one defect class: **the gate's failure mode is to pass.** Close them
 | W1-S9 | `EventBus` has no re-entrancy guard; a handler emitting its own event recurses unbounded | `src/core/event_bus.gd` |
 | W1-S10 | `ModifierStack.add(null)` crashes; no enumeration API, so a HUD cannot render *why* a stat is moving; `remove_by_source` is the only removal, so two effects from one system need composite source ids | `src/core/modifier_stack.gd` |
 
+## 已安装但尚未采用的第三方资源
+
+两样东西装在项目里，都**有意暂不使用**。记在这里，免得日后有人以为它们已经在用，或者忘了它们存在。
+
+| 资源 | 状态 | 何时重估 |
+|---|---|---|
+| **GodotGAS**（纯 GDScript 的 Gameplay Ability System） | 已装、**已停用**。它注册的 `GameplayCueManager` autoload 在 `--script` 下也会跑，而其内置 `.tres` 引用作者机器上的 UID，导致每次测试运行都产生两行 `WARNING:`，套件因此在 248/0 全绿时仍退出 1 | **波次 4** |
+| **Free RPG Character Animation Sample Pack**（64 个 FBX，39 MB，解压在项目根目录） | 未使用。骨架与 Meshy 角色不同，需跨骨架重定向 | 按需 |
+
+**为什么 GAS 暂不采用**：它提供 attributes、gameplay effects、tags，而波次 0 已经建成 `StatDefinition`、`Modifier`/`ModifierStack`（含按槽位过期、按来源移除、三种运算）与数据配置的 `StateMachine`，并有测试覆盖。现在引入意味着要么**并存两套属性系统**——数值从哪来会变成日常困惑——要么**删掉可用且有覆盖的代码**换一套等价物。两者都是净损失。
+
+它真正可能划算的时点是**波次 4-5**：点信标、劈柴、开枪一旦需要冷却、前摇、打断、互斥标签，GAS 的那套会比手搓强。**接入一个能力层，远比现在替换属性层便宜。**
+
+**为什么 RPG 动画包暂不使用**：它与缺失清单的交集是 `Getup1`、`Pickup`、`Idle` 系列，但熊击倒动作**本身已包含起身**（击中→抛出→翻滚→手膝撑地→站起），`道具交互` 已由新 Meshy 包提供。跨骨架重定向是真实工作量且结果常不理想，为已被覆盖的动作付这个成本不划算。将来若需要 Meshy 生不出的具体动作（睡觉躺下、劈柴挥斧），它是现成来源。
+
+**待办**：动画包目前**解压在项目根目录**（含 `__MACOSX` 残留），Godot 每次导入都会扫这 64 个 FBX。应移入 `assets/source/animations/` 并加 `.gdignore`。等并行任务结束后处理，现在移动会让正在跑测试的 agent 撞上重导入。
+
+---
+
 ## Wave 2 — before the survival system is built
 
 | # | Finding |
@@ -81,3 +100,21 @@ Fixed during Wave 0's final fix wave (`3f30a1e`), recorded so they are not re-ra
 game nouns in `src/core/modifier.gd` and the `src/core/` sweep · off-palette `ambient_color` default in `lighting_preset.gd` · `_round_trip` disarming the zero-assertion guard · no minimum-test-count floor · `configure()` not validating the transition table · no regression test for the `/root/EventBus` wiring · `Modifier` carrying no target stat (`StatModifier` added) · undocumented single-payload contract on `EventBus` · no test locking `configure()`'s deep copy · vacuous `ItemDefinition.category` assertion · nested modifier arrays never round-tripped · inconsistent `.uid` tracking.
 
 Dropped as not real issues, with reasons, in Wave 0's final review triage: unreachable null guard in `test_methods` · a garbled subtotal in a gitignored report · `register()` overwriting silently (load-bearing for fake injection) · `_write()` missing a null check · two report arithmetic wrinkles · hardcoded hex in *tests* — a test asserting "`#8FB0D8` is in the palette" **must** hardcode the literal, since reading it from the resource under test is circular. The criterion is restated as: **no hardcoded colour in `src/`, `data/`, `scenes/`, `assets/`; tests may hardcode expected values.**
+
+---
+
+## Wave 2 — from the interior reveal (`5863467`)
+
+The SDD workspace is gitignored and gets deleted at wave end, so the parts of
+that agent's report worth keeping are copied here.
+
+| # | Finding |
+|---|---|
+| W2-1 | **The porch roof hides the door at 45°.** The door was built to swing, and at our fixed camera angle the swing barely reads — what the player actually perceives is the reveal firing or not firing. Not worth animating better; worth deciding whether the porch roof should be shortened, or the door moved to a wall the camera can see. An art call, not a bug. |
+| W2-2 | **`MINIMUM_TESTS` is a floor, not a census.** Set to 533 = 467 + that agent's own 66, deliberately *not* to the observed total, because three other agents were adding and removing test files concurrently and a floor including their in-flight work would false-alarm on them. Whoever closes Wave 2 should re-baseline it once against a quiet tree. |
+| W2-3 | `tests/art/test_warmth_budget.gd` does not exist yet, and W3-1 above schedules it. When it is written it **must** stat warm pixels per region, not per frame — see the Director's ruling appended to Art Bible rule 12 (`ff48b9a`). A whole-frame ratio would fail every interior shot by design. |
+
+**Acted on, not deferred:** the same report flagged that the farmhouse floor is
+buried under up to 0.59 m of snow and the player floats 0.39 m above it. That is
+task W2-J — the snow height field does not know buildings exist. Fix is in
+flight; the register entry is here only so the trail is unbroken if it isn't.
