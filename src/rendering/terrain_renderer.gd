@@ -36,7 +36,9 @@ const SHADER_PATH := "res://assets/shaders/snow_ground.gdshader"
 ## How deep a print dents the *normal*. Never the mesh -- see the shader. This
 ## is the knob for "visible tracks versus subtle dents"; it trades against
 ## track_tint, which is the same argument in colour.
-@export var track_depth := 0.065
+##
+## 0.065 was the approved read; this is that plus the 5% asked for afterwards.
+@export var track_depth := 0.06825
 @export var track_tint := 0.5
 
 ## Snow pushed out around a print. See track_height() in the shader.

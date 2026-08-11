@@ -162,6 +162,71 @@ func test_a_print_on_level_ground_is_unchanged_by_the_slope_path() -> void:
 	assert_almost_eq(east, north, 0.02)
 
 
+## Deep snow runs consecutive prints together into one channel. The claim worth
+## pinning is the *balance*: there has to be something between the prints where
+## before there was untouched snow, and it has to stay clearly shallower than
+## the prints themselves. Both halves matter and neither is safe to eyeball --
+## "a slight sense of a trench" and "a ditch with two dimples in it" are the
+## same screenshot at a glance, and only the ratio tells them apart.
+func test_a_drag_joins_two_prints_without_replacing_them() -> void:
+	var first := Vector3(0.0, 0.0, 0.0)
+	var second := Vector3(0.72, 0.0, 0.0)
+	var between := Vector3(0.36, 0.0, 0.0)
+	_mask.stamp(first, 0.28, 1.0)
+	_mask.stamp(second, 0.28, 1.0)
+	assert_almost_eq(
+		_mask.value_at(between), 0.0,
+		0.01, "setup: two prints a stride apart must not already touch"
+	)
+
+	_mask.drag(first, second, 0.13, 0.5)
+	var groove: float = _mask.value_at(between)
+	assert_true(groove > 0.2, "the gap between two prints must be joined, got %f" % groove)
+	assert_true(
+		groove < _mask.value_at(first) - 0.2,
+		"the groove (%f) must stay clearly shallower than the print (%f)"
+			% [groove, _mask.value_at(first)]
+	)
+
+
+## ...and the groove is a segment, not a line. Everything past the two prints it
+## joins is untouched snow, and so is anything more than its own width off the
+## centre line -- otherwise a trail through a drift becomes a smear with feet in
+## it.
+func test_a_drag_stays_between_the_prints_it_joins() -> void:
+	_mask.drag(Vector3.ZERO, Vector3(0.72, 0.0, 0.0), 0.13, 0.6)
+	# The centre first: without it every assertion below would be satisfied by a
+	# drag() that drew nothing at all.
+	assert_almost_eq(_mask.value_at(Vector3(0.36, 0.0, 0.0)), 0.6, 0.02)
+	assert_almost_eq(_mask.value_at(Vector3(-0.4, 0.0, 0.0)), 0.0, 0.01)
+	assert_almost_eq(_mask.value_at(Vector3(1.12, 0.0, 0.0)), 0.0, 0.01)
+	assert_almost_eq(_mask.value_at(Vector3(0.36, 0.0, 0.4)), 0.0, 0.01)
+
+
+## A print made on a wind-scoured crest carries no trench keys at all, and the
+## snow between it and the last one must be left alone. This is the half of the
+## gate a screenshot cannot show, because "no groove here" and "a groove too
+## faint to see" look identical.
+func test_a_footprint_without_a_trench_leaves_the_snow_between_untouched() -> void:
+	_mask._on_footprint({"position": Vector3.ZERO, "radius": 0.28, "strength": 0.9})
+	_mask._on_footprint({"position": Vector3(0.72, 0.0, 0.0), "radius": 0.28, "strength": 0.9})
+	assert_almost_eq(_mask.value_at(Vector3(0.36, 0.0, 0.0)), 0.0, 0.01)
+
+	# ...and the same pair with the keys present does join up.
+	_mask._on_footprint({
+		"position": Vector3(1.44, 0.0, 0.0),
+		"radius": 0.28,
+		"strength": 0.9,
+		"trench_from": Vector3(0.72, 0.0, 0.0),
+		"trench_strength": 0.45,
+		"trench_radius": 0.13,
+	})
+	assert_true(
+		_mask.value_at(Vector3(1.08, 0.0, 0.0)) > 0.2,
+		"the trench keys must reach TrackMask.drag()"
+	)
+
+
 ## An event carrying a payload this system does not understand must be ignored,
 ## not crash the dispatch loop for every other subscriber.
 func test_a_footprint_event_stamps_and_a_junk_payload_does_not() -> void:

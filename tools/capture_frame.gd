@@ -42,6 +42,7 @@ const ROUTE := [
 var _elapsed := 0.0
 var _output := DEFAULT_OUTPUT
 var _capture_at := 37.0
+var _settle := 0.9
 var _held: Dictionary = {}
 var _done := false
 
@@ -61,6 +62,11 @@ func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
 	_output = _string_arg(args, "--out", DEFAULT_OUTPUT)
 	_capture_at = float(_string_arg(args, "--seconds", str(_capture_at)))
+	# `--settle 0` shoots mid-stride, which is the only way to see the walk
+	# cycle in a still. It also quits while a footstep one-shot is still in the
+	# AudioServer, so expect the shutdown resource complaint on such a run --
+	# see _capture() below.
+	_settle = float(_string_arg(args, "--settle", str(_settle)))
 	# Lets one run produce the gameplay framing and another a close-up of the
 	# same trail, without two scenes or an edit between them.
 	var ortho := float(_string_arg(args, "--ortho", "0"))
@@ -149,7 +155,8 @@ func _capture() -> void:
 	# with it -- "ERROR: 2 resources still in use at exit". Stopping the player
 	# in _exit_tree() is not enough, because the release only lands on the next
 	# audio mix and quit() does not wait for one.
-	await get_tree().create_timer(0.9).timeout
+	if _settle > 0.0:
+		await get_tree().create_timer(_settle).timeout
 
 	# The rig lags the player by design; without this the shot is framed on
 	# where the player was half a second ago.

@@ -12,16 +12,25 @@ extends CharacterBody3D
 ## and SnowField. The player does not need to know either of them exists, and
 ## when the bear starts leaving prints in Wave 4 it emits the same event.
 ##
-## The blocked-out capsule here is a stand-in and nothing more; the real
-## character arrives later.
+## The body is the supplied Winter Wanderer: mesh, rig and animation takes, with
+## the model's own PBR set discarded (Art Bible rule 8 bans normal, roughness,
+## metallic and specular outright) and flat palette colour applied instead. The
+## rust-orange scarf is the one warm thing on the character and, by rule 12, one
+## of only five places warmth is allowed at all.
 
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
 const CEL_SHADER_PATH := "res://assets/shaders/cel_flat.gdshader"
+const MODEL_PATH := "res://assets/models/characters/winter_wanderer.glb"
 const STEP_SOUND_PATHS := [
 	"res://assets/audio/foley/footstep_snow_01.wav",
 	"res://assets/audio/foley/footstep_snow_02.wav",
 ]
 const FOOTPRINT_EVENT := &"player.footprint"
+
+## The two takes this slice uses, out of the eighteen in the file. Shooting,
+## aiming, sneaking, the limp and the two death takes belong to later waves.
+const WALK_CLIP := &"Walking"
+const RUN_CLIP := &"Running"
 
 @export var run_speed := 5.4
 @export var wade_speed := 1.5
@@ -64,6 +73,33 @@ const FOOTPRINT_EVENT := &"player.footprint"
 @export var print_aspect_jitter := 0.12
 @export var print_scale_jitter := 0.08
 
+## ---------------------------------------------------------------------------
+## Prints trenching together in deep snow
+## ---------------------------------------------------------------------------
+## Past about knee depth the legs stop clearing the snow between footfalls and
+## start ploughing through it, so consecutive prints stop being separate marks
+## and run together into one channel. On a scoured crest nothing of the sort
+## happens, which is why this is gated on the same depth ratio that already
+## drives the print's size, softness and raggedness -- one fact about the snow,
+## read four ways.
+##
+## Kept deliberately slight: at full depth the groove is 30% of the print's own
+## strength and 42% of its half-width. The first pass ran at 50% and 70% and it
+## was plainly wrong -- at nearly the prints' own width the chain dissolved into
+## one continuous ridge and no individual print survived. Width matters more
+## than depth here, because the rim the shader derives from the mask profile is
+## what turns a wide shallow groove into a bright wall.
+@export var trench_depth_start := 0.55
+@export var trench_strength := 0.3
+@export var trench_width := 0.42
+@export var trench_irregularity := 0.22
+
+## A groove is only drawn between two steps that actually followed each other.
+## Beyond this many strides apart the previous print is somewhere else entirely
+## -- the walker stopped, turned, or the game restarted -- and joining them
+## would rule a line across untouched snow.
+@export var trench_max_stride_gap := 1.8
+
 ## How far a print skews down the fall line, per unit of slope. The mask is a
 ## plan view, so a shape that is round on a tilted surface is already stored
 ## squashed along the fall line by cos(slope); this is the extra stretch on top
@@ -85,8 +121,54 @@ const FOOTPRINT_EVENT := &"player.footprint"
 ## lag is about 7 cm on a 20-degree slope at walking pace.
 @export var vertical_smoothing := 14.0
 
-@export var body_height := 1.75
+## How tall the traveller is, and therefore both the collision capsule and the
+## scale the model is drawn at -- the mesh's own height is measured at load and
+## divided out, so this number is the one that decides.
+##
+## Set by measuring the frame, not by choosing a plausible human height, because
+## Art Bible rule 1 makes the *screen* height the specification: the figure is
+## about 11% of frame height, 125 px of 1101 in the reference. Meshy exported
+## this model at 1.64 m, which is not an authored decision -- it is whatever the
+## generator produced -- and at 1.64 m the figure measured 9.5% against the
+## capsule it replaces at 11.4%. Rule 1 also says in as many words that its
+## numbers are a starting point and the screenshot decides.
+##
+## The alternative was to close the same gap on the camera, and it was rejected:
+## orthographic_size is entangled with the terrain wavelength, the sun
+## elevation, the shadow range and the print scale, all tuned together against a
+## 10.5 m frame and all approved. This changes one number that nothing else
+## depends on.
+@export var body_height := 1.88
 @export var body_radius := 0.28
+
+## ---------------------------------------------------------------------------
+## The character
+## ---------------------------------------------------------------------------
+## Which bone the scarf rides, and how big a ring it makes. The model is a
+## single mesh with a single surface, so the scarf cannot be a second material
+## on it -- it is separate geometry, parented into the rig, which also means it
+## swings with the head instead of being painted on.
+@export var scarf_bone := &"neck"
+@export var scarf_inner_radius := 0.1
+@export var scarf_outer_radius := 0.175
+
+## Along the neck bone's own axes, so it sits on the collar rather than in it.
+@export var scarf_offset := Vector3(0.0, 0.02, 0.0)
+
+## How fast the figure turns to face where it is going, in the same
+## closed-fraction-per-second form as the camera's follow.
+@export var turn_speed := 12.0
+
+## The ground speed at which each clip plays at rate 1. Below the first the
+## stride slows down with the walk; above the second it speeds up with the run.
+## Set so the feet plant rather than skate -- the walk cycle covers about 1.4 m
+## in its 1.07 s, the run about 3.1 m in its 0.67 s.
+@export var anim_walk_speed := 1.35
+@export var anim_run_speed := 4.6
+
+## A ceiling on the playback rate, so a sprint down a scoured slope cannot spin
+## the legs into a blur.
+@export var anim_max_pace := 1.5
 
 ## ---------------------------------------------------------------------------
 ## Footstep audio
@@ -109,10 +191,14 @@ const FOOTPRINT_EVENT := &"player.footprint"
 var _snow: Node
 var _bus: Node
 var _steps: AudioStreamPlayer
+var _model: Node3D
+var _animation: AnimationTree
 var _stride_accumulator := 0.0
 var _left_foot := true
 var _facing := Vector3.FORWARD
 var _grounded := false
+var _last_print_spot := Vector3.ZERO
+var _has_last_print := false
 
 
 func _ready() -> void:
@@ -146,8 +232,12 @@ func _exit_tree() -> void:
 		_steps.stop()
 
 
-## Built in code rather than saved into the scene so the capsule's colour can
-## come from the palette instead of being a literal in a .tscn.
+## The model carries geometry and a rig and nothing else -- its materials are
+## stripped at import by tools/strip_scene_materials.gd, because Godot invents a
+## white, specular-enabled StandardMaterial3D for any surface that arrives
+## without one and that is an offender under rules 8 and 9. Everything visible
+## about this character is therefore decided here, from the palette, at runtime,
+## the same way the terrain is.
 func _build_body() -> void:
 	var bible: ColorBible = load(PALETTE_PATH)
 	var shader: Shader = load(CEL_SHADER_PATH)
@@ -160,36 +250,171 @@ func _build_body() -> void:
 	collider.position = Vector3(0.0, body_height * 0.5, 0.0)
 	add_child(collider)
 
+	var scene: PackedScene = load(MODEL_PATH)
+	_model = scene.instantiate() as Node3D
+	if _model == null:
+		return
+	# Named rather than left as the .glb's own root name, so the node path is
+	# stable if the model is ever regenerated or replaced.
+	_model.name = "Body"
+	add_child(_model)
+	_scale_to_body_height()
+
+	# One surface for the whole figure, so this is one colour for the whole
+	# figure. Structure tones rather than a skin or a coat colour: in the
+	# reference frames the character is very nearly a dark silhouette carrying a
+	# single warm accent, and reading as a shape at 11% of frame height is worth
+	# more than reading as a person.
 	var body_material := ShaderMaterial.new()
 	body_material.shader = shader
 	body_material.set_shader_parameter("lit_color", bible.structure_tones[1])
 	body_material.set_shader_parameter("shade_color", bible.structure_tones[3])
+	for surface in _mesh_instances(_model):
+		surface.material_override = body_material
 
-	var capsule := CapsuleMesh.new()
-	capsule.radius = body_radius
-	capsule.height = body_height
-	capsule.radial_segments = 12
-	capsule.rings = 4
-	var body := MeshInstance3D.new()
-	body.mesh = capsule
-	body.material_override = body_material
-	body.position = Vector3(0.0, body_height * 0.5, 0.0)
-	add_child(body)
+	_attach_scarf(bible, shader)
+	_build_animation()
 
-	# Art Bible rule 12: the warm quota is 0.5% of the frame and the scarf is
-	# one of the five places it is allowed to appear. At this camera distance
-	# it is a handful of pixels, which is exactly the intent.
-	var scarf_material := ShaderMaterial.new()
-	scarf_material.shader = shader
-	scarf_material.set_shader_parameter("lit_color", bible.warm_tones[1])
-	scarf_material.set_shader_parameter("shade_color", bible.warm_tones[0])
-	var scarf_mesh := BoxMesh.new()
-	scarf_mesh.size = Vector3(body_radius * 2.1, 0.16, body_radius * 2.1)
+
+## Measured off the mesh rather than against a constant, so regenerating the
+## model at a different size -- Meshy's scale is arbitrary -- changes nothing
+## here. The bind-pose AABB stands on the model's origin, so its top edge is the
+## figure's height.
+func _scale_to_body_height() -> void:
+	var meshes := _mesh_instances(_model)
+	if meshes.is_empty() or meshes[0].mesh == null:
+		return
+	var box := meshes[0].mesh.get_aabb()
+	var source := box.position.y + box.size.y
+	if source < 0.1:
+		return
+	_model.scale = Vector3.ONE * (body_height / source)
+
+
+func _mesh_instances(node: Node, found: Array[MeshInstance3D] = []) -> Array[MeshInstance3D]:
+	if node is MeshInstance3D:
+		found.append(node as MeshInstance3D)
+	for child in node.get_children():
+		_mesh_instances(child, found)
+	return found
+
+
+func _first_of_type(node: Node, type: StringName) -> Node:
+	if node.is_class(type):
+		return node
+	for child in node.get_children():
+		var found := _first_of_type(child, type)
+		if found != null:
+			return found
+	return null
+
+
+## Art Bible rule 12: the warm quota is 0.5% of the frame, and the scarf is one
+## of the five places warmth may appear at all. Section 5.3 makes it the point
+## of the character -- "the only warm colour on the protagonist, and the
+## player's visual anchor on the snow field".
+##
+## Geometry rather than a second material, because the model is a single surface
+## and there is nothing to assign a second material to. Parented into the rig so
+## it turns with the head.
+func _attach_scarf(bible: ColorBible, shader: Shader) -> void:
+	var skeleton := _first_of_type(_model, &"Skeleton3D") as Skeleton3D
+	if skeleton == null or skeleton.find_bone(scarf_bone) < 0:
+		return
+
+	var anchor := BoneAttachment3D.new()
+	skeleton.add_child(anchor)
+	# After add_child: resolving a bone name needs the Skeleton3D parent.
+	anchor.bone_name = scarf_bone
+
+	var material := ShaderMaterial.new()
+	material.shader = shader
+	material.set_shader_parameter("lit_color", bible.warm_tones[1])
+	material.set_shader_parameter("shade_color", bible.warm_tones[0])
+
+	var ring := TorusMesh.new()
+	ring.inner_radius = scarf_inner_radius
+	ring.outer_radius = scarf_outer_radius
+	# A default TorusMesh is 4,096 triangles, which for eight pixels of scarf
+	# would be more geometry than the character wearing it.
+	ring.rings = 10
+	ring.ring_segments = 6
+
 	var scarf := MeshInstance3D.new()
-	scarf.mesh = scarf_mesh
-	scarf.material_override = scarf_material
-	scarf.position = Vector3(0.0, body_height * 0.78, 0.0)
-	add_child(scarf)
+	scarf.mesh = ring
+	scarf.material_override = material
+
+	# The rig came from an FBX authored in centimetres, and Godot carries that
+	# as a 0.01 scale on the Armature -- so anything parented into the skeleton
+	# is drawn a hundredth of the size it asks for, and any offset is read in
+	# centimetres. Undone here rather than upstream: applying the scale in
+	# Blender would have to rescale every take's translation curves with it,
+	# and eighteen animations is a lot to risk for a tidier number.
+	# Divided by the model's own scale, not taken raw: the figure is scaled to
+	# body_height, and the scarf has to keep that -- what is being undone here is
+	# only the rig's centimetre units, not the character's size.
+	var rig_scale := maxf(
+		skeleton.global_transform.basis.get_scale().x / maxf(_model.scale.x, 0.0001), 0.0001
+	)
+	scarf.scale = Vector3.ONE / rig_scale
+	scarf.position = scarf_offset / rig_scale
+	anchor.add_child(scarf)
+
+
+## Walk and run, blended by the speed the snow already decides.
+##
+## There is no idle take in the file -- one has been asked for. Until it lands
+## the blend is simply frozen at zero speed: the time scale goes to zero with
+## the ground speed, so a standing character holds the pose he stopped in rather
+## than sliding along with his legs still cycling. Swapping in a real idle is
+## one AnimationNodeAnimation and one more blend input.
+func _build_animation() -> void:
+	var player := _first_of_type(_model, &"AnimationPlayer") as AnimationPlayer
+	if player == null:
+		return
+	if not player.has_animation(WALK_CLIP) or not player.has_animation(RUN_CLIP):
+		push_warning("player_controller: %s is missing %s or %s" % [MODEL_PATH, WALK_CLIP, RUN_CLIP])
+		return
+
+	var walk := AnimationNodeAnimation.new()
+	walk.animation = WALK_CLIP
+	var run := AnimationNodeAnimation.new()
+	run.animation = RUN_CLIP
+
+	var graph := AnimationNodeBlendTree.new()
+	graph.add_node("walk", walk)
+	graph.add_node("run", run)
+	graph.add_node("gait", AnimationNodeBlend2.new())
+	graph.add_node("pace", AnimationNodeTimeScale.new())
+	graph.connect_node("gait", 0, "walk")
+	graph.connect_node("gait", 1, "run")
+	graph.connect_node("pace", 0, "gait")
+	graph.connect_node("output", 0, "pace")
+
+	_animation = AnimationTree.new()
+	_animation.name = "Gait"
+	_animation.tree_root = graph
+	add_child(_animation)
+	_animation.anim_player = _animation.get_path_to(player)
+	# Explicit, and not optional. The tracks are stored relative to the model's
+	# own root ("Armature/Skeleton3D:Hips"), while AnimationMixer.root_node
+	# defaults to the mixer's parent -- which here is the player, one level
+	# above. Left at the default every track resolves to nothing and the
+	# character stands in his bind pose with no error printed anywhere.
+	_animation.root_node = _animation.get_path_to(_model)
+	_animation.active = true
+
+
+## Blend by speed, and play at the rate that actually covers the ground, so the
+## feet plant instead of skating.
+func _drive_animation() -> void:
+	if _animation == null:
+		return
+	var speed := Vector2(velocity.x, velocity.z).length()
+	var gait := clampf(inverse_lerp(anim_walk_speed, anim_run_speed, speed), 0.0, 1.0)
+	var reference := lerpf(anim_walk_speed, anim_run_speed, gait)
+	_animation.set(&"parameters/gait/blend_amount", gait)
+	_animation.set(&"parameters/pace/scale", clampf(speed / reference, 0.0, anim_max_pace))
 
 
 ## Non-positional, deliberately. The sources are stereo, which Godot spatialises
@@ -311,6 +536,22 @@ func _physics_process(delta: float) -> void:
 		_facing = Vector3(velocity.x, 0.0, velocity.z).normalized()
 		_advance_stride(travelled)
 
+	_face_travel(delta)
+	_drive_animation()
+
+
+## The model is authored facing +Z -- its `headfront` bone sits a few
+## centimetres in front of `Head` along +Z -- rather than Godot's usual -Z, so
+## the yaw that points it down a heading is atan2(x, z) and not atan2(x, -z).
+## Getting that sign wrong makes a character who walks backwards perfectly
+## convincingly, which is why it is written down.
+func _face_travel(delta: float) -> void:
+	if _model == null or _facing.length_squared() < 0.0001:
+		return
+	var wanted := atan2(_facing.x, _facing.z)
+	var blend := 1.0 - exp(-turn_speed * delta)
+	_model.rotation.y = lerp_angle(_model.rotation.y, wanted, blend)
+
 
 func _advance_stride(travelled: float) -> void:
 	_stride_accumulator += travelled
@@ -335,6 +576,13 @@ func _place_print() -> void:
 	# darker than one across a wind-scoured patch -- and sound different too.
 	var depth_ratio := clampf(depth / max_depth, 0.0, 1.0)
 	var strength := clampf(0.34 + 0.66 * depth_ratio, 0.0, 1.0)
+
+	# Recorded whether or not the event goes out, so the next step measures its
+	# gap from where this foot actually landed.
+	var previous := _last_print_spot
+	var had_previous := _has_last_print
+	_last_print_spot = spot
+	_has_last_print = true
 
 	if _bus == null:
 		return
@@ -362,7 +610,7 @@ func _place_print() -> void:
 			var cos_slope := 1.0 / sqrt(1.0 + steepness * steepness)
 			downhill_scale = cos_slope * (1.0 + print_downhill_stretch * steepness)
 
-	_bus.emit_event(FOOTPRINT_EVENT, {
+	var payload := {
 		"position": spot,
 		"depth": depth,
 		"depth_ratio": depth_ratio,
@@ -385,4 +633,20 @@ func _place_print() -> void:
 		# time a print landed. A path still packs down -- it just takes the
 		# dozen steps it should.
 		"pack_amount": 0.09,
-	})
+	}
+
+	# Ramped in rather than switched on: a hard threshold would put a visible
+	# line across the snow at whatever depth it sat at, with a continuous
+	# channel on one side of it and separate prints on the other.
+	var trench := smoothstep(trench_depth_start, 1.0, depth_ratio)
+	if trench > 0.0 and had_previous \
+			and spot.distance_to(previous) <= stride_length * trench_max_stride_gap:
+		payload["trench_from"] = previous
+		payload["trench_strength"] = strength * trench_strength * trench
+		# Measured off the print's half-width, not its half-length -- the groove
+		# is as wide as the leg that dragged through it, and the print is longer
+		# than it is wide.
+		payload["trench_radius"] = print_radius * scale / print_aspect * trench_width
+		payload["trench_irregularity"] = trench_irregularity * trench
+
+	_bus.emit_event(FOOTPRINT_EVENT, payload)

@@ -217,6 +217,79 @@ func stamp(
 				_dirty = true
 
 
+## Drags a groove between two prints, so a trail through deep powder reads as
+## one channel with foot pockets in it rather than as a row of separate marks.
+##
+## That is what wading actually leaves: below about knee depth the legs never
+## clear the snow between footfalls, they plough through it, and the sides of
+## each hole collapse into the next. On a wind-scoured crest none of that
+## happens and the prints stay separate and sharp -- so the caller gates this on
+## snow depth and simply does not call it up there.
+##
+## Deliberately weaker and narrower than the prints it joins. Composited with
+## max() like everything else here, so wherever a print is deeper the print
+## wins and stays legible: this fills the gaps between them, it does not
+## replace them with a ditch.
+##
+## Geometrically it is `stamp()`'s profile measured from a segment instead of
+## from a point -- flat to `core`, then smoothstep out, with the same edge noise
+## warping the outline. `irregularity` matters more here than on a print,
+## because a channel with two straight parallel sides reads as machined.
+func drag(
+	from: Vector3,
+	to: Vector3,
+	radius_m: float,
+	strength: float,
+	core := 0.55,
+	irregularity := 0.0,
+	edge_seed := 0.0
+) -> void:
+	if _mask == null or strength <= 0.0:
+		return
+	var start := cell_of(Vector2(from.x, from.z))
+	var finish := cell_of(Vector2(to.x, to.z))
+	var radius := maxf(radius_m / CELL_M, 1.0)
+	var reach := radius * (1.0 + maxf(irregularity, 0.0))
+	var min_x := maxi(int(floorf(minf(start.x, finish.x) - reach)), 0)
+	var max_x := mini(int(ceilf(maxf(start.x, finish.x) + reach)), RESOLUTION - 1)
+	var min_y := maxi(int(floorf(minf(start.y, finish.y) - reach)), 0)
+	var max_y := mini(int(ceilf(maxf(start.y, finish.y) + reach)), RESOLUTION - 1)
+	var clamped := clampf(strength, 0.0, 1.0)
+
+	var span := finish - start
+	var length := span.length()
+	# Two prints in the same place is a stamp, not a drag, and normalising a
+	# zero-length span is a division by zero.
+	var direction := Vector2.RIGHT
+	if length > 0.0001:
+		direction = span / length
+	var sideways := Vector2(-direction.y, direction.x)
+	var length_units := length / radius
+
+	for y in range(min_y, max_y + 1):
+		for x in range(min_x, max_x + 1):
+			var offset := Vector2(float(x) - start.x, float(y) - start.y)
+			# The channel's own frame, in radii: how far along it, and how far
+			# off its centre line. Capping `along` at the two ends is what
+			# rounds the groove off into the prints instead of cutting it
+			# square across them.
+			var along := offset.dot(direction) / radius
+			var across := offset.dot(sideways) / radius
+			var past_end := maxf(maxf(-along, along - length_units), 0.0)
+			var distance := sqrt(past_end * past_end + across * across)
+			if irregularity > 0.0:
+				distance += _edge_noise.get_noise_2d(
+					along + edge_seed, across + edge_seed
+				) * irregularity
+			if distance >= 1.0:
+				continue
+			var value := clamped * (1.0 - smoothstep(core, 1.0, distance))
+			var current := _mask.get_pixel(x, y).r
+			if value > current:
+				_mask.set_pixel(x, y, Color(value, 0.0, 0.0, 1.0))
+				_dirty = true
+
+
 ## Nearest texel, not bilinear. The shader is the only thing that needs a
 ## smooth read and it gets one from the sampler for free; borrowing SnowField's
 ## interpolator to do it here would be a direct reference between two systems
@@ -278,6 +351,18 @@ func _on_footprint(payload) -> void:
 	if not (payload is Dictionary):
 		return
 	var data: Dictionary = payload
+	# The groove first, so the print is composited over it -- immaterial with
+	# max(), but it is the order the two things happen in.
+	if data.has("trench_from"):
+		drag(
+			data.get("trench_from", Vector3.ZERO),
+			data.get("position", Vector3.ZERO),
+			data.get("trench_radius", 0.12),
+			data.get("trench_strength", 0.0),
+			data.get("core", 0.55),
+			data.get("trench_irregularity", 0.0),
+			data.get("edge_seed", 0.0)
+		)
 	stamp(
 		data.get("position", Vector3.ZERO),
 		data.get("radius", 0.28),
