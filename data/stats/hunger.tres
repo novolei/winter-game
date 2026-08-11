@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="StatDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/stat_definition.gd" id="1_v4fvp"]
+[ext_resource type="Script" path="res://src/definitions/threshold_effect.gd" id="2_xdchv"]
+
+[sub_resource type="Resource" id="Resource_qhvnd"]
+script = ExtResource("2_xdchv")
+watch_stat = &"hunger"
+threshold = 0.3
+target_stat = &"core_temperature"
+value = 1.5
+
+[sub_resource type="Resource" id="Resource_1rlck"]
+script = ExtResource("2_xdchv")
+watch_stat = &"hunger"
+threshold = 0.05
+target_stat = &"core_temperature"
+value = 2.0
+
+[resource]
+script = ExtResource("1_v4fvp")
+id = &"hunger"
+display_name = "Hunger"
+base_decay_per_second = 0.001388888888888889
+threshold_effects = Array[ExtResource("2_xdchv")]([SubResource("Resource_qhvnd"), SubResource("Resource_1rlck")])

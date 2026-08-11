@@ -1,0 +1,56 @@
+[gd_resource type="Resource" script_class="StatDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/stat_definition.gd" id="1_gfufh"]
+[ext_resource type="Script" path="res://src/definitions/threshold_effect.gd" id="2_d0xr2"]
+
+[sub_resource type="Resource" id="Resource_fmky8"]
+script = ExtResource("2_d0xr2")
+watch_stat = &"core_temperature"
+threshold = 0.5
+target_stat = &"breath:rate"
+value = 1.25
+
+[sub_resource type="Resource" id="Resource_ub2jb"]
+script = ExtResource("2_d0xr2")
+watch_stat = &"core_temperature"
+threshold = 0.35
+target_stat = &"frostbite_hands"
+operation = 0
+value = 0.0016666666666666668
+
+[sub_resource type="Resource" id="Resource_p5npy"]
+script = ExtResource("2_d0xr2")
+watch_stat = &"core_temperature"
+threshold = 0.35
+target_stat = &"frostbite_feet"
+operation = 0
+value = 0.0011111111111111111
+
+[sub_resource type="Resource" id="Resource_xbvqv"]
+script = ExtResource("2_d0xr2")
+watch_stat = &"core_temperature"
+threshold = 0.2
+target_stat = &"breath:rate"
+value = 1.5
+
+[sub_resource type="Resource" id="Resource_1dylo"]
+script = ExtResource("2_d0xr2")
+watch_stat = &"core_temperature"
+threshold = 0.15
+target_stat = &"frostbite_hands"
+value = 2.0
+
+[sub_resource type="Resource" id="Resource_bplqj"]
+script = ExtResource("2_d0xr2")
+watch_stat = &"core_temperature"
+threshold = 0.15
+target_stat = &"frostbite_feet"
+value = 2.0
+
+[resource]
+script = ExtResource("1_gfufh")
+id = &"core_temperature"
+display_name = "Core temperature"
+base_decay_per_second = 0.0008333333333333334
+lethal_at_min = true
+threshold_effects = Array[ExtResource("2_d0xr2")]([SubResource("Resource_fmky8"), SubResource("Resource_ub2jb"), SubResource("Resource_p5npy"), SubResource("Resource_xbvqv"), SubResource("Resource_1dylo"), SubResource("Resource_bplqj")])

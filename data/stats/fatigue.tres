@@ -1,0 +1,39 @@
+[gd_resource type="Resource" script_class="StatDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/stat_definition.gd" id="1_ofrj4"]
+[ext_resource type="Script" path="res://src/definitions/threshold_effect.gd" id="2_4cflu"]
+
+[sub_resource type="Resource" id="Resource_kngwp"]
+script = ExtResource("2_4cflu")
+watch_stat = &"fatigue"
+threshold = 0.3
+target_stat = &"locomotion:speed"
+value = 0.85
+
+[sub_resource type="Resource" id="Resource_xxdxc"]
+script = ExtResource("2_4cflu")
+watch_stat = &"fatigue"
+threshold = 0.3
+target_stat = &"locomotion:snow_cost"
+value = 1.35
+
+[sub_resource type="Resource" id="Resource_x2uox"]
+script = ExtResource("2_4cflu")
+watch_stat = &"fatigue"
+threshold = 0.1
+target_stat = &"locomotion:speed"
+value = 0.85
+
+[sub_resource type="Resource" id="Resource_cg4tq"]
+script = ExtResource("2_4cflu")
+watch_stat = &"fatigue"
+threshold = 0.02
+target_stat = &"locomotion:run_speed"
+value = 0.0
+
+[resource]
+script = ExtResource("1_ofrj4")
+id = &"fatigue"
+display_name = "Fatigue"
+base_decay_per_second = 0.0005555555555555556
+threshold_effects = Array[ExtResource("2_4cflu")]([SubResource("Resource_kngwp"), SubResource("Resource_xxdxc"), SubResource("Resource_x2uox"), SubResource("Resource_cg4tq")])

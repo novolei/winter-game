@@ -1,0 +1,38 @@
+[gd_resource type="Resource" script_class="StatDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/stat_definition.gd" id="1_bxnad"]
+[ext_resource type="Script" path="res://src/definitions/threshold_effect.gd" id="2_30ocg"]
+
+[sub_resource type="Resource" id="Resource_ki7cw"]
+script = ExtResource("2_30ocg")
+watch_stat = &"frostbite_feet"
+threshold = 0.5
+target_stat = &"fatigue"
+value = 1.25
+
+[sub_resource type="Resource" id="Resource_2ir8v"]
+script = ExtResource("2_30ocg")
+watch_stat = &"frostbite_feet"
+threshold = 0.5
+target_stat = &"thirst"
+value = 1.1
+
+[sub_resource type="Resource" id="Resource_csjin"]
+script = ExtResource("2_30ocg")
+watch_stat = &"frostbite_feet"
+threshold = 0.5
+target_stat = &"locomotion:speed"
+value = 0.85
+
+[sub_resource type="Resource" id="Resource_p8lo0"]
+script = ExtResource("2_30ocg")
+watch_stat = &"frostbite_feet"
+threshold = 0.2
+target_stat = &"locomotion:speed"
+value = 0.8
+
+[resource]
+script = ExtResource("1_bxnad")
+id = &"frostbite_feet"
+display_name = "Frostbite (feet)"
+threshold_effects = Array[ExtResource("2_30ocg")]([SubResource("Resource_ki7cw"), SubResource("Resource_2ir8v"), SubResource("Resource_csjin"), SubResource("Resource_p8lo0")])
