@@ -76,6 +76,7 @@ func _ready() -> void:
 	_material.set_shader_parameter("band_softness", band_softness)
 	_material.set_shader_parameter("field_extent", SnowField.EXTENT_M)
 	_material.set_shader_parameter("track_extent", TrackMask.EXTENT_M)
+	_material.set_shader_parameter("static_extent", TrackMask.STATIC_EXTENT_M)
 	material_override = _material
 
 	# The plane is displaced geometry whose bounding box the engine computes
@@ -118,6 +119,12 @@ func _process(_delta: float) -> void:
 	_material.set_shader_parameter("track_mask", _tracks.texture())
 	_material.set_shader_parameter("field_origin", field_origin)
 	_material.set_shader_parameter("track_origin", track_origin)
+	# The baked layer's window never moves, so this pair never changes after the
+	# first frame. Pushed every frame anyway rather than cached, because the one
+	# thing that must not happen is the shader reading a stale origin against a
+	# freshly rebaked image -- the furrows would be somewhere else in the world.
+	_material.set_shader_parameter("static_mask", _tracks.static_texture())
+	_material.set_shader_parameter("static_origin", _tracks.static_origin())
 	# Pushed from the field rather than duplicated here: the shader and
 	# SnowField.depth_at() have to be the same formula with the same numbers, or
 	# the drift you see is not the drift you walk in.

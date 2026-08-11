@@ -36,11 +36,25 @@ uniform float max_depth = 1.05;
 uniform float scour_hollow = 0.36;
 uniform float scour_crest = 0.72;
 
-// TrackMask: one image, any number of prints. A thousand footprints cost the
-// same as one because they are all already composited into this texture.
+// TrackMask, dynamic layer: one image, any number of prints. A thousand
+// footprints cost the same as one because they are all already composited into
+// this texture. The window follows the player.
 uniform sampler2D track_mask : filter_linear, repeat_disable;
 uniform vec2 track_origin = vec2(-45.0, -45.0);
 uniform float track_extent = 90.0;
+
+// TrackMask, static layer: ploughed furrows and old tyre tracks, baked once
+// into a window that is fixed in the world (Art Bible section 3). Read exactly
+// like the dynamic layer and combined with max(), because a furrow and a boot
+// print are the same kind of mark in the snow -- the split exists so the wind
+// can erase one of them and not the other, not so they can look different.
+//
+// hint_default_black matters: an unassigned sampler2D reads as *white* in
+// Godot, which would render the entire field as one flat track-toned slab if
+// this uniform were ever left unset.
+uniform sampler2D static_mask : hint_default_black, filter_linear, repeat_disable;
+uniform vec2 static_origin = vec2(-60.0, -60.0);
+uniform float static_extent = 120.0;
 
 // A print is 29 cm long. The ground mesh has 44 cm quads, so the mesh cannot
 // represent one -- pushing the vertices down was what produced the radiating
@@ -107,15 +121,22 @@ float packed_at(vec2 w) {
 	return textureLod(snow_packed, uv, 0.0).r * window_falloff(uv);
 }
 
-float track_at(vec2 w) {
-	vec2 uv = (w - track_origin) / track_extent;
-	// repeat_disable clamps to the edge texel, which would smear the outermost
-	// footprint across the rest of the world. Outside the window there are no
-	// tracks, so say so.
+// repeat_disable clamps to the edge texel, which would smear the outermost
+// footprint across the rest of the world. Outside a window there are no tracks,
+// so say so.
+float layer_at(sampler2D layer, vec2 w, vec2 layer_origin, float layer_extent) {
+	vec2 uv = (w - layer_origin) / layer_extent;
 	if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
 		return 0.0;
 	}
-	return textureLod(track_mask, uv, 0.0).r;
+	return textureLod(layer, uv, 0.0).r;
+}
+
+float track_at(vec2 w) {
+	return max(
+		layer_at(track_mask, w, track_origin, track_extent),
+		layer_at(static_mask, w, static_origin, static_extent)
+	);
 }
 
 // Metre-scale, and the only part the mesh is asked to draw.

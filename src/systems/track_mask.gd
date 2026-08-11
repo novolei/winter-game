@@ -14,10 +14,27 @@ extends Node
 ## and at memory. That is the whole reason this is a mask and not a list of
 ## decals.
 ##
-## The static/dynamic split the Art Bible calls for (baked furrows the wind
-## cannot erase, versus footprints it can) is not here yet -- there is no wind
-## and nothing baked. When it arrives it is a second image and a second
-## uniform, not a rework of this one.
+## TWO LAYERS, which Art Bible section 3 requires and which is why this file is
+## not simply the dynamic mask it started as:
+##
+##   dynamic -- footprints, made while the game runs, in a window that follows
+##              the player and scrolls. The wind will erase this one.
+##   static  -- ploughed furrows and old tyre tracks, baked once at startup into
+##              a window that is FIXED in the world and never scrolls. The wind
+##              must never touch it.
+##
+## Without the split the first gust flattens the farmland along with the
+## footprints, and the only texture the Art Bible allows an otherwise empty
+## white field goes with it.
+##
+## The static window does not follow anybody, and that is the point rather than
+## a shortcut: furrows are a *place*, not a property of wherever the player
+## happens to be standing, so they are baked once in world coordinates and read
+## by world coordinates. It also means the bake never has to be repeated -- a
+## scrolling static layer would have to re-rasterise every stroke on every
+## recentre, which is exactly the per-frame cost this system exists to avoid.
+## The price is that the layer covers one fixed square of world; outside it the
+## shader reads zero, which is correct, because outside it nothing was ploughed.
 
 ## 2048 rather than the 1080 this started at. A boot print is about 29 cm long
 ## and 13 cm wide; at 1080 over 90 m a texel is 8.3 cm, so the print was under
@@ -28,6 +45,16 @@ extends Node
 const RESOLUTION := 2048
 const EXTENT_M := 90.0
 const CELL_M := EXTENT_M / float(RESOLUTION)
+
+## The static layer. Wider than the dynamic window because it has to hold a
+## whole ploughed field and the road that runs past it, and because it never
+## moves -- 120 m is the same span SnowField covers, so a farmstead that fits in
+## the terrain window fits in this one. The texel is 5.9 cm against the dynamic
+## layer's 4.4: a furrow is 20 cm wide where a boot print is 13, so the coarser
+## grid still resolves the thing this layer draws.
+const STATIC_RESOLUTION := 2048
+const STATIC_EXTENT_M := 120.0
+const STATIC_CELL_M := STATIC_EXTENT_M / float(STATIC_RESOLUTION)
 
 ## Smaller than the snow field's, because this window is smaller and its texels
 ## are finer: a stale edge here shows up as tracks that stop dead.
@@ -44,6 +71,11 @@ var _mask: Image
 var _texture: ImageTexture
 var _dirty := false
 var _edge_noise: FastNoiseLite
+
+var _static_origin := Vector2.ZERO
+var _static: Image
+var _static_texture: ImageTexture
+var _static_dirty := false
 
 
 func _ready() -> void:
@@ -66,12 +98,15 @@ func _exit_tree() -> void:
 		bus.unsubscribe(FOOTPRINT_EVENT, _on_footprint)
 
 
-## Builds the mask centred on `centre`. Separate from _ready() so a test can
+## Builds both layers centred on `centre`. Separate from _ready() so a test can
 ## drive it without a tree.
 func build_at(centre: Vector3 = Vector3.ZERO) -> void:
 	if _mask == null:
 		_mask = Image.create_empty(RESOLUTION, RESOLUTION, false, Image.FORMAT_R8)
 		_texture = ImageTexture.create_from_image(_mask)
+	if _static == null:
+		_static = Image.create_empty(STATIC_RESOLUTION, STATIC_RESOLUTION, false, Image.FORMAT_R8)
+		_static_texture = ImageTexture.create_from_image(_static)
 	if _edge_noise == null:
 		_edge_noise = FastNoiseLite.new()
 		_edge_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
@@ -81,16 +116,34 @@ func build_at(centre: Vector3 = Vector3.ZERO) -> void:
 		# anything to do with world scale.
 		_edge_noise.frequency = EDGE_NOISE_LOBES
 	_mask.fill(Color(0.0, 0.0, 0.0, 1.0))
-	_origin = _snap(Vector2(centre.x, centre.z) - Vector2(EXTENT_M, EXTENT_M) * 0.5)
+	_origin = _snap(Vector2(centre.x, centre.z) - Vector2(EXTENT_M, EXTENT_M) * 0.5, CELL_M)
 	_dirty = true
+	bake_at(centre)
 
 
-func _snap(point: Vector2) -> Vector2:
-	return Vector2(floorf(point.x / CELL_M) * CELL_M, floorf(point.y / CELL_M) * CELL_M)
+## Re-centres and clears the static layer, without touching the footprints.
+## Called once, by whoever owns the composition, before it bakes its strokes in
+## -- the window is fixed from then on.
+func bake_at(centre: Vector3 = Vector3.ZERO) -> void:
+	if _static == null:
+		return
+	_static.fill(Color(0.0, 0.0, 0.0, 1.0))
+	_static_origin = _snap(
+		Vector2(centre.x, centre.z) - Vector2(STATIC_EXTENT_M, STATIC_EXTENT_M) * 0.5, STATIC_CELL_M
+	)
+	_static_dirty = true
+
+
+func _snap(point: Vector2, cell: float) -> Vector2:
+	return Vector2(floorf(point.x / cell) * cell, floorf(point.y / cell) * cell)
 
 
 func cell_of(world_xz: Vector2) -> Vector2:
 	return (world_xz - _origin) / CELL_M
+
+
+func static_cell_of(world_xz: Vector2) -> Vector2:
+	return (world_xz - _static_origin) / STATIC_CELL_M
 
 
 func origin() -> Vector2:
@@ -99,6 +152,14 @@ func origin() -> Vector2:
 
 func extent() -> float:
 	return EXTENT_M
+
+
+func static_origin() -> Vector2:
+	return _static_origin
+
+
+func static_extent() -> float:
+	return STATIC_EXTENT_M
 
 
 ## Writes one print. Composited with max() rather than added, so walking the
@@ -146,15 +207,37 @@ func stamp(
 ) -> void:
 	if _mask == null:
 		return
-	var cell := cell_of(Vector2(world.x, world.z))
-	var radius := maxf(radius_m / CELL_M, 1.0)
+	if _blob(
+		_mask, RESOLUTION, CELL_M, cell_of(Vector2(world.x, world.z)),
+		radius_m, strength, forward, aspect, core, irregularity, edge_seed, fall, downhill_scale
+	):
+		_dirty = true
+
+
+func _blob(
+	image: Image,
+	resolution: int,
+	cell_m: float,
+	cell: Vector2,
+	radius_m: float,
+	strength: float,
+	forward: Vector2,
+	aspect: float,
+	core: float,
+	irregularity: float,
+	edge_seed: float,
+	fall: Vector2,
+	downhill_scale: float
+) -> bool:
+	var touched := false
+	var radius := maxf(radius_m / cell_m, 1.0)
 	# The warp pushes the outline outward as often as inward, so the box has to
 	# allow for it or the ragged edge is clipped back to a straight line.
 	var reach := radius * (1.0 + maxf(irregularity, 0.0))
 	var min_x := maxi(int(floorf(cell.x - reach)), 0)
-	var max_x := mini(int(ceilf(cell.x + reach)), RESOLUTION - 1)
+	var max_x := mini(int(ceilf(cell.x + reach)), resolution - 1)
 	var min_y := maxi(int(floorf(cell.y - reach)), 0)
-	var max_y := mini(int(ceilf(cell.y + reach)), RESOLUTION - 1)
+	var max_y := mini(int(ceilf(cell.y + reach)), resolution - 1)
 	var clamped := clampf(strength, 0.0, 1.0)
 
 	var along := Vector2.ZERO
@@ -175,9 +258,9 @@ func stamp(
 			along = Vector2(along.dot(downhill), along.dot(sideways))
 		reach *= maxf(downhill_scale, 1.0)
 		min_x = maxi(int(floorf(cell.x - reach)), 0)
-		max_x = mini(int(ceilf(cell.x + reach)), RESOLUTION - 1)
+		max_x = mini(int(ceilf(cell.x + reach)), resolution - 1)
 		min_y = maxi(int(floorf(cell.y - reach)), 0)
-		max_y = mini(int(ceilf(cell.y + reach)), RESOLUTION - 1)
+		max_y = mini(int(ceilf(cell.y + reach)), resolution - 1)
 
 	for y in range(min_y, max_y + 1):
 		for x in range(min_x, max_x + 1):
@@ -211,10 +294,11 @@ func stamp(
 			# discontinuity in the height field is a crease in the normal, and
 			# a crease is what shows up as a shard.
 			var value := clamped * (1.0 - smoothstep(core, 1.0, distance))
-			var current := _mask.get_pixel(x, y).r
+			var current := image.get_pixel(x, y).r
 			if value > current:
-				_mask.set_pixel(x, y, Color(value, 0.0, 0.0, 1.0))
-				_dirty = true
+				image.set_pixel(x, y, Color(value, 0.0, 0.0, 1.0))
+				touched = true
+	return touched
 
 
 ## Drags a shallow groove along a stretch of the walker's path, so a trail
@@ -248,14 +332,33 @@ func drag(
 ) -> void:
 	if _mask == null or strength <= 0.0:
 		return
-	var start := cell_of(Vector2(from.x, from.z))
-	var finish := cell_of(Vector2(to.x, to.z))
-	var radius := maxf(radius_m / CELL_M, 1.0)
+	if _groove(
+		_mask, RESOLUTION, CELL_M,
+		cell_of(Vector2(from.x, from.z)), cell_of(Vector2(to.x, to.z)),
+		radius_m, strength, core, irregularity, edge_seed
+	):
+		_dirty = true
+
+
+func _groove(
+	image: Image,
+	resolution: int,
+	cell_m: float,
+	start: Vector2,
+	finish: Vector2,
+	radius_m: float,
+	strength: float,
+	core: float,
+	irregularity: float,
+	edge_seed: float
+) -> bool:
+	var touched := false
+	var radius := maxf(radius_m / cell_m, 1.0)
 	var reach := radius * (1.0 + maxf(irregularity, 0.0))
 	var min_x := maxi(int(floorf(minf(start.x, finish.x) - reach)), 0)
-	var max_x := mini(int(ceilf(maxf(start.x, finish.x) + reach)), RESOLUTION - 1)
+	var max_x := mini(int(ceilf(maxf(start.x, finish.x) + reach)), resolution - 1)
 	var min_y := maxi(int(floorf(minf(start.y, finish.y) - reach)), 0)
-	var max_y := mini(int(ceilf(maxf(start.y, finish.y) + reach)), RESOLUTION - 1)
+	var max_y := mini(int(ceilf(maxf(start.y, finish.y) + reach)), resolution - 1)
 	var clamped := clampf(strength, 0.0, 1.0)
 
 	var span := finish - start
@@ -286,10 +389,129 @@ func drag(
 			if distance >= 1.0:
 				continue
 			var value := clamped * (1.0 - smoothstep(core, 1.0, distance))
-			var current := _mask.get_pixel(x, y).r
+			var current := image.get_pixel(x, y).r
 			if value > current:
-				_mask.set_pixel(x, y, Color(value, 0.0, 0.0, 1.0))
-				_dirty = true
+				image.set_pixel(x, y, Color(value, 0.0, 0.0, 1.0))
+				touched = true
+	return touched
+
+
+## ---------------------------------------------------------------------------
+## The static layer
+## ---------------------------------------------------------------------------
+## Everything below writes into the baked image instead of the scrolling one.
+## Same two rasterisers, a different target -- which is the point: a furrow and
+## a footprint are the same kind of mark in the snow and must read as one
+## surface, not as two systems that happen to overlap.
+
+
+## One straight rut. `bake_path` is what a caller normally wants; this is the
+## primitive underneath it, exposed because a single stroke is a legitimate
+## thing to bake and because it is what the tests can pin down exactly.
+func bake_stroke(
+	from: Vector3,
+	to: Vector3,
+	radius_m: float,
+	strength: float,
+	core := 0.55,
+	irregularity := 0.0,
+	edge_seed := 0.0
+) -> void:
+	if _static == null or strength <= 0.0:
+		return
+	if _groove(
+		_static, STATIC_RESOLUTION, STATIC_CELL_M,
+		static_cell_of(Vector2(from.x, from.z)), static_cell_of(Vector2(to.x, to.z)),
+		radius_m, strength, core, irregularity, edge_seed
+	):
+		_static_dirty = true
+
+
+## A run of strokes through a list of world points. A road that bends is a
+## polyline, not an arc: the mask has no curve primitive and does not need one,
+## because at 5.9 cm per texel a bend sampled every few metres has no visible
+## corners in it.
+func bake_path(
+	points: Array,
+	radius_m: float,
+	strength: float,
+	core := 0.55,
+	irregularity := 0.0,
+	edge_seed := 0.0
+) -> void:
+	for index in range(points.size() - 1):
+		bake_stroke(
+			points[index], points[index + 1], radius_m, strength, core, irregularity,
+			# Shifted per segment, or every segment of a road crumbles in exactly
+			# the same places and the repeat is visible along its whole length.
+			edge_seed + float(index) * 3.7
+		)
+
+
+## A band of parallel furrows -- the ploughed field of Art Bible section 3.
+##
+## `origin` is the near corner, `direction` the way the plough ran, `length` how
+## far it ran, `spacing` the gap between furrows and `count` how many. Stated
+## that way rather than as a rectangle because a field is defined by the
+## direction it was worked in: rotate the rectangle and the furrows rotate with
+## it, which is the one thing that must never come apart.
+func bake_furrows(
+	origin: Vector3,
+	direction: Vector2,
+	length_m: float,
+	spacing_m: float,
+	count: int,
+	radius_m: float,
+	strength: float,
+	irregularity := 0.0
+) -> void:
+	if direction.length_squared() < 0.0001:
+		return
+	var along := direction.normalized()
+	var across := Vector2(-along.y, along.x)
+	for index in range(count):
+		var offset := across * (spacing_m * float(index))
+		var start := origin + Vector3(offset.x, 0.0, offset.y)
+		var finish := start + Vector3(along.x, 0.0, along.y) * length_m
+		# A ploughed field is not a print of a comb: the passes are not all the
+		# same length and they do not all bite equally. Two cheap per-furrow
+		# variations are enough to stop the band reading as a hatching pattern,
+		# and both are deterministic functions of the index so a rebuild is
+		# identical.
+		var wobble := sin(float(index) * 2.399) * 0.5 + 0.5
+		bake_stroke(
+			start + Vector3(along.x, 0.0, along.y) * (wobble * spacing_m * 2.0),
+			finish - Vector3(along.x, 0.0, along.y) * ((1.0 - wobble) * spacing_m * 3.0),
+			radius_m,
+			strength * (0.72 + 0.28 * wobble),
+			0.35,
+			irregularity,
+			float(index) * 11.3
+		)
+
+
+## Nearest texel on the baked layer, matching value_at()'s contract.
+func static_value_at(world: Vector3) -> float:
+	if _static == null:
+		return 0.0
+	var cell := static_cell_of(Vector2(world.x, world.z)).round()
+	if (
+		cell.x < 0.0 or cell.y < 0.0
+		or cell.x > float(STATIC_RESOLUTION - 1) or cell.y > float(STATIC_RESOLUTION - 1)
+	):
+		return 0.0
+	return _static.get_pixel(int(cell.x), int(cell.y)).r
+
+
+## What the shader draws: the deeper of the two layers. max(), not add, for the
+## same reason every composite here is max() -- a footprint that lands in a
+## furrow is one mark in the snow, not a hole twice as deep.
+func combined_value_at(world: Vector3) -> float:
+	return maxf(value_at(world), static_value_at(world))
+
+
+func static_texture() -> ImageTexture:
+	return _static_texture
 
 
 ## Nearest texel, not bilinear. The shader is the only thing that needs a
@@ -314,7 +536,7 @@ func follow(world: Vector3) -> bool:
 	var here := Vector2(world.x, world.z)
 	if here.distance_to(centre) <= RECENTER_SLACK_M:
 		return false
-	var target := _snap(here - Vector2(EXTENT_M, EXTENT_M) * 0.5)
+	var target := _snap(here - Vector2(EXTENT_M, EXTENT_M) * 0.5, CELL_M)
 	var shift_x := int(roundf((target.x - _origin.x) / CELL_M))
 	var shift_y := int(roundf((target.y - _origin.y) / CELL_M))
 	if shift_x == 0 and shift_y == 0:
@@ -338,11 +560,16 @@ func _shift(shift_x: int, shift_y: int) -> void:
 	_dirty = true
 
 
-## One upload per frame at most, however many prints landed in it.
+## One upload per frame at most, however many prints landed in it. The static
+## layer goes up the same way, which in practice means exactly once -- it is
+## dirty on the frame it was baked and never again.
 func flush() -> void:
 	if _dirty and _texture != null:
 		_texture.update(_mask)
 		_dirty = false
+	if _static_dirty and _static_texture != null:
+		_static_texture.update(_static)
+		_static_dirty = false
 
 
 func texture() -> ImageTexture:

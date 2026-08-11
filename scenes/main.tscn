@@ -6,9 +6,18 @@
 [ext_resource type="Script" uid="uid://ca6uudhqakvxx" path="res://src/rendering/terrain_renderer.gd" id="4_terrain"]
 [ext_resource type="Script" uid="uid://bybxprc27pxai" path="res://src/rendering/camera_rig.gd" id="5_camera"]
 [ext_resource type="Script" uid="uid://c62qview8puc" path="res://src/rendering/lighting_director.gd" id="6_lighting"]
-[ext_resource type="Script" uid="uid://dadrr02tbdw8y" path="res://src/rendering/blockout.gd" id="7_blockout"]
 [ext_resource type="Script" uid="uid://vrwjasuo5dau" path="res://src/entities/farmhouse.gd" id="8_farmhouse"]
 [ext_resource type="PackedScene" uid="uid://carp66tmc3e5o" path="res://assets/models/buildings/farmhouse/farmhouse.glb" id="9_farmhouse_model"]
+[ext_resource type="Script" uid="uid://b2i6b3bjpcs67" path="res://src/entities/farmstead.gd" id="10_farmstead"]
+[ext_resource type="PackedScene" uid="uid://cudgeeb4l4nhc" path="res://assets/models/props/pickup_truck.glb" id="11_truck"]
+[ext_resource type="PackedScene" uid="uid://c7r62pekvfptw" path="res://assets/models/buildings/tool_shed/tool_shed.glb" id="12_tool_shed"]
+[ext_resource type="PackedScene" uid="uid://bvmn1hc37ig2b" path="res://assets/models/buildings/well_house/well_house.glb" id="13_well_house"]
+[ext_resource type="PackedScene" uid="uid://dgvd3voi2dldr" path="res://assets/models/props/power_pole.glb" id="14_power_pole"]
+[ext_resource type="PackedScene" uid="uid://cuf7aqye6j6ku" path="res://assets/models/props/power_wire.glb" id="15_power_wire"]
+[ext_resource type="PackedScene" uid="uid://bh6l5mu1abwye" path="res://assets/models/props/tire_swing.glb" id="16_tire_swing"]
+[ext_resource type="PackedScene" uid="uid://coq3v21y2ik72" path="res://assets/models/vegetation/tree_bare_a.glb" id="17_tree_a"]
+[ext_resource type="PackedScene" uid="uid://ckcc4dwmddw15" path="res://assets/models/vegetation/tree_bare_b.glb" id="18_tree_b"]
+[ext_resource type="PackedScene" uid="uid://kqyuddtbg2mc" path="res://assets/models/vegetation/tree_bare_c.glb" id="19_tree_c"]
 
 [node name="Main" type="Node3D" unique_id=1508188971]
 
@@ -34,11 +43,46 @@ script = ExtResource("6_lighting")
 
 [node name="Sun" type="DirectionalLight3D" parent="Lighting" unique_id=906004351]
 
-[node name="Blockout" type="Node3D" parent="." unique_id=431765058]
-script = ExtResource("7_blockout")
-
 [node name="Farmhouse" type="Node3D" parent="." unique_id=1902244517]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 0, -12)
 script = ExtResource("8_farmhouse")
 
 [node name="Model" parent="Farmhouse" instance=ExtResource("9_farmhouse_model") unique_id=1902244518]
+
+[node name="Farmstead" type="Node3D" parent="." unique_id=1902244600]
+script = ExtResource("10_farmstead")
+
+[node name="Truck" parent="Farmstead" instance=ExtResource("11_truck") unique_id=1902244601]
+transform = Transform3D(0.9781476, 0, -0.20791169, 0, 1, 0, 0.20791169, 0, 0.9781476, 4.85, 0, -18.16)
+
+[node name="ToolShed" parent="Farmstead" instance=ExtResource("12_tool_shed") unique_id=1902244602]
+transform = Transform3D(0.9702957, 0, 0.24192189, 0, 1, 0, -0.24192189, 0, 0.9702957, -7.19, 0, -19.37)
+
+[node name="WellHouse" parent="Farmstead" instance=ExtResource("13_well_house") unique_id=1902244603]
+transform = Transform3D(0.88294759, 0, -0.46947156, 0, 1, 0, 0.46947156, 0, 0.88294759, 4.95, 0, 0.755)
+
+[node name="PowerPole" parent="Farmstead" instance=ExtResource("14_power_pole") unique_id=1902244604]
+transform = Transform3D(0.92718385, 0, 0.37460659, 0, 1, 0, -0.37460659, 0, 0.92718385, 6.8, 0, 13.055)
+
+[node name="TreeA" parent="Farmstead" instance=ExtResource("17_tree_a") unique_id=1902244605]
+transform = Transform3D(0.96592583, 0, 0.25881905, 0, 1, 0, -0.25881905, 0, 0.96592583, 28.35, 0, -16.725)
+
+[node name="TireSwing" parent="Farmstead/TreeA" instance=ExtResource("16_tire_swing") unique_id=1902244606]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.9, 2.8, -0.14)
+
+[node name="TreeB" parent="Farmstead" instance=ExtResource("18_tree_b") unique_id=1902244607]
+transform = Transform3D(0.76604444, 0, -0.64278761, 0, 1, 0, 0.64278761, 0, 0.76604444, -12.49, 0, -15.475)
+
+[node name="TreeC" parent="Farmstead" instance=ExtResource("19_tree_c") unique_id=1902244608]
+transform = Transform3D(0.42261826, 0, 0.90630779, 0, 1, 0, -0.90630779, 0, 0.42261826, 33.27, 0, 11.465)
+
+[node name="TreeD" parent="Farmstead" instance=ExtResource("19_tree_c") unique_id=1902244609]
+transform = Transform3D(-0.90630779, 0, -0.42261826, 0, 1, 0, 0.42261826, 0, -0.90630779, -6.39, 0, -26.025)
+
+[node name="Wires" type="Node3D" parent="Farmstead" unique_id=1902244610]
+
+[node name="WireArriving" parent="Farmstead/Wires" instance=ExtResource("15_power_wire") unique_id=1902244611]
+
+[node name="WireDrop" parent="Farmstead/Wires" instance=ExtResource("15_power_wire") unique_id=1902244612]
+
+[node name="WireLeaving" parent="Farmstead/Wires" instance=ExtResource("15_power_wire") unique_id=1902244613]

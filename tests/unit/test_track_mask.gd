@@ -249,3 +249,110 @@ func test_a_footprint_event_stamps_and_a_junk_payload_does_not() -> void:
 	_mask._on_footprint(null)
 	_mask._on_footprint("not a footprint")
 	assert_almost_eq(_mask.value_at(Vector3(2.0, 0.0, 3.0)), 0.7, 0.02)
+
+
+## ---------------------------------------------------------------------------
+## The static layer
+## ---------------------------------------------------------------------------
+## Art Bible section 3: the mask has two layers, and the whole reason for the
+## split is that the wind will erase one of them and must never touch the other.
+## There is no wind yet, so the property that can be asserted today is the
+## structural half -- the baked layer is independent of the scrolling one, does
+## not move with it, and survives everything that happens to it.
+
+
+func test_a_fresh_static_layer_is_empty() -> void:
+	assert_almost_eq(_mask.static_value_at(Vector3.ZERO), 0.0)
+	assert_almost_eq(_mask.static_value_at(Vector3(9.0, 0.0, -14.0)), 0.0)
+	assert_almost_eq(_mask.combined_value_at(Vector3.ZERO), 0.0)
+
+
+func test_a_baked_stroke_marks_the_ground_it_was_baked_on() -> void:
+	_mask.bake_stroke(Vector3(-4.0, 0.0, 2.0), Vector3(4.0, 0.0, 2.0), 0.2, 0.8)
+	assert_true(_mask.static_value_at(Vector3(0.0, 0.0, 2.0)) > 0.7, "the middle of the stroke is not marked")
+	assert_true(_mask.static_value_at(Vector3(3.5, 0.0, 2.0)) > 0.7, "the far end of the stroke is not marked")
+	assert_almost_eq(_mask.static_value_at(Vector3(0.0, 0.0, 4.0)), 0.0)
+
+
+## The one that matters. The dynamic window scrolls with the player and drops
+## whatever it scrolls past; if the baked layer were carried along with it, the
+## first long walk would take the ploughed field with it.
+func test_the_baked_layer_does_not_move_when_the_dynamic_window_does() -> void:
+	var spot := Vector3(6.0, 0.0, -3.0)
+	_mask.bake_stroke(spot - Vector3(3.0, 0.0, 0.0), spot + Vector3(3.0, 0.0, 0.0), 0.2, 0.9)
+	var before: float = _mask.static_value_at(spot)
+	var origin_before := _mask.static_origin()
+	assert_true(before > 0.8, "setup failed: the stroke only reached %f" % before)
+
+	assert_true(_mask.follow(Vector3(30.0, 0.0, 26.0)), "the dynamic window should have moved")
+	assert_almost_eq(_mask.static_value_at(spot), before, 0.001)
+	assert_almost_eq(_mask.static_origin().x, origin_before.x)
+	assert_almost_eq(_mask.static_origin().y, origin_before.y)
+
+	# ...and even a walk far enough to empty the dynamic layer entirely.
+	_mask.follow(Vector3(400.0, 0.0, 400.0))
+	assert_almost_eq(_mask.static_value_at(spot), before, 0.001)
+
+
+## Two layers, not one image written twice. A footprint must not appear in the
+## baked layer and a furrow must not be scrollable.
+func test_the_two_layers_are_independent() -> void:
+	var spot := Vector3(1.0, 0.0, 1.0)
+	_mask.stamp(spot, 0.3, 0.9)
+	assert_almost_eq(_mask.static_value_at(spot), 0.0, 0.001)
+
+	var baked := Vector3(-2.0, 0.0, -2.0)
+	_mask.bake_stroke(baked, baked + Vector3(2.0, 0.0, 0.0), 0.2, 0.7)
+	assert_almost_eq(_mask.value_at(baked), 0.0, 0.001)
+
+
+## What the shader draws is the deeper of the two, so a boot in a furrow is one
+## mark in the snow rather than a hole twice as deep.
+func test_the_combined_read_is_the_deeper_of_the_two_layers() -> void:
+	var spot := Vector3(3.0, 0.0, -1.0)
+	_mask.bake_stroke(spot - Vector3(1.0, 0.0, 0.0), spot + Vector3(1.0, 0.0, 0.0), 0.25, 0.4)
+	assert_almost_eq(_mask.combined_value_at(spot), 0.4, 0.03)
+	_mask.stamp(spot, 0.3, 0.85)
+	assert_almost_eq(_mask.combined_value_at(spot), 0.85, 0.03)
+	# ...and the weaker layer does not pull the result down.
+	assert_true(_mask.combined_value_at(spot) >= _mask.value_at(spot) - 0.001)
+
+
+## A ploughed field has to read as separate passes. The assertion is the *gap*:
+## a band of furrows whose spacing has collapsed, or whose width has run away,
+## is a grey smear and there is nothing in a screenshot that would say which.
+func test_furrows_are_separate_passes_with_clean_snow_between_them() -> void:
+	var origin := Vector3(-5.0, 0.0, 0.0)
+	_mask.bake_furrows(origin, Vector2(1.0, 0.0), 10.0, 1.0, 4, 0.12, 0.7)
+	# Sampled two metres in, which every pass covers whatever its own start and
+	# end wobble did.
+	for index in range(4):
+		var on := Vector3(-1.0, 0.0, float(index))
+		assert_true(
+			_mask.static_value_at(on) > 0.3,
+			"furrow %d is missing at %s, got %f" % [index, on, _mask.static_value_at(on)]
+		)
+	for index in range(3):
+		var between := Vector3(-1.0, 0.0, float(index) + 0.5)
+		assert_almost_eq(_mask.static_value_at(between), 0.0, 0.02)
+
+
+## Rebaking is how a composition is re-sited, and it has to be a clean slate --
+## a second bake over the top of a first would accumulate every furrow the field
+## ever had.
+func test_baking_again_clears_what_was_there() -> void:
+	var spot := Vector3(2.0, 0.0, 5.0)
+	_mask.bake_stroke(spot - Vector3(1.0, 0.0, 0.0), spot + Vector3(1.0, 0.0, 0.0), 0.2, 0.8)
+	assert_true(_mask.static_value_at(spot) > 0.7)
+	_mask.bake_at(Vector3.ZERO)
+	assert_almost_eq(_mask.static_value_at(spot), 0.0)
+
+
+## Outside the baked window there is nothing ploughed, and it has to read as a
+## clean zero rather than as the border texel smeared out to the horizon --
+## the same guarantee value_at() gives for the dynamic layer.
+func test_outside_the_baked_window_reads_as_untouched_snow() -> void:
+	var far := Vector3(TrackMask.STATIC_EXTENT_M, 0.0, TrackMask.STATIC_EXTENT_M)
+	_mask.bake_stroke(far, far + Vector3(4.0, 0.0, 0.0), 0.3, 1.0)
+	assert_almost_eq(_mask.static_value_at(far), 0.0)
+	assert_almost_eq(_mask.combined_value_at(far), 0.0)

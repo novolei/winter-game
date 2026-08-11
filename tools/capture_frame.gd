@@ -8,7 +8,12 @@ extends Node
 ## producible from a shell without a human at the keyboard.
 ##
 ##   Godot_console.exe --path <project> res://tools/capture_frame.tscn \
-##       --resolution 1600x1000 -- --out D:/somewhere/shot.png [--frames 420]
+##       --resolution 1600x1000 -- --out D:/somewhere/shot.png [--seconds 37]
+##
+## Optional: `--settle`, `--ortho` (frame height in metres), `--start x,z` (walk
+## the route from somewhere else) and `--look x,z` (aim the camera at a place
+## rather than at the player -- which is what an establishing shot of a
+## farmstead the player is standing in the middle of needs).
 ##
 ## Input goes through Input.action_press rather than by poking the controller,
 ## so the route exercises the same code path a player would.
@@ -47,6 +52,8 @@ var _held: Dictionary = {}
 var _done := false
 var _start := Vector2.ZERO
 var _has_start := false
+var _look := Vector2.ZERO
+var _has_look := false
 
 # Sampled along the route so the run can state, rather than assume, that the
 # snow actually varies and that speed actually responds to it. A shot of a
@@ -83,6 +90,27 @@ func _ready() -> void:
 		var camera := get_node_or_null("Main/CameraRig/Camera3D") as Camera3D
 		if camera != null:
 			camera.size = ortho
+
+	# There is deliberately no `--boom`. The 90 m boom looks like it should be a
+	# problem for a wide shot -- the directional shadow cascades run out at 75 m
+	# and the camera is further away than that -- so a shortened boom was tried
+	# and measured against the default at both gameplay and establishing
+	# framing. It is worse at both: the shadows lose their edge and the
+	# footprints go soft. Godot lays the cascades out over the orthographic box
+	# rather than by distance from the lens, so the boom really is what
+	# CameraRig says it is, a device for keeping geometry off the near plane,
+	# and nothing about the picture depends on it. Recorded here because the
+	# hypothesis is an obvious one to have twice.
+
+	# `--look x,z` frames the shot on a place instead of on the player. The rig
+	# normally follows the player, which is right for gameplay and wrong for an
+	# establishing shot of a farmstead the player is standing in the middle of.
+	var look := _string_arg(args, "--look", "")
+	if look != "":
+		var look_parts := look.split(",")
+		if look_parts.size() == 2:
+			_look = Vector2(float(look_parts[0]), float(look_parts[1]))
+			_has_look = true
 
 	# `--start x,z` walks the same route from somewhere else. The camera frames
 	# 17 m by 15 m of ground, so anything more than a short walk from the origin
@@ -186,6 +214,10 @@ func _capture() -> void:
 	var rig := get_node_or_null("Main/CameraRig")
 	if rig != null and rig.has_method("snap_to_target"):
 		rig.snap_to_target()
+	if rig != null and _has_look:
+		# After the snap, so it wins. The rig only ever translates -- the frame
+		# is the same frame, aimed somewhere else.
+		(rig as Node3D).global_position = Vector3(_look.x, 1.0, _look.y)
 	await RenderingServer.frame_post_draw
 	var image := get_viewport().get_texture().get_image()
 	var error := image.save_png(_output)
