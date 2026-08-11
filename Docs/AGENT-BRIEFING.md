@@ -174,6 +174,30 @@ void light() {
 
 Verify by sampling the rendered frame, not by eye — with `ALBEDO = vec3(1.0)` and a linear tonemap at exposure 1.0, a lit surface returns its palette hex exactly. Anything else means something upstream is still scaling it.
 
+### Trap 8 — Two shells, and a commit message is where you find out
+
+This environment has **both** PowerShell and bash, and they are separate tools with separate syntax. The one that costs you something real is the multi-line commit message: a PowerShell here-string (`@'…'@`) handed to the bash tool is not a here-string, it is a stray `@` and some text. An agent shipped a commit whose entire subject line was `@` and whose body was truncated — and by the time it noticed, another agent had committed on top, so amending was out under §4.5.
+
+Use the shell you are actually in:
+
+```bash
+git commit -m "Subject line
+
+Body." -- path/to/file.gd
+```
+
+```powershell
+git commit -m @'
+Subject line
+
+Body.
+'@ -- path/to/file.gd
+```
+
+The heredoc form (`git commit -F- <<'MSG'`) works in bash and is worth preferring for long messages — it survives quotes and apostrophes in the body, which the `-m` form does not.
+
+**If you do mangle one and cannot amend**, attach the intended message as a git note (`git notes add -m … <sha>`) and say so in your report. That is what the agent above did, and it is the right recovery: the record survives without rewriting history other agents have already built on.
+
 Note also that `render_mode ambient_light_disabled` is part of the same guarantee: ambient is added *after* `light()` too, and without it the shadow band drifts off-palette.
 
 ---
