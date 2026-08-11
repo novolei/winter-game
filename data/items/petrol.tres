@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="ItemDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/item_definition.gd" id="1_q3hpn"]
+[ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="2_kp4py"]
+
+[resource]
+script = ExtResource("1_q3hpn")
+id = &"petrol"
+display_name = "Jerry can of petrol"
+mass_kg = 4.0
+fuel_value = 900.0

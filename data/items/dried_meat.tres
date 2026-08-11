@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="ItemDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/item_definition.gd" id="1_01pni"]
+[ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="2_25d1s"]
+
+[sub_resource type="Resource" id="Resource_abl5l"]
+script = ExtResource("2_25d1s")
+target_stat = &"thirst"
+source_id = &"dried_meat"
+operation = 1
+value = 1.25
+duration = 300.0
+
+[resource]
+script = ExtResource("1_01pni")
+id = &"dried_meat"
+display_name = "Dried meat"
+category = 1
+mass_kg = 0.2
+nutrition = 0.35
+use_modifiers = Array[ExtResource("2_25d1s")]([SubResource("Resource_abl5l")])

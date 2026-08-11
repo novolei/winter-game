@@ -52,6 +52,20 @@ const BREATH_MOUTH_OFFSET := Vector3(0.0, -0.03, 0.17)
 @export var wade_speed := 1.5
 @export var acceleration := 12.0
 
+## What is left when the body cannot run any more.
+##
+## GDD section 5's 疲劳归零后果 is 无法奔跑 -- cannot RUN -- and the survival
+## model says so by putting `locomotion:run_speed` to zero. A body that read that
+## as its top speed would be pinned at a standstill by an empty fatigue bar,
+## which is a soft lock with no message rather than a penalty. So the run is
+## taken away and this is the floor it falls to.
+##
+## 1.35 m/s is not a chosen number: it is `anim_walk_speed`, the ground speed at
+## which the walk cycle plays at rate 1. An exhausted man therefore walks at
+## exactly the pace his own animation covers ground at, and his feet plant
+## instead of skating -- the same rule the run is tuned by.
+@export var walk_speed := 1.35
+
 ## Metres of travel between prints, and how far each sits off the centre line.
 @export var stride_length := 0.72
 @export var stride_width := 0.19
@@ -202,6 +216,19 @@ const BREATH_MOUTH_OFFSET := Vector3(0.0, -0.03, 0.17)
 ## stats and there is no HUD, so this is the beginning of that: `set_chill()`
 ## takes it, and the temperature system drives it when it lands.
 ##
+## IT HAS LANDED. drive_readouts() now sets this every physics frame from
+## body_chill(), which is 1 - the core temperature reserve, and the same number
+## goes to the breath so the two readouts cannot disagree. The value below is
+## what stands when there is no survival model running -- a test, or a scene
+## built before the autoload -- and nothing else.
+##
+## NOTE WHAT THAT CHANGES ON SCREEN: a man at full core temperature now reads as
+## chill 0, so the warm relaxed stand is what the first minutes of day 1 look
+## like. That is what the paragraph below argued against for the UNDRIVEN case,
+## and it is the price of the stand being a readout at all. If the owner decides
+## he should never look fully relaxed while he is outdoors, the fix is a floor in
+## body_chill() -- one line, and a number.
+##
 ## It defaults to 1 rather than to 0, which inverts the obvious mapping, and the
 ## screenshots decided it. `idle` is Meshy's `Idle_4` and it barely moves --
 ## measured, not judged: its dominant frequency is 0.07 Hz and its per-frame
@@ -250,6 +277,7 @@ const BREATH_MOUTH_OFFSET := Vector3(0.0, -0.03, 0.17)
 
 var _snow: Node
 var _bus: Node
+var _survival: Node
 var _scheme: CharacterScheme
 var _steps: AudioStreamPlayer
 var _breath: BreathFog
@@ -397,9 +425,23 @@ func _build_breath() -> void:
 	aim.transform = Transform3D(rest, BREATH_MOUTH_OFFSET / maxf(world_scale, 0.0001))
 	attachment.add_child(aim)
 
-	_breath = BreathFog.new()
-	_breath.name = "Breath"
-	aim.add_child(_breath)
+	var fog := BreathFog.new()
+	fog.name = "Breath"
+	aim.add_child(fog)
+	attach_breath(fog)
+
+
+## Hands the controller the fog it drives. Called by _build_breath() once the
+## emitter is under the head bone, and by a test that cannot build a skeleton.
+func attach_breath(fog: BreathFog) -> void:
+	_breath = fog
+
+
+## The survival model this body reads itself out of. Injected by a test, or
+## resolved from the autoload in _resolve(); null is a valid state and means
+## every authored default stands untouched.
+func set_survival_system(system: Node) -> void:
+	_survival = system
 
 
 ## The form, not the level -- the level is the Environment's fill. See
@@ -570,13 +612,6 @@ func _drive_animation() -> void:
 	_animation.set(&"parameters/gait/blend_amount", gait)
 	_animation.set(&"parameters/pace/scale", clampf(speed / reference, 0.0, anim_max_pace))
 	_animation.set(&"parameters/chill/blend_amount", clampf(chill, 0.0, 1.0))
-	# The same number, twice, on purpose: GDD section 9's readouts have to agree
-	# with each other or they stop being a readout. `motion` is already the
-	# ground speed normalised between standing and walking, which is exactly what
-	# exertion means here.
-	if _breath != null:
-		_breath.set_exertion(clampf(inverse_lerp(anim_idle_speed, run_speed, speed), 0.0, 1.0))
-		_breath.set_chill(clampf(chill, 0.0, 1.0))
 
 
 ## How cold he looks standing still. 0 is the warm relaxed stand, 1 the shiver.
@@ -589,6 +624,81 @@ func set_chill(amount: float) -> void:
 	chill = clampf(amount, 0.0, 1.0)
 	if _animation != null:
 		_animation.set(&"parameters/chill/blend_amount", chill)
+
+
+## ---------------------------------------------------------------------------
+## Reading the body -- GDD section 9's readouts, with no HUD between them
+## ---------------------------------------------------------------------------
+## How cold he IS, 0 warm .. 1 freezing.
+##
+## THE INVERSE OF THE STAT, and this is the one line in the wiring that cannot be
+## got wrong quietly. Every survival stat is a RESERVE: core_temperature 1.0 is a
+## warm man and 0.0 is a dead one. Passing fraction_of() straight through is the
+## obvious-looking thing to write, it compiles, it runs, and it gives a man in
+## perfect health the breath and the body language of a man about to die -- from
+## the first frame of the game, with nothing on screen to contradict it. It would
+## read as art direction.
+##
+## Returns the authored `chill` when there is no survival model: the cold idle
+## and the fog were both tuned against 1.0 because everything so far happens
+## outdoors in a wind, and a scene with no model running must not turn that off.
+func body_chill() -> float:
+	if _survival == null:
+		return chill
+	return clampf(1.0 - _survival.fraction_of(&"core_temperature"), 0.0, 1.0)
+
+
+## The top ground speed the body can manage in snow of this wade factor, after
+## everything GDD section 5 has to say about it.
+##
+## Public and pure so the model can be exercised without a scene tree, and so
+## that the three locomotion channels have somewhere to be tested at all.
+##
+## The channels MULTIPLY INTO the snow-depth model that was here first; they do
+## not replace it. Three of them, in the order they apply:
+##
+##   locomotion:snow_cost  scales the wade factor, so deep snow costs a tired man
+##                         more than it costs a fresh one -- GDD 5's 雪深惩罚加剧
+##                         -- while bare ground (wade 0) still costs nothing.
+##   locomotion:run_speed  scales the clear-ground pace, and goes to ZERO when
+##                         fatigue is empty. maxf() against walk_speed is what
+##                         turns that into 无法奔跑 rather than a soft lock.
+##   locomotion:speed      scales the result: the flat penalty from fatigue and
+##                         from ruined feet.
+##
+## minf() on the deep-snow end is not decoration either. Exhaustion pulls the
+## clear-ground pace below wade_speed, and a lerp between them would then run
+## UPHILL -- a man who sprints into drifts to escape. Deeper snow is never faster.
+func top_speed_at(wade: float) -> float:
+	var cost := clampf(_channel(&"locomotion:snow_cost", clampf(wade, 0.0, 1.0)), 0.0, 1.0)
+	var clear := maxf(walk_speed, _channel(&"locomotion:run_speed", run_speed))
+	var deep := minf(wade_speed, clear)
+	return maxf(_channel(&"locomotion:speed", lerpf(clear, deep, cost)), 0.0)
+
+
+## What the body is telling the readouts, driven every physics frame.
+##
+## One number for how cold he is, and it goes to both the stand and the breath:
+## GDD section 9's readouts have to agree with each other or they stop being a
+## readout. `speed` is the ground speed, which is also what the animation blend
+## reads, so exertion cannot disagree with the gait either.
+func drive_readouts(speed: float) -> void:
+	set_chill(body_chill())
+	if _breath == null:
+		return
+	_breath.set_exertion(clampf(inverse_lerp(anim_idle_speed, run_speed, speed), 0.0, 1.0))
+	_breath.set_chill(chill)
+	# GDD section 9's 呼吸变浅变快. Data, not a branch: the threshold rows live in
+	# data/stats/core_temperature.tres and this passes on whatever they say.
+	_breath.set_rate_scale(_channel(&"breath:rate", 1.0))
+
+
+## One line of plumbing to the survival model's published channels. An absent
+## model, or a channel nothing has an opinion about, returns the base untouched.
+func _channel(channel: StringName, base_value: float) -> float:
+	if _survival == null:
+		return base_value
+	return _survival.channel_value(channel, base_value)
 
 
 ## Non-positional, deliberately. The sources are stereo, which Godot spatialises
@@ -653,6 +763,12 @@ func _register_actions() -> void:
 
 
 func _resolve() -> void:
+	# get_node_or_null, NOT Engine.get_singleton: a project [autoload] entry is a
+	# node under /root and never enters the engine's singleton registry
+	# (briefing trap 3). A null _survival is a legal state -- every authored
+	# default stands -- which is exactly why getting this wrong would be silent.
+	if _survival == null:
+		_survival = get_node_or_null("/root/SurvivalSystem")
 	if _snow != null:
 		return
 	var registry := get_node_or_null("/root/ServiceRegistry")
@@ -678,7 +794,9 @@ func _physics_process(delta: float) -> void:
 	var wade := 0.0
 	if _snow != null:
 		wade = _snow.wade_factor(global_position)
-	var top_speed := lerpf(run_speed, wade_speed, wade)
+	# The snow decides, and the body modulates what the snow decided. See
+	# top_speed_at() for the order the three locomotion channels apply in.
+	var top_speed := top_speed_at(wade)
 
 	var wanted := direction * top_speed
 	velocity.x = move_toward(velocity.x, wanted.x, acceleration * delta)
@@ -712,6 +830,7 @@ func _physics_process(delta: float) -> void:
 
 	_face_travel(delta)
 	_drive_animation()
+	drive_readouts(Vector2(velocity.x, velocity.z).length())
 
 
 ## The model is authored facing +Z -- its `headfront` bone sits a few

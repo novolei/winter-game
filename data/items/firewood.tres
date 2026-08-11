@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="ItemDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/item_definition.gd" id="1_e2214"]
+[ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="2_1u050"]
+
+[resource]
+script = ExtResource("1_e2214")
+id = &"firewood"
+display_name = "Firewood"
+mass_kg = 3.0
+fuel_value = 600.0

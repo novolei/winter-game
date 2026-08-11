@@ -15,6 +15,13 @@ extends GPUParticles3D
 ##                   hangs about longer.
 ##   set_exertion()  0 standing .. 1 running. Reads off the same ground speed the
 ##                   animation blend uses, so the two never disagree.
+##   set_rate_scale() GDD section 9's 呼吸变浅变快, driven from data rather than
+##                   from a branch here: SurvivalSystem publishes `breath:rate`
+##                   out of res://data/stats/core_temperature.tres and whoever
+##                   owns the body passes on what it says. Separate from
+##                   set_chill() because it is a different fact -- chill is how
+##                   much condenses, this is how OFTEN he breathes -- and the
+##                   data quickens the breath at thresholds rather than smoothly.
 ##   set_wind()      A HOOK, and deliberately inert today. src/systems/
 ##                   wind_system.gd does not exist -- it is Wave 3 -- and
 ##                   inventing a wind here would mean two of them later.
@@ -85,6 +92,7 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 
 var _chill := 1.0
 var _exertion := 0.0
+var _rate_scale := 1.0
 var _wind := Vector3.ZERO
 var _process_material: ParticleProcessMaterial
 
@@ -102,6 +110,33 @@ func set_chill(amount_cold: float) -> void:
 ## 0 standing .. 1 running, off the same ground speed the animation blend reads.
 func set_exertion(effort: float) -> void:
 	_exertion = clampf(effort, 0.0, 1.0)
+
+
+## How much faster than the authored rhythm he is breathing. 1.0 is the tuning
+## above and the only value anything sees until something drives it; the shipped
+## survival stats reach 1.25 below half a bar of warmth and 1.875 below a fifth.
+##
+## Capped at 4 because `amount` re-allocates the particle buffer: a channel that
+## somehow arrived at a hundred would not make a hundredfold breath, it would
+## make a cloud, and the cap keeps a bad number in the data from looking like a
+## bug in the emitter.
+func set_rate_scale(scale: float) -> void:
+	_rate_scale = clampf(scale, 0.0, 4.0)
+
+
+## Puffs a second, after everything driving it. The emitter can only carry whole
+## particles, so `amount` rounds this off and two different rates can round to
+## the same buffer size -- this is the number the readout actually means, and the
+## one to assert against.
+func puffs_per_second() -> float:
+	if not outdoors:
+		return 0.0
+	return lerpf(puff_rate_rest, puff_rate_hard, _exertion) * lerpf(0.7, 1.0, _density()) * _rate_scale
+
+
+## How much of the puff a body this cold produces, `density_warm` .. 1.
+func _density() -> float:
+	return lerpf(density_warm, 1.0, _chill)
 
 
 ## THE HOOK. Wave 3's wind system calls this; until then it is called by nobody
@@ -240,12 +275,14 @@ func _apply() -> void:
 
 	# Cold is the primary driver, and it does two things: more of it, and it
 	# hangs about longer before it disperses.
-	var density := lerpf(density_warm, 1.0, _chill)
+	var density := _density()
 	lifetime = lerpf(puff_life_warm, puff_life_cold, _chill)
 
 	# Exertion is the rhythm. A running man breathes more often and harder, and
-	# the rate is what strings the trail out behind him.
-	var rate := lerpf(puff_rate_rest, puff_rate_hard, _exertion) * lerpf(0.7, 1.0, density)
+	# the rate is what strings the trail out behind him. breath:rate quickens it
+	# on top of that: GDD section 9's 呼吸变浅变快 is a cold man panting, not an
+	# exerted one.
+	var rate := puffs_per_second()
 	var wanted := clampi(int(round(rate * lifetime)), 2, 18)
 	if wanted != amount:
 		amount = wanted

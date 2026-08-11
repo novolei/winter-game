@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="ItemDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/item_definition.gd" id="1_wkukq"]
+[ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="2_0px5d"]
+
+[resource]
+script = ExtResource("1_wkukq")
+id = &"coal"
+display_name = "Coal"
+mass_kg = 5.0
+fuel_value = 1800.0

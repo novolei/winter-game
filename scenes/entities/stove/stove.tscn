@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://dalphxjcfaohp"]
+
+[ext_resource type="Script" uid="uid://d6lcevlmf7hv" path="res://src/entities/stove/stove.gd" id="1_stove"]
+
+[node name="Stove" type="Node3D"]
+script = ExtResource("1_stove")

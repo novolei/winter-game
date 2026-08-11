@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="ItemDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/item_definition.gd" id="1_8efhl"]
+[ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="2_md51q"]
+
+[sub_resource type="Resource" id="Resource_x47fb"]
+script = ExtResource("2_md51q")
+target_stat = &"core_temperature:recovery"
+source_id = &"hot_stew"
+value = 0.0008333333333333334
+duration = 120.0
+
+[resource]
+script = ExtResource("1_8efhl")
+id = &"hot_stew"
+display_name = "Hot stew"
+category = 1
+mass_kg = 0.5
+nutrition = 0.65
+hydration = 0.1
+use_modifiers = Array[ExtResource("2_md51q")]([SubResource("Resource_x47fb")])
