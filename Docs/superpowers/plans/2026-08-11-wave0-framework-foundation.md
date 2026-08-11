@@ -760,6 +760,17 @@ func test_can_transition_to_reports_without_mutating() -> void:
 	assert_true(machine.can_transition_to(&"running"), "walking -> running should be reported legal")
 	assert_false(machine.can_transition_to(&"swimming"), "unknown state should be reported illegal")
 	assert_eq(machine.current(), &"walking", "can_transition_to must not change state")
+
+func test_configure_rejects_an_initial_state_not_in_the_list() -> void:
+	var machine = StateMachineScript.new()
+	var ok: bool = machine.configure(
+		[&"walking"] as Array[StringName],
+		{&"walking": [] as Array[StringName]},
+		&"swimming"
+	)
+	assert_false(ok, "configure must reject an initial state that is not in the state list")
+	assert_eq(machine.current(), &"", "a rejected configure must leave the machine unconfigured, not half-set")
+	assert_false(machine.can_transition_to(&"walking"), "an unconfigured machine must reject every transition")
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -781,9 +792,9 @@ extends RefCounted
 ## A transition table with a cursor. Knows nothing about what the states
 ## mean.
 ##
-## The player's walk/run/flounder states and a bear's roam/alert/charge
-## states are the same machine holding different data -- which is why
-## adding a third threat type needs no new behaviour code.
+## Callers configure it with their own state names and transition data, so
+## two entities with completely different behaviour share this one file and
+## differ only in the data they pass to configure().
 
 signal state_changed(from: StringName, to: StringName)
 
@@ -791,11 +802,22 @@ var _valid_states: Array[StringName] = []
 var _transitions: Dictionary = {}
 var _current: StringName = &""
 
-func configure(states: Array[StringName], transitions: Dictionary, initial: StringName) -> void:
-	assert(states.has(initial), "initial state '%s' is not in the configured state list" % initial)
+## Returns false and leaves the machine unconfigured if `initial` is not in
+## `states`. Callers must check the result: an unconfigured machine rejects
+## every transition, so ignoring a false return means the entity silently
+## never moves.
+##
+## A return value rather than assert() because Godot strips assert() from
+## release builds, and rather than push_error() because that would print an
+## ERROR line that any covering test would then have to emit, breaking the
+## pristine-output constraint.
+func configure(states: Array[StringName], transitions: Dictionary, initial: StringName) -> bool:
+	if not states.has(initial):
+		return false
 	_valid_states = states.duplicate()
 	_transitions = transitions.duplicate(true)
 	_current = initial
+	return true
 
 func current() -> StringName:
 	return _current
@@ -820,7 +842,7 @@ func transition_to(target: StringName) -> bool:
 
 Run the Step 2 command.
 
-Expected: `34 passed, 0 failed`.
+Expected: `35 passed, 0 failed`.
 
 - [ ] **Step 5: Commit**
 
@@ -951,7 +973,7 @@ func clear() -> void:
 
 Run the Step 2 command.
 
-Expected: `40 passed, 0 failed`.
+Expected: `41 passed, 0 failed`.
 
 - [ ] **Step 5: Register the autoload**
 
@@ -1473,7 +1495,7 @@ Expected: `generate_palette: save returned 0, 12 colors`
 
 Run the Step 2 command.
 
-Expected: `53 passed, 0 failed`.
+Expected: `54 passed, 0 failed`.
 
 - [ ] **Step 7: Commit**
 
@@ -1758,7 +1780,7 @@ touch assets/models/buildings/.gitkeep assets/models/props/.gitkeep assets/model
 "D:/Godot_v4.7.1/Godot_v4.7.1-stable_win64_console.exe" --headless --path "D:/Godot resource/winter-time" --script res://tests/framework/test_runner.gd
 ```
 
-Expected: `64 passed, 0 failed`.
+Expected: `65 passed, 0 failed`.
 
 - [ ] **Step 8: Commit**
 
@@ -2114,7 +2136,7 @@ The generators stay in `tools/` and stay in version control — regenerating an 
 
 Run the Step 2 command.
 
-Expected: `75 passed, 0 failed`.
+Expected: `76 passed, 0 failed`.
 
 - [ ] **Step 6: Register the autoload**
 
@@ -2148,7 +2170,7 @@ git add src/systems/world_clock.gd data/schedule/ tools/generate_schedules.gd te
 
 All must hold before Wave 1 starts:
 
-- [ ] `75 passed, 0 failed` from the headless runner, exit code 0
+- [ ] `76 passed, 0 failed` from the headless runner, exit code 0
 - [ ] The runner has been observed going **red** and returning exit code 1 (Task 1, Step 5)
 - [ ] `project.godot` lists exactly three autoloads: `EventBus`, `ServiceRegistry`, `WorldClock`
 - [ ] No hardcoded hex color outside `tools/` — the generators in `tools/` are where color values legitimately live, since they are the source that writes `data/palette/color_bible.tres`
