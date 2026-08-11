@@ -144,6 +144,38 @@ Assigning `null` into a typed `PackedInt32Array` is a runtime error that aborts 
 
 Godot's `ResourceLoader` caches by path: two systems that each `load("res://data/foo.tres")` receive the **same instance**. Never use such an object as a `Dictionary` key when you mean per-slot state — independent entries will collapse into one.
 
+### Trap 7 — `DIFFUSE_LIGHT` is multiplied by `ALBEDO` after `light()` runs
+
+This one bites exactly the shader this project's art direction requires. A two-band cel `light()` picks a palette colour outright:
+
+```glsl
+void fragment() {
+    ALBEDO = snow_lit.rgb;                          // wrong
+}
+void light() {
+    DIFFUSE_LIGHT += mix(shade.rgb, ALBEDO, band);  // ...gets multiplied by ALBEDO again
+}
+```
+
+Godot applies `diffuse_light *= albedo` after the light loop, so a colour written into **both** `ALBEDO` and `DIFFUSE_LIGHT` reaches the screen **squared**. Measured on 4.7.1: palette snow `#8FB0D8` rendered as `#4D75B5`.
+
+It does not look like a bug. It looks like the art direction being a bit dark, which is a thing you tune rather than fix — so it survives a review.
+
+The fix is to choose the colour once:
+
+```glsl
+void fragment() {
+    ALBEDO = vec3(1.0);                             // the identity for that multiply
+}
+void light() {
+    DIFFUSE_LIGHT += mix(shade.rgb, lit.rgb, band); // reaches the screen untouched
+}
+```
+
+Verify by sampling the rendered frame, not by eye — with `ALBEDO = vec3(1.0)` and a linear tonemap at exposure 1.0, a lit surface returns its palette hex exactly. Anything else means something upstream is still scaling it.
+
+Note also that `render_mode ambient_light_disabled` is part of the same guarantee: ambient is added *after* `light()` too, and without it the shadow band drifts off-palette.
+
 ---
 
 ## 4. The test framework

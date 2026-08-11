@@ -1,0 +1,36 @@
+[gd_scene format=3 uid="uid://da6mlh6xqj7iu"]
+
+[ext_resource type="Script" uid="uid://d8scujyrpx2r" path="res://src/systems/snow_field.gd" id="1_snowfield"]
+[ext_resource type="Script" uid="uid://dolh47pay46wg" path="res://src/systems/track_mask.gd" id="2_trackmask"]
+[ext_resource type="Script" uid="uid://0rtkhf86030p" path="res://src/entities/player/player_controller.gd" id="3_player"]
+[ext_resource type="Script" uid="uid://ca6uudhqakvxx" path="res://src/rendering/terrain_renderer.gd" id="4_terrain"]
+[ext_resource type="Script" uid="uid://bybxprc27pxai" path="res://src/rendering/camera_rig.gd" id="5_camera"]
+[ext_resource type="Script" uid="uid://c62qview8puc" path="res://src/rendering/lighting_director.gd" id="6_lighting"]
+[ext_resource type="Script" uid="uid://dadrr02tbdw8y" path="res://src/rendering/blockout.gd" id="7_blockout"]
+
+[node name="Main" type="Node3D" unique_id=1508188971]
+
+[node name="SnowField" type="Node" parent="." unique_id=730166513]
+script = ExtResource("1_snowfield")
+
+[node name="TrackMask" type="Node" parent="." unique_id=967854499]
+script = ExtResource("2_trackmask")
+
+[node name="Player" type="CharacterBody3D" parent="." unique_id=1145769148]
+script = ExtResource("3_player")
+
+[node name="Terrain" type="MeshInstance3D" parent="." unique_id=2024731026]
+script = ExtResource("4_terrain")
+
+[node name="CameraRig" type="Node3D" parent="." unique_id=878373979]
+script = ExtResource("5_camera")
+
+[node name="Camera3D" type="Camera3D" parent="CameraRig" unique_id=649272828]
+
+[node name="Lighting" type="WorldEnvironment" parent="." unique_id=213945019]
+script = ExtResource("6_lighting")
+
+[node name="Sun" type="DirectionalLight3D" parent="Lighting" unique_id=906004351]
+
+[node name="Blockout" type="Node3D" parent="." unique_id=431765058]
+script = ExtResource("7_blockout")
