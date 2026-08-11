@@ -23,6 +23,8 @@ WorldClock="*res://src/systems/world_clock.gd"
 _mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
 MusicDirector="*res://src/audio/music_director.gd"
 SurvivalSystem="*res://src/systems/survival_system.gd"
+FuelEconomy="*res://src/systems/fuel_economy.gd"
+RunBoot="*res://src/systems/run_boot.gd"
 
 [display]
 
