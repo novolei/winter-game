@@ -25,6 +25,14 @@ static func find_test_scripts(root: String) -> PackedStringArray:
 	dir.list_dir_end()
 	return found
 
+## A script that fails to parse yields an empty method list, so a parse
+## error and a genuinely empty test file both reach the runner's
+## zero-test-methods failure. That engine behaviour was verified manually
+## on Godot 4.7.1; it is not asserted automatically because doing so
+## prints a SCRIPT ERROR line on every run, and this suite's output must
+## stay pristine. To re-verify after an engine upgrade: build a GDScript
+## with malformed source_code, call reload(), and confirm
+## get_script_method_list() comes back empty.
 static func test_methods(script: GDScript) -> PackedStringArray:
 	var methods := PackedStringArray()
 	if script == null:

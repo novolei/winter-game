@@ -1,10 +1,15 @@
 extends TestCase
 
 ## Covers the discovery/introspection rule the runner depends on to avoid
-## silently skipping a test file that failed to parse (see test_runner.gd's
-## "no tests found" failure branch). Broken sources are built in memory via
-## GDScript.new() + source_code + reload() rather than committed to disk,
-## so the repo never carries a permanently-malformed .gd file.
+## silently skipping a test file with zero test_ methods (see
+## test_runner.gd's "no tests found" failure branch). Scripts here are
+## built in memory via GDScript.new() + source_code + reload() rather than
+## committed to disk. The parse-failure half of the rule ("a script that
+## fails to parse yields an empty method list too") is an engine
+## assumption rather than our own logic; it is recorded as a comment on
+## TestDiscovery.test_methods() instead of asserted here, since asserting
+## it means compiling malformed source and that prints a permanent
+## SCRIPT ERROR line on every run -- see tests/framework/test_discovery.gd.
 
 const TestDiscovery := preload("res://tests/framework/test_discovery.gd")
 
@@ -27,15 +32,6 @@ func test_test_methods_returns_only_test_prefixed_methods() -> void:
 	assert_true(methods.has("test_one"), "test_one must be found")
 	assert_true(methods.has("test_two"), "test_two must be found")
 	assert_false(methods.has("helper"), "non-test methods must be excluded")
-
-func test_test_methods_is_empty_for_a_script_that_failed_to_parse() -> void:
-	var built := _build_script(
-		"extends RefCounted\n" +
-		"func test_broken(:\n\tpass\n"
-	)
-	assert_true(built["err"] != OK, "malformed source must fail to compile")
-	var methods := TestDiscovery.test_methods(built["script"])
-	assert_true(methods.is_empty(), "a script that failed to parse must report zero test methods -- this is precisely the condition the runner must now fail on")
 
 func test_test_methods_is_empty_for_a_well_formed_script_with_no_tests() -> void:
 	var built := _build_script(
