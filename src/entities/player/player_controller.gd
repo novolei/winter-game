@@ -42,11 +42,31 @@ const RUN_CLIP := WandererAnimations.RUN
 ## and he still casts into the world's shadow map.
 const CHARACTER_LAYER := 1 << 1
 
-## Where the breath comes from. The rig has no jaw or mouth bone -- 24 bones,
-## `Head` and then `headfront` a few centimetres in front of it -- so the mouth
-## is an offset from the head, in metres, forward and a little down.
+## Where the breath comes from: metres from the Head bone, in the CHARACTER's
+## frame -- +Y up, +Z the way he faces -- not in the bone's own.
+##
+## The rig has no jaw or mouth bone. It has 24, of which `Head` is the pivot at
+## the base of the skull, `head_end` the crown and `headfront` a marker 18 cm
+## straight out in front of the pivot. Measured off the mesh rather than guessed
+## at, because the character is HOODED and the hood is what makes guessing wrong:
+## scanning the head vertices by height, the coat collar reaches 1.395 m and the
+## hood's brow juts forward again at 1.52-1.56 m, and the face sits in the recess
+## between them, its surface at z = +0.109..+0.116 over the band 1.41-1.47 m.
+## `headfront` is level with the brow, not with the mouth -- it marks the front of
+## the HOOD.
+##
+## So the mouth is about a third of the way up that recess, at world height
+## 1.43 m in the rest pose, which is 0.16 m above the Head pivot and 0.15 m in
+## front of it; 0.17 here so the puffs are born just clear of the skin rather
+## than inside it.
+##
+## The value it replaces, (0, -0.03, 0.17), was wrong twice over. It was
+## interpreted in the head bone's rolled frame -- whose +Z pitches 36 degrees
+## downward -- so "17 cm forward and 3 cm down" landed 12.5 cm BELOW the pivot
+## and put the breath at his collarbone. _build_breath() now rotates this into
+## the bone frame, so the comment above is true of what actually happens.
 const BREATH_BONE := &"Head"
-const BREATH_MOUTH_OFFSET := Vector3(0.0, -0.03, 0.17)
+const BREATH_MOUTH_OFFSET := Vector3(0.0, 0.16, 0.17)
 
 @export var run_speed := 5.4
 @export var wade_speed := 1.5
@@ -380,6 +400,11 @@ func _build_body() -> void:
 		# shipped wired up and inert.
 		body_material.metallic = 1.0
 		body_material.metallic_texture = load(METALLIC_PATH)
+	# The camera never rotates (Art Bible rule 1), so a figure who walks behind
+	# the house cannot be recovered by swinging the view -- he has to be drawn
+	# through it. See CharacterScheme.wear_ghost(): two property writes on the
+	# character's own material, and nothing in the world changes.
+	_scheme.wear_ghost(body_material)
 	# Overridden rather than assigned into the mesh: the .glb's own surface
 	# material is whatever Godot invented for a primitive that arrived without
 	# one, and the model file is not the place to keep a material that is
@@ -418,11 +443,17 @@ func _build_breath() -> void:
 
 	var aim := Node3D.new()
 	aim.name = "BreathAim"
-	var rest := skeleton.get_bone_global_rest(head).basis.orthonormalized().inverse()
+	var unrolled := skeleton.get_bone_global_rest(head).basis.orthonormalized().inverse()
 	var world_scale := skeleton.global_transform.basis.get_scale().y
-	if world_scale > 0.0001:
-		rest = rest.scaled(Vector3.ONE / world_scale)
-	aim.transform = Transform3D(rest, BREATH_MOUTH_OFFSET / maxf(world_scale, 0.0001))
+	var units := 1.0 / maxf(world_scale, 0.0001)
+	# The offset is authored in the CHARACTER's frame but consumed in the BONE's,
+	# because this node's origin is expressed in its parent BoneAttachment3D --
+	# which carries the head bone's own rolled axes, pitched 36 degrees forward.
+	# Rotating it by the inverse rest basis is what makes "up and forward" mean up
+	# and forward. Without this line the same constant reads as up-and-down-the-
+	# skull, and the breath comes out of his chest.
+	var mouth := unrolled * (BREATH_MOUTH_OFFSET * units)
+	aim.transform = Transform3D(unrolled.scaled(Vector3.ONE * units), mouth)
 	attachment.add_child(aim)
 
 	var fog := BreathFog.new()

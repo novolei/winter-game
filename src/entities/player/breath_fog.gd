@@ -50,6 +50,47 @@ extends GPUParticles3D
 ## standing: through `knockdown_recover` the head travels 4.6 m and ends up on
 ## the ground, and a fixed offset would leave the breath in the air where his
 ## head used to be.
+##
+## IT IS VAPOUR, NOT SNOW. Breath is warm humid air condensing: slightly
+## translucent, faintly grey, taking its colour from what is around it. An opaque
+## white puff reads as a snowball stuck to his face. So the colour sits well back
+## from white -- a cool grey-blue off the snow tones -- and the visibility is
+## carried by ALPHA rather than by brightness. Art Bible rule 12 keeps the warm
+## pixels for fire, windows, beacons, the scarf and the truck; steam is cool, and
+## a breath that drifted warm would compete with the one beacon in the frame.
+##
+## IT EMERGES AND IT DISPERSES; it does not appear and it does not switch off.
+## Both ends of a puff's life are eased, and they are eased differently, because
+## the two things are not symmetrical:
+##
+##   birth  small and invisible, swelling to full size over the first sixth of
+##          its life while the alpha comes up. Real breath clears the mouth.
+##   death  the alpha falls away on a curve while the puff KEEPS EXPANDING. This
+##          is the one that is easy to get backwards: vapour disperses, so the
+##          oldest puff in a trail is the biggest and the faintest. Shrinking it
+##          away instead makes the trail read as a row of dying sparks.
+##
+## FUSION, and what is actually shipped here. Real vapour merges: two puffs close
+## together should read as one shape with a pinched waist, not as two circles
+## overlapping. That is a metaball, and the honest way to get one is a screen
+## space threshold -- render the puffs into a SubViewport and cut the ACCUMULATED
+## alpha at a level, so the two fields sum past the threshold between the centres
+## and the silhouette genuinely joins.
+##
+## That is not what this file does, and the reason is occlusion. A SubViewport
+## composite has no depth, so the fused cloud would draw over everything in the
+## frame -- including his own head, every time he walks away from this fixed
+## isometric camera, which is half the time. Fixing that means carrying the
+## breath's depth through the pass and testing it against the scene's, which is a
+## rendering feature rather than a content change, in files another agent owns.
+## See the task report for the estimate.
+##
+## What IS here is the union rather than the threshold: each puff carries a
+## smooth bell of alpha instead of a disc with a soft rim, so where two overlap
+## the composited alpha rises smoothly and the pair reads as one lumpy mass. It
+## gets the merge and not the pinch. It costs nothing, it keeps depth sorting,
+## and it is the correct approximation to be caught using rather than the wrong
+## one -- but it is an approximation and it is not what was asked for.
 
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
 
@@ -59,7 +100,7 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 ## Puffs a second, standing and flat out. Low on purpose: the reference has about
 ## half a dozen in the air at once, and anything much above that stops being a
 ## line of separate breaths and becomes a cloud.
-@export var puff_rate_rest := 3.0
+@export var puff_rate_rest := 4.0
 @export var puff_rate_hard := 7.0
 
 ## How long one puff survives. Short by design -- 很快消失 -- and at this camera
@@ -68,27 +109,56 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 @export var puff_life_warm := 0.9
 @export var puff_life_cold := 1.6
 
-## How fast it leaves the mouth. A hard breath is thrown further, which is what
-## opens the spacing in the trail when he runs.
-@export var puff_speed_rest := 0.75
-@export var puff_speed_hard := 1.5
-
-## Radius at birth, in metres, and the fraction of it left at death.
+## How fast it leaves the mouth, in metres a second. A hard breath is thrown
+## further, which is what opens the spacing in the trail when he runs.
 ##
-## It SHRINKS. The reference's older puffs are both smaller and fainter than the
-## fresh one at the mouth, and that is what makes the trail read as a sequence in
-## time rather than as one cloud with a ragged edge.
+## This is also what stands the cloud OFF HIS FACE, and that is the reason these
+## numbers are not small. Breath leaves the mouth with momentum; it does not
+## condense on the lips. Against the damping below, a resting breath coasts about
+## half a metre before it stops -- at this camera roughly a head and a half in
+## front of him, which is far enough that the cloud is outside the silhouette of
+## the hood instead of sitting on it. A puff that merges with another INSIDE his
+## outline is a puff nobody can see merging.
+@export var puff_speed_rest := 1.25
+@export var puff_speed_hard := 1.9
+
+## Radius at birth, in metres, and the multiple of it the puff has swollen to by
+## the time it is gone.
+##
+## It EXPANDS. Vapour disperses -- it spreads out and thins until there is
+## nothing left of it -- so the oldest puff in the trail is the largest and the
+## faintest one. This is deliberately the opposite of what this file used to do.
 ##
 ## Sized against the camera, not against a face: the frame is 10.5 m tall over
 ## 1000 px, so a metre is 95 px and a puff that looks right in a close-up is four
-## pixels in play.
-@export var puff_radius_birth := 0.15
-@export var puff_radius_fade := 0.35
+## pixels in play. The birth radius is also what makes puffs overlap enough to
+## fuse when he is standing still -- see the class comment.
+@export var puff_radius_birth := 0.20
+@export var puff_radius_death := 1.80
 
 ## How much of the puff a warm body produces. Not zero: an exhale in this climate
 ## is visible even from someone who is fine, and a channel that disappears
 ## entirely at one end cannot be read as a scale.
 @export var density_warm := 0.35
+
+## Peak opacity, at the point in its life where the puff is densest -- and the
+## knob that decides whether this reads as vapour. A translucent grey puff over
+## snow is steam; an opaque one is a snowball, whatever colour it is. Brightness
+## is NOT the knob, which is why this is well short of solid while the tone stays
+## only part way to white.
+##
+## Landed by measurement rather than by taste: at 0.52 the brightest pixel of the
+## cloud sampled #c1dcff against snow at #9bc0ed, which was too slight to find at
+## gameplay framing once the aerial perspective lightened the field. At 0.62 it
+## sampled #bbd9ff against #86a9db -- still unmistakably cool and unmistakably not
+## white, blue a full quarter above red, and visible at 11% of frame height.
+@export var puff_opacity := 0.62
+
+## How far the colour is pulled from the snow toward white. Low: at zero the puff
+## is exactly the snow's own tone and disappears into it, at one it is the white
+## card this replaced. Just under half leaves a cool off-white that is clearly
+## lighter than the field without leaving the snow tones.
+@export var puff_whiteness := 0.42
 
 var _chill := 1.0
 var _exertion := 0.0
@@ -168,26 +238,34 @@ func _build() -> void:
 	# +Z is the way he is facing: the model is authored facing +Z, and the aim
 	# node player_controller builds cancels the head bone's own rest roll so that
 	# this axis means the same thing here.
-	_process_material.direction = Vector3(0.0, 0.55, 1.0)
-	_process_material.spread = 24.0
+	#
+	# Flatter than it was. The puff needs HORIZONTAL distance from the body -- the
+	# cloud belongs in front of the face, not stacked above the hood -- and the
+	# rise is the gravity term's job, not this one's.
+	_process_material.direction = Vector3(0.0, 0.28, 1.0)
+	_process_material.spread = 22.0
 	# Warm air rises, which is what angles the trail up in the reference.
 	_process_material.gravity = Vector3(0.0, 0.34, 0.0)
-	# It stops almost as soon as it leaves him. Breath does not travel.
-	_process_material.damping_min = 1.1
-	_process_material.damping_max = 1.8
+	# It coasts about half a metre and stops. Breath carries clear of the face and
+	# then goes nowhere: see puff_speed_rest for the arithmetic these two are half
+	# of.
+	_process_material.damping_min = 1.3
+	_process_material.damping_max = 1.9
 	_process_material.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
 	_process_material.emission_sphere_radius = 0.05
 	_process_material.color_ramp = _fade_ramp()
-	_process_material.scale_curve = _shrink_curve()
+	_process_material.scale_curve = _swell_curve()
 	process_material = _process_material
 
 	var quad := QuadMesh.new()
 	quad.size = Vector2.ONE
 	var surface := StandardMaterial3D.new()
-	# Cool white with the snow's own cast. Art Bible rule 12 keeps the warm pixels
-	# for fire, windows, beacons, the scarf and the truck; breath is not on that
-	# list, so it stays in the snow tones.
-	surface.albedo_color = bible.snow_tones[0].lerp(Color.WHITE, 0.72)
+	# Vapour, not snow. A cool grey-blue off the snow's own lightest tone, pulled
+	# only part way to white -- see puff_whiteness, and the class comment on why
+	# the alpha carries this rather than the brightness. Art Bible rule 12 keeps
+	# the warm pixels for fire, windows, beacons, the scarf and the truck; breath
+	# is not on that list, so it stays in the snow tones.
+	surface.albedo_color = bible.snow_tones[0].lerp(Color.WHITE, puff_whiteness)
 	# A bare QuadMesh is a rectangle, and a rectangle of flat white is what a
 	# first pass at this actually looks like on screen: a paper card stuck to his
 	# face. The radial alpha is not a refinement, it is the difference between a
@@ -203,19 +281,28 @@ func _build() -> void:
 	draw_pass_1 = quad
 
 
-## A round billboard with a soft rim, not a wisp: the reference's puffs are crisp
-## discs. Full alpha holds most of the way out and falls off in the last third.
+## The alpha across one puff, centre to rim -- a smooth bell rather than a disc
+## with a soft edge, and that difference is the fusion approximation the class
+## comment describes.
+##
+## A disc has a shoulder in it. Overlap two and the eye finds both outlines and
+## reads two circles with a bright lens between them. A bell has no shoulder
+## anywhere, so where two overlap the composited alpha rises smoothly through the
+## join and the pair reads as one mass. It is the union of two fields without the
+## threshold that would pinch the waist between them.
 ##
 ## Built rather than imported -- it is two dozen bytes of gradient, and importing
 ## a PNG for it would put an art asset in the repo that nobody can tune without a
 ## paint program.
 func _puff_texture() -> GradientTexture2D:
 	var gradient := Gradient.new()
-	gradient.offsets = PackedFloat32Array([0.0, 0.52, 0.78, 1.0])
+	gradient.offsets = PackedFloat32Array([0.0, 0.22, 0.44, 0.64, 0.82, 1.0])
 	gradient.colors = PackedColorArray([
 		Color(1.0, 1.0, 1.0, 1.0),
-		Color(1.0, 1.0, 1.0, 0.92),
-		Color(1.0, 1.0, 1.0, 0.35),
+		Color(1.0, 1.0, 1.0, 0.94),
+		Color(1.0, 1.0, 1.0, 0.76),
+		Color(1.0, 1.0, 1.0, 0.46),
+		Color(1.0, 1.0, 1.0, 0.17),
 		Color(1.0, 1.0, 1.0, 0.0),
 	])
 	var texture := GradientTexture2D.new()
@@ -228,15 +315,24 @@ func _puff_texture() -> GradientTexture2D:
 	return texture
 
 
-## Alpha over the particle's life: in fast, out slow, ending fully transparent. A
-## puff that starts at full alpha pops into existence at the mouth.
+## Alpha over the particle's life. Both ends are eased and neither is a cliff.
+##
+## It comes up over the first tenth rather than starting lit, so the puff emerges
+## from the mouth instead of appearing at it; and it goes out along a long convex
+## tail rather than being switched off at death, so a puff that is still 26% lit
+## three quarters of the way through has faded to nothing by the end without any
+## frame in which it visibly stopped existing. The peak is puff_opacity, which is
+## the number that decides whether this reads as vapour.
 func _fade_ramp() -> GradientTexture1D:
 	var gradient := Gradient.new()
-	gradient.offsets = PackedFloat32Array([0.0, 0.12, 0.55, 1.0])
+	gradient.offsets = PackedFloat32Array([0.0, 0.06, 0.16, 0.40, 0.66, 0.86, 1.0])
 	gradient.colors = PackedColorArray([
 		Color(1.0, 1.0, 1.0, 0.0),
-		Color(1.0, 1.0, 1.0, 0.80),
-		Color(1.0, 1.0, 1.0, 0.42),
+		Color(1.0, 1.0, 1.0, puff_opacity * 0.55),
+		Color(1.0, 1.0, 1.0, puff_opacity),
+		Color(1.0, 1.0, 1.0, puff_opacity * 0.86),
+		Color(1.0, 1.0, 1.0, puff_opacity * 0.50),
+		Color(1.0, 1.0, 1.0, puff_opacity * 0.18),
 		Color(1.0, 1.0, 1.0, 0.0),
 	])
 	var texture := GradientTexture1D.new()
@@ -244,14 +340,23 @@ func _fade_ramp() -> GradientTexture1D:
 	return texture
 
 
-## Radius over life, as a multiple of the size the particle was born at. It opens
-## a little as it clears the mouth and then shrinks away, so the oldest puff in
-## the trail is the smallest one.
-func _shrink_curve() -> CurveTexture:
+## Radius over life, as a multiple of the size the particle was born at.
+##
+## Up quickly from small -- the puff swells out of the mouth over the first sixth
+## rather than arriving at full size -- and then it KEEPS OPENING for the rest of
+## its life, all the way to puff_radius_death, while the ramp above thins it out.
+## That is what dispersal looks like. A curve that came back down would make the
+## oldest puff the smallest, which reads as a spark going out.
+##
+## Curve points default to flat tangents, so the interpolation between them is
+## already eased and neither the birth nor the swell has a corner in it.
+func _swell_curve() -> CurveTexture:
 	var curve := Curve.new()
-	curve.add_point(Vector2(0.0, 0.72))
-	curve.add_point(Vector2(0.22, 1.0))
-	curve.add_point(Vector2(1.0, puff_radius_fade))
+	curve.max_value = maxf(puff_radius_death, 1.0)
+	curve.add_point(Vector2(0.0, 0.42))
+	curve.add_point(Vector2(0.16, 1.0))
+	curve.add_point(Vector2(0.55, puff_radius_death * 0.66))
+	curve.add_point(Vector2(1.0, puff_radius_death))
 	var texture := CurveTexture.new()
 	texture.curve = curve
 	return texture
@@ -291,8 +396,8 @@ func _apply() -> void:
 	_process_material.initial_velocity_min = speed * 0.7
 	_process_material.initial_velocity_max = speed
 
-	# scale_curve carries the shrink over the particle's life, so these two are
-	# the size it is BORN at. A warm breath is born smaller.
+	# scale_curve carries the swell over the particle's life, so these two are the
+	# size it is BORN at. A warm breath is born smaller.
 	var birth := puff_radius_birth * lerpf(0.66, 1.0, density)
 	_process_material.scale_min = birth * 0.8
 	_process_material.scale_max = birth * 1.2

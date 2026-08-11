@@ -152,18 +152,131 @@ func test_the_puff_is_big_enough_to_read_at_gameplay_framing() -> void:
 	breath.free()
 
 
-## Older puffs are smaller as well as fainter -- that is what makes the trail read
-## as a sequence in time rather than as one cloud with a ragged edge.
-func test_a_puff_shrinks_and_fades_as_it_ages() -> void:
+## Older puffs are BIGGER and fainter. Vapour disperses -- it spreads out and
+## thins until there is nothing left of it -- so the oldest puff in the trail is
+## the largest one.
+##
+## This test used to assert the exact opposite, and the reversal is deliberate
+## rather than a test bent to fit the code: shrinking a puff away makes it read
+## as a spark going out, and the owner asked for dispersal instead. What is
+## pinned here is the new intent, in the same detail the old one was.
+func test_a_puff_swells_and_thins_as_it_disperses() -> void:
 	var breath := _fresh()
 	var scale_curve: Curve = (breath.process_material.scale_curve as CurveTexture).curve
 	assert_true(
-		scale_curve.sample(1.0) < scale_curve.sample(0.25),
-		"the puff ends at %f of its size against %f in its youth: it grows, and the "
+		scale_curve.sample(1.0) > scale_curve.sample(0.25) * 1.4,
+		"the puff ends at %f of its birth size against %f in its youth: it is not "
 			% [scale_curve.sample(1.0), scale_curve.sample(0.25)]
-			+ "reference's oldest puff is its smallest"
+			+ "dispersing, and vapour does not hold its size or shrink away"
 	)
 	var ramp: Gradient = (breath.process_material.color_ramp as GradientTexture1D).gradient
 	assert_eq(ramp.sample(1.0).a, 0.0, "the puff does not fade out completely")
-	assert_true(ramp.sample(0.2).a > 0.5, "the puff never becomes visible at all")
+	assert_true(ramp.sample(0.2).a > 0.25, "the puff never becomes visible at all")
+	breath.free()
+
+
+## Both ends of a puff's life are eased. It emerges from the mouth rather than
+## appearing at it, and it disperses rather than switching off -- and the death
+## in particular has to be a curve rather than a cliff, which a two-point ramp
+## from lit to nothing would not be.
+func test_a_puff_emerges_and_disperses_rather_than_popping() -> void:
+	var breath := _fresh()
+	var scale_curve: Curve = (breath.process_material.scale_curve as CurveTexture).curve
+	var ramp: Gradient = (breath.process_material.color_ramp as GradientTexture1D).gradient
+
+	# Birth: small and invisible, up to full size and lit within the first sixth.
+	assert_eq(ramp.sample(0.0).a, 0.0, "the puff is born already lit and pops in")
+	assert_true(
+		scale_curve.sample(0.0) < 0.6,
+		"the puff is born at %f of its size: it appears rather than emerging"
+			% scale_curve.sample(0.0)
+	)
+	assert_true(
+		scale_curve.sample(0.18) >= 0.95,
+		"the puff is still only %f of its size a fifth of the way through; the "
+			% scale_curve.sample(0.18)
+			+ "birth is meant to be quick, not the whole of its life"
+	)
+
+	# Death: still faintly there late on, so the last of it is a curve and not a
+	# frame in which the puff stopped existing.
+	var late: float = ramp.sample(0.88).a
+	assert_true(
+		late > 0.01 and late < ramp.sample(0.4).a * 0.4,
+		"at 88%% of its life the puff is at alpha %f against %f at 40%%: the fade "
+			% [late, ramp.sample(0.4).a]
+			+ "out is a cliff rather than a curve"
+	)
+	breath.free()
+
+
+## Vapour, not snow. The puff has to be clearly lighter than the field it is seen
+## against and clearly NOT white, and it has to lean on alpha rather than on
+## brightness -- an opaque white puff reads as a snowball stuck to his face.
+func test_the_puff_reads_as_vapour_rather_than_as_snow() -> void:
+	var breath := _fresh()
+	var bible = load("res://data/palette/color_bible.tres")
+	var snow: Color = bible.snow_tones[0]
+	var surface: StandardMaterial3D = (breath.draw_pass_1 as QuadMesh).material
+	var tone: Color = surface.albedo_color
+
+	assert_true(
+		tone.v > snow.v,
+		"the puff is no lighter than the snow behind it and will not be seen at all"
+	)
+	assert_true(
+		tone.v < 0.97,
+		"the puff is at value %f, which is effectively white: Art Bible rule 12 "
+			% tone.v
+			+ "aside, an opaque white blob reads as a snowball, not as breath"
+	)
+	# Cool, not warm: rule 12 reserves the warm pixels for fire, windows, beacons,
+	# the scarf and the truck. Blue above red is the whole of the test.
+	assert_true(
+		tone.b > tone.r,
+		"the puff has drifted warm (r=%f b=%f) and is competing with the beacons"
+			% [tone.r, tone.b]
+	)
+
+	# And the visibility is carried by alpha. A peak opacity anywhere near 1 means
+	# the brightness above was doing the work after all.
+	var ramp: Gradient = (breath.process_material.color_ramp as GradientTexture1D).gradient
+	var peak := 0.0
+	for step in range(21):
+		peak = maxf(peak, ramp.sample(float(step) / 20.0).a)
+	assert_true(
+		peak > 0.2 and peak < 0.7,
+		"the puff peaks at alpha %f; vapour is translucent, and at this alpha it "
+			% peak
+			+ "is either invisible or a solid object"
+	)
+	breath.free()
+
+
+## The cloud has to stand off the face. Puffs that condense on his lips sit
+## inside the silhouette of the hood, where nobody can see them overlap and where
+## they read as a smudge on the model rather than as breath.
+func test_the_cloud_carries_clear_of_the_head() -> void:
+	var breath := _fresh()
+	breath.set_exertion(0.0)
+	breath._process(0.0)
+	var material: ParticleProcessMaterial = breath.process_material
+	# Coasting distance under linear damping: v^2 / 2a. Compared against the head,
+	# which is about 0.22 m across on this rig.
+	var speed: float = material.initial_velocity_max
+	var damping := (material.damping_min + material.damping_max) * 0.5
+	var carry := speed * speed / (2.0 * maxf(damping, 0.0001))
+	assert_true(
+		carry > 0.35,
+		"a resting breath coasts %.2f m before it stops, which is inside his own "
+			% carry
+			+ "hood; the cloud has to stand out in front of the face"
+	)
+	# Forward, not up: the rise is the gravity term's job.
+	assert_true(
+		material.direction.z > material.direction.y * 2.0,
+		"the breath is aimed more upward than forward (%s) and will stack over the "
+			% str(material.direction)
+			+ "hood instead of standing in front of it"
+	)
 	breath.free()
