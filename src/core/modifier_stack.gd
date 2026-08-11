@@ -9,19 +9,26 @@ extends RefCounted
 ## then any OVERRIDE replaces the result outright; the last one added wins.
 
 var _modifiers: Array[Modifier] = []
-var _remaining: Dictionary = {}
+
+## Seconds left for the modifier at the same index; INF means permanent.
+## Deliberately parallel to _modifiers rather than a Dictionary keyed by
+## Modifier: Godot's ResourceLoader caches .tres files, so two systems
+## loading the same modifier resource get the SAME instance. Keying by
+## object identity would collapse two independent slots into one expiry
+## entry, consuming the duration twice as fast and then stranding the
+## survivor so it never expires at all.
+var _remaining: Array[float] = []
 
 func add(mod: Modifier) -> void:
 	_modifiers.append(mod)
-	if mod.duration > 0.0:
-		_remaining[mod] = mod.duration
+	_remaining.append(mod.duration if mod.duration > 0.0 else INF)
 
 func remove_by_source(source_id: StringName) -> int:
 	var removed := 0
 	for i in range(_modifiers.size() - 1, -1, -1):
 		if _modifiers[i].source_id == source_id:
-			_remaining.erase(_modifiers[i])
 			_modifiers.remove_at(i)
+			_remaining.remove_at(i)
 			removed += 1
 	return removed
 
@@ -34,15 +41,12 @@ func size() -> int:
 
 func tick(delta: float) -> void:
 	for i in range(_modifiers.size() - 1, -1, -1):
-		var mod := _modifiers[i]
-		if not _remaining.has(mod):
+		if is_inf(_remaining[i]):
 			continue
-		var left: float = float(_remaining[mod]) - delta
-		if left <= 0.0:
-			_remaining.erase(mod)
+		_remaining[i] -= delta
+		if _remaining[i] <= 0.0:
 			_modifiers.remove_at(i)
-		else:
-			_remaining[mod] = left
+			_remaining.remove_at(i)
 
 func apply(base_value: float) -> float:
 	var additive := 0.0

@@ -76,3 +76,22 @@ func test_clear_empties_the_stack() -> void:
 	stack.clear()
 	assert_eq(stack.size(), 0, "clear must empty the stack")
 	assert_almost_eq(stack.apply(10.0), 10.0, 0.0001, "a cleared stack must not alter the base value")
+
+func test_the_same_instance_added_twice_expires_per_slot() -> void:
+	var stack = ModifierStackScript.new()
+	var shared = _make(&"cold_snap", ModifierScript.Operation.ADD, 5.0, 2.0)
+	stack.add(shared)
+	stack.add(shared)
+	assert_almost_eq(stack.apply(0.0), 10.0, 0.0001, "both slots should contribute")
+	stack.tick(1.0)
+	assert_eq(stack.size(), 2, "one second into a two-second duration, neither slot has expired")
+	assert_almost_eq(stack.apply(0.0), 10.0, 0.0001, "both slots should still contribute")
+	stack.tick(1.5)
+	assert_eq(stack.size(), 0, "both slots expire once their full duration elapses")
+	assert_almost_eq(stack.apply(0.0), 0.0, 0.0001, "nothing contributes after expiry")
+
+func test_modifier_expires_exactly_at_its_duration() -> void:
+	var stack = ModifierStackScript.new()
+	stack.add(_make(&"gust", ModifierScript.Operation.ADD, 5.0, 2.0))
+	stack.tick(2.0)
+	assert_eq(stack.size(), 0, "remaining hitting exactly zero must expire")

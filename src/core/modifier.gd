@@ -16,5 +16,6 @@ enum Operation { ADD, MULTIPLY, OVERRIDE }
 
 @export var value: float = 0.0
 
-## Seconds until this expires. -1 means permanent until removed by source.
+## Seconds until this expires. Any value <= 0 means permanent until removed
+## by source; -1 is the conventional way to write it.
 @export var duration: float = -1.0
