@@ -16,12 +16,29 @@ photographic PBR set has nothing to contribute; the game paints this mesh from
 `data/palette/color_bible.tres` at runtime. `tools/strip_scene_materials.gd`
 removes whatever Godot's importer invents on the way in.
 
-Run it -- source path first, destination second:
+Later animation deliveries are folded in here too, and that is not a
+convenience -- it is the only correct place for them. Meshy ships extra takes as
+animation-only FBXs, and Godot's own FBX importer lands them in a *different
+space* from the one this script's glTF export produces: metres against this
+file's centimetres, and one of them still Z-up. Measured on 4.7.1, the
+character's Hips rest sits at y=85.07 out of the `.glb` and at z=0.84 out of the
+same rig's animation-only `.fbx`. Copying a track from one to the other puts the
+skeleton through a 100x scale and an axis swap, and the visible result is not an
+error message -- it is a character who vanishes, because his bones have been
+flung tens of metres apart. Bringing the extra takes through this same round
+trip makes them land in the same space by construction, with nothing to retarget
+and nothing to keep in step by hand.
+
+Run it -- source path first, destination second, then any number of
+animation-only FBXs. Each extra take is named after its own filename, so name
+the file for what the motion is:
 
     "C:/Program Files/Blender Foundation/Blender 5.2/blender.exe" --background \
-        --python tools/decimate_character.py -- <source.fbx> <dest.glb>
+        --python tools/decimate_character.py -- <source.fbx> <dest.glb> \
+        [<animation.fbx> ...]
 """
 
+import os
 import sys
 
 import bpy
@@ -36,11 +53,11 @@ TARGET_TRIANGLES = 7000
 
 def argv():
     if "--" not in sys.argv:
-        raise SystemExit("decimate_character.py: expected '-- <source> <dest>'")
+        raise SystemExit("decimate_character.py: expected '-- <source> <dest> [anim ...]'")
     rest = sys.argv[sys.argv.index("--") + 1:]
-    if len(rest) != 2:
-        raise SystemExit("decimate_character.py: expected exactly two paths after '--'")
-    return rest[0], rest[1]
+    if len(rest) < 2:
+        raise SystemExit("decimate_character.py: expected at least two paths after '--'")
+    return rest[0], rest[1], rest[2:]
 
 
 def import_source(path):
@@ -93,8 +110,97 @@ def rename_actions():
             action.name = action.name.rsplit("|", 1)[-1]
 
 
+def fcurves_of(action):
+    """Blender 5 actions are slotted and no longer expose `fcurves` directly."""
+    if hasattr(action, "fcurves"):
+        return list(action.fcurves)
+    curves = []
+    for layer in action.layers:
+        for strip in layer.strips:
+            for bag in getattr(strip, "channelbags", []):
+                curves.extend(bag.fcurves)
+    return curves
+
+
+def shift_to_frame_one(action):
+    """Slide an action so its first key is on frame 1.
+
+    Meshy's animation-only files start on frame 2. The glTF exporter bakes from
+    frame 1 regardless, so the take ships with its first eighth of a second
+    holding the *bind* pose -- and then snapping into the authored first frame.
+    On the knockdown that is a 15 cm jolt of the hips before the blow lands,
+    which reads as a hitch rather than as an anticipation.
+    """
+    start = action.frame_range[0]
+    delta = 1.0 - start
+    if abs(delta) < 0.5:
+        return
+    for curve in fcurves_of(action):
+        for key in curve.keyframe_points:
+            key.co.x += delta
+            key.handle_left.x += delta
+            key.handle_right.x += delta
+        curve.update()
+
+
+def merge_animation(armature, path):
+    """Fold one animation-only FBX into the character's own action list.
+
+    The take is named after the file rather than after whatever Meshy called it
+    -- both deliveries so far arrived with their single action called `Scene`,
+    so two of them merged under their own names would collide outright.
+
+    Stashed into an NLA track rather than merely renamed, because that is what
+    makes the glTF exporter see it. Blender's FBX importer stashes each take of
+    a multi-take file the same way, which is why the eighteen in the character
+    file all come out the other side; an action sitting loose in `bpy.data` with
+    nothing referring to it does not.
+    """
+    known = set(bpy.data.actions.keys())
+    objects = set(bpy.data.objects.keys())
+    import_source(path)
+
+    added = [a for a in bpy.data.actions if a.name not in known]
+    if not added:
+        raise SystemExit("decimate_character.py: %s holds no animation" % path)
+    if len(added) > 1:
+        raise SystemExit(
+            "decimate_character.py: %s holds %d takes; this expects one per file "
+            "because the take is named after the file" % (path, len(added))
+        )
+
+    action = added[0]
+    action.name = os.path.splitext(os.path.basename(path))[0]
+    action.use_fake_user = True
+    shift_to_frame_one(action)
+
+    if armature.animation_data is None:
+        armature.animation_data_create()
+    track = armature.animation_data.nla_tracks.new()
+    track.name = action.name
+    strip = track.strips.new(action.name, int(action.frame_range[0]), action)
+    # Blender 5 actions carry slots; an unbound strip evaluates to nothing.
+    if hasattr(action, "slots") and action.slots and hasattr(strip, "action_slot"):
+        strip.action_slot = action.slots[0]
+    # Muted, exactly as the FBX importer leaves the takes it stashes. The
+    # exporter evaluates each action on its own; an unmuted stack would only
+    # change what the viewport shows.
+    track.mute = True
+
+    # The rig that arrived with the take. Its bones are the same 24 by the same
+    # names, which is why the action drops straight onto the character -- but
+    # left in the scene it exports as a second skeleton.
+    for name in list(bpy.data.objects.keys()):
+        if name not in objects:
+            bpy.data.objects.remove(bpy.data.objects[name], do_unlink=True)
+
+    print("decimate_character: merged %s as %r (%d frames)" % (
+        os.path.basename(path), action.name,
+        int(action.frame_range[1] - action.frame_range[0]) + 1))
+
+
 def main():
-    source, destination = argv()
+    source, destination, animations = argv()
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
     import_source(source)
@@ -124,6 +230,14 @@ def main():
         )
 
     rename_actions()
+
+    armatures = [obj for obj in bpy.data.objects if obj.type == "ARMATURE"]
+    if animations and not armatures:
+        raise SystemExit("decimate_character.py: the source holds no armature to merge takes onto")
+    for path in animations:
+        merge_animation(armatures[0], path)
+
+    print("decimate_character: exporting %d takes" % len(bpy.data.actions))
 
     bpy.ops.export_scene.gltf(
         filepath=destination,

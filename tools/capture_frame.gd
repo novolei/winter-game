@@ -45,6 +45,8 @@ var _capture_at := 37.0
 var _settle := 0.9
 var _held: Dictionary = {}
 var _done := false
+var _start := Vector2.ZERO
+var _has_start := false
 
 # Sampled along the route so the run can state, rather than assume, that the
 # snow actually varies and that speed actually responds to it. A shot of a
@@ -81,6 +83,27 @@ func _ready() -> void:
 		var camera := get_node_or_null("Main/CameraRig/Camera3D") as Camera3D
 		if camera != null:
 			camera.size = ortho
+
+	# `--start x,z` walks the same route from somewhere else. The camera frames
+	# 17 m by 15 m of ground, so anything more than a short walk from the origin
+	# -- the farmhouse, for one -- cannot be photographed from the spawn point at
+	# game framing, and moving the harness is honest where widening the frame or
+	# moving the spawn would not be. The route, the speed and the snow are
+	# untouched.
+	var start := _string_arg(args, "--start", "")
+	if start != "":
+		var parts := start.split(",")
+		if parts.size() == 2:
+			_start = Vector2(float(parts[0]), float(parts[1]))
+			_has_start = true
+	if _has_start:
+		# Children are ready before their parent, so Main and everything under it
+		# has already run _ready() by the time this does. The player has not had a
+		# physics frame yet, so it still lands on the snow rather than easing down
+		# to it -- see PlayerController._grounded.
+		var body := get_node_or_null("Main/Player") as Node3D
+		if body != null:
+			body.global_position = Vector3(_start.x, body.global_position.y, _start.y)
 
 
 func _string_arg(args: PackedStringArray, name: String, fallback: String) -> String:

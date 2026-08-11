@@ -7,6 +7,8 @@
 [ext_resource type="Script" uid="uid://bybxprc27pxai" path="res://src/rendering/camera_rig.gd" id="5_camera"]
 [ext_resource type="Script" uid="uid://c62qview8puc" path="res://src/rendering/lighting_director.gd" id="6_lighting"]
 [ext_resource type="Script" uid="uid://dadrr02tbdw8y" path="res://src/rendering/blockout.gd" id="7_blockout"]
+[ext_resource type="Script" uid="uid://vrwjasuo5dau" path="res://src/entities/farmhouse.gd" id="8_farmhouse"]
+[ext_resource type="PackedScene" uid="uid://carp66tmc3e5o" path="res://assets/models/buildings/farmhouse/farmhouse.glb" id="9_farmhouse_model"]
 
 [node name="Main" type="Node3D" unique_id=1508188971]
 
@@ -34,3 +36,9 @@ script = ExtResource("6_lighting")
 
 [node name="Blockout" type="Node3D" parent="." unique_id=431765058]
 script = ExtResource("7_blockout")
+
+[node name="Farmhouse" type="Node3D" parent="." unique_id=1902244517]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 0, -12)
+script = ExtResource("8_farmhouse")
+
+[node name="Model" parent="Farmhouse" instance=ExtResource("9_farmhouse_model") unique_id=1902244518]

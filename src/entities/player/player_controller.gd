@@ -28,10 +28,13 @@ const STEP_SOUND_PATHS := [
 ]
 const FOOTPRINT_EVENT := &"player.footprint"
 
-## The two takes this slice uses, out of the eighteen in the file. Shooting,
-## aiming, sneaking, the limp and the two death takes belong to later waves.
-const WALK_CLIP := &"Walking"
-const RUN_CLIP := &"Running"
+## The three takes this slice uses, out of the twenty in the merged library.
+## Shooting, aiming, sneaking, the limp, the knockdown and the two deaths are
+## all built and addressable -- see WandererAnimations -- and belong to later
+## waves.
+const IDLE_CLIP := WandererAnimations.IDLE
+const WALK_CLIP := WandererAnimations.WALK
+const RUN_CLIP := WandererAnimations.RUN
 
 @export var run_speed := 5.4
 @export var wade_speed := 1.5
@@ -165,6 +168,21 @@ const RUN_CLIP := &"Running"
 ## A ceiling on the playback rate, so a sprint down a scoured slope cannot spin
 ## the legs into a blur.
 @export var anim_max_pace := 1.5
+
+## Where standing still ends and locomotion begins, in ground speed.
+##
+## Below the first the figure is idling outright; above the second the walk
+## carries him entirely; between them the two are crossfaded. Narrow, and set
+## against acceleration rather than against top speed: at 12 m/s^2 the walk is
+## fully faded in a tenth of a second after the key goes down, which is about
+## how long it takes a person to lean into a step. Widening it makes him look
+## like he is wading out of treacle every time he starts.
+##
+## The lower bound is not zero because move_toward leaves a hair of velocity for
+## a frame or two after the key comes up, and an idle that flickers back to a
+## crawl at every stop is worse than one that starts a frame late.
+@export var anim_idle_speed := 0.12
+@export var anim_moving_speed := 0.85
 
 ## ---------------------------------------------------------------------------
 ## Footstep audio
@@ -316,35 +334,69 @@ func _first_of_type(node: Node, type: StringName) -> Node:
 	return null
 
 
-## Walk and run, blended by the speed the snow already decides.
+## Idle, walk and run, blended by the speed the snow already decides.
 ##
-## There is no idle take in the file -- one has been asked for. Until it lands
-## the blend is simply frozen at zero speed: the time scale goes to zero with
-## the ground speed, so a standing character holds the pose he stopped in rather
-## than sliding along with his legs still cycling. Swapping in a real idle is
-## one AnimationNodeAnimation and one more blend input.
+## The AnimationPlayer that arrives inside the .glb knows only the eighteen
+## takes that were merged into that file, under Meshy's own names. It is given
+## the whole library instead -- twenty takes, including the idle and the
+## knockdown that shipped as separate animation-only FBXs -- replacing its
+## default library rather than sitting beside it, so every clip in the game is
+## addressed by one name with no library prefix.
+##
+## THE GRAPH'S SHAPE IS THE WHOLE OF THE IDLE FIX, and the ordering is not
+## arbitrary:
+##
+##     walk ---.
+##              >-- gait --> pace ---.
+##     run  ---'                      >-- motion --> output
+##     idle --------------------------'
+##
+## The time scale sits *inside* the locomotion branch, not over the whole graph.
+## It has to: pace goes to zero with the ground speed, which is what stops a
+## standing character from sliding along with his legs cycling -- and a time
+## scale over the output would freeze the idle along with it, leaving exactly
+## the frozen mid-stride pose the idle exists to replace.
+##
+## Freezing the walk branch at a standstill is still the right behaviour, it is
+## just no longer visible: at zero speed `motion` is zero, so the frozen legs
+## contribute nothing, and when the player moves off again the cycle resumes
+## from where it stopped rather than snapping to frame one.
 func _build_animation() -> void:
 	var player := _first_of_type(_model, &"AnimationPlayer") as AnimationPlayer
 	if player == null:
 		return
-	if not player.has_animation(WALK_CLIP) or not player.has_animation(RUN_CLIP):
-		push_warning("player_controller: %s is missing %s or %s" % [MODEL_PATH, WALK_CLIP, RUN_CLIP])
-		return
+	# Replaces rather than adds: an AnimationPlayer may hold several libraries,
+	# and leaving the imported one in place under the same empty name is an
+	# error, while leaving it under another name means the same take is reachable
+	# by two different strings.
+	if player.has_animation_library(&""):
+		player.remove_animation_library(&"")
+	player.add_animation_library(&"", WandererAnimations.build())
+	for clip in [IDLE_CLIP, WALK_CLIP, RUN_CLIP]:
+		if not player.has_animation(clip):
+			push_warning("player_controller: the merged library is missing %s" % clip)
+			return
 
+	var idle := AnimationNodeAnimation.new()
+	idle.animation = IDLE_CLIP
 	var walk := AnimationNodeAnimation.new()
 	walk.animation = WALK_CLIP
 	var run := AnimationNodeAnimation.new()
 	run.animation = RUN_CLIP
 
 	var graph := AnimationNodeBlendTree.new()
+	graph.add_node("idle", idle)
 	graph.add_node("walk", walk)
 	graph.add_node("run", run)
 	graph.add_node("gait", AnimationNodeBlend2.new())
 	graph.add_node("pace", AnimationNodeTimeScale.new())
+	graph.add_node("motion", AnimationNodeBlend2.new())
 	graph.connect_node("gait", 0, "walk")
 	graph.connect_node("gait", 1, "run")
 	graph.connect_node("pace", 0, "gait")
-	graph.connect_node("output", 0, "pace")
+	graph.connect_node("motion", 0, "idle")
+	graph.connect_node("motion", 1, "pace")
+	graph.connect_node("output", 0, "motion")
 
 	_animation = AnimationTree.new()
 	_animation.name = "Gait"
@@ -362,12 +414,21 @@ func _build_animation() -> void:
 
 ## Blend by speed, and play at the rate that actually covers the ground, so the
 ## feet plant instead of skating.
+##
+## One number drives all three parameters, and it is the ground speed the snow
+## decides: SnowField.wade_factor() has already pulled the top speed down from
+## run_speed toward wade_speed by the time this reads velocity. So a player
+## crossing a drift does not merely move slower -- he drops out of the run into
+## the walk and shortens his stride, because the same metre per second that the
+## snow took away is the one this reads.
 func _drive_animation() -> void:
 	if _animation == null:
 		return
 	var speed := Vector2(velocity.x, velocity.z).length()
+	var motion := clampf(inverse_lerp(anim_idle_speed, anim_moving_speed, speed), 0.0, 1.0)
 	var gait := clampf(inverse_lerp(anim_walk_speed, anim_run_speed, speed), 0.0, 1.0)
 	var reference := lerpf(anim_walk_speed, anim_run_speed, gait)
+	_animation.set(&"parameters/motion/blend_amount", motion)
 	_animation.set(&"parameters/gait/blend_amount", gait)
 	_animation.set(&"parameters/pace/scale", clampf(speed / reference, 0.0, anim_max_pace))
 
