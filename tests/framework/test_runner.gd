@@ -41,7 +41,14 @@ func _run_file(path: String) -> void:
 		instance.before_each()
 		instance.call(method_name)
 		instance.after_each()
-		var fails: Array[String] = instance.failures()
+		var fails: Array[String] = []
+		fails.append_array(instance.failures())
+		# A test that executed no assertion proves nothing. Either it is
+		# empty, or a GDScript runtime error aborted it partway -- the VM
+		# drops the rest of the function and returns, leaving an empty
+		# failure list that would otherwise be reported as a PASS.
+		if instance.assertion_count() == 0:
+			fails.append("no assertions executed -- the test is empty, or a runtime error aborted it partway")
 		if fails.is_empty():
 			_passed += 1
 			print("  PASS  %s :: %s" % [path.get_file(), method_name])
