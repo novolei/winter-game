@@ -642,10 +642,30 @@ func set_chill(amount: float) -> void:
 ## Returns the authored `chill` when there is no survival model: the cold idle
 ## and the fog were both tuned against 1.0 because everything so far happens
 ## outdoors in a wind, and a scene with no model running must not turn that off.
+## A man standing outdoors in this weather is never perfectly still, so the
+## shiver never fully switches off. IDLE_CHILL_FLOOR is the amount of it he
+## carries at full warmth.
+##
+## The owner asked for the shiver idle as the default and the neutral one read
+## as stiff. Swapping the two clips would have done it, but at the cost of the
+## gradient: the whole point of blending these is that colder means visibly
+## more shiver, and that is one of GDD section 9's readouts with no HUD behind
+## it. A floor keeps both -- always alive, and still legible as it worsens.
+##
+## Raise this and a healthy man looks hypothermic; drop it to zero and the
+## default idle goes stiff again. It is deliberately not 0.0 and deliberately
+## not high.
+const IDLE_CHILL_FLOOR := 0.45
+
+
 func body_chill() -> float:
 	if _survival == null:
-		return chill
-	return clampf(1.0 - _survival.fraction_of(&"core_temperature"), 0.0, 1.0)
+		return maxf(chill, IDLE_CHILL_FLOOR)
+	var cold := clampf(1.0 - _survival.fraction_of(&"core_temperature"), 0.0, 1.0)
+	# Remap onto [FLOOR, 1] rather than clamping, so the whole range of the stat
+	# still moves the body. A clamp would flatten every temperature above the
+	# floor into one identical pose and throw the readout away above it.
+	return IDLE_CHILL_FLOOR + cold * (1.0 - IDLE_CHILL_FLOOR)
 
 
 ## The top ground speed the body can manage in snow of this wade factor, after

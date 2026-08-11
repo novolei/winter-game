@@ -198,24 +198,50 @@ func test_frostbitten_feet_cost_speed_through_the_same_channel() -> void:
 # --- the readouts, and the trap ---------------------------------------------
 
 ## THE TRAP, stated the way it bites. Every stat is a reserve, so a full
-## core_temperature is a WARM man and must read as chill 0.
+## core_temperature is a WARM man and must read at the FLOOR, never at 1.
+##
+## The floor is the owner's call: the neutral idle read as stiff, so the shiver
+## never fully switches off and a healthy man carries IDLE_CHILL_FLOOR of it.
+## The readout is remapped onto [FLOOR, 1] rather than clamped, so the whole
+## range of the stat still moves the body.
+##
+## What this test is actually defending has not changed: passing fraction_of()
+## straight through gives a warm man chill 1.0, and that is still caught here by
+## a mile.
 func test_the_chill_readout_is_the_inverse_of_the_reserve() -> void:
 	var player := _build_player()
+	var floor_amount: float = player.IDLE_CHILL_FLOOR
 	assert_almost_eq(
 		player.body_chill(),
-		0.0,
+		floor_amount,
 		0.001,
-		"a man at full core temperature reads as %f cold; the readout is not inverted"
-			% player.body_chill()
+		"a man at full core temperature reads as %f cold, not the floor %f"
+			% [player.body_chill(), floor_amount]
 	)
 	_drop_to(&"core_temperature", 0.25)
+	var cold: float = 1.0 - _survival.fraction_of(&"core_temperature")
 	assert_almost_eq(
 		player.body_chill(),
-		1.0 - _survival.fraction_of(&"core_temperature"),
+		floor_amount + cold * (1.0 - floor_amount),
 		0.0001,
-		"the chill readout is not 1 - the reserve"
+		"the chill readout is not the reserve remapped onto [floor, 1]"
 	)
 	assert_true(player.body_chill() > 0.7, "a man at a quarter of a bar barely reads as cold")
+
+## The floor must not flatten the readout. If it were a clamp rather than a
+## remap, every temperature above the floor would collapse to one identical
+## pose and the body would stop saying anything until the man was nearly dead.
+func test_the_floor_does_not_flatten_the_readout() -> void:
+	var player := _build_player()
+	_drop_to(&"core_temperature", 0.9)
+	var nearly_warm: float = player.body_chill()
+	_drop_to(&"core_temperature", 0.5)
+	var half: float = player.body_chill()
+	_drop_to(&"core_temperature", 0.1)
+	var nearly_gone: float = player.body_chill()
+	assert_true(nearly_warm < half, "0.9 and 0.5 of a bar read the same: %f, %f" % [nearly_warm, half])
+	assert_true(half < nearly_gone, "0.5 and 0.1 of a bar read the same: %f, %f" % [half, nearly_gone])
+	assert_true(nearly_gone <= 1.0, "the readout ran past 1.0: %f" % nearly_gone)
 
 ## The same mistake from the other side, because this is the one that would ship:
 ## fraction_of() straight through looks perfectly reasonable and produces a
@@ -226,11 +252,20 @@ func test_a_healthy_man_is_not_read_as_freezing() -> void:
 		_survival.fraction_of(&"core_temperature") > 0.9,
 		"the body under test is not actually healthy"
 	)
+	# He carries the floor's worth of shiver by design -- nobody stands still in
+	# this weather. What he must never do is read as a man about to die, which is
+	# exactly what passing fraction_of() straight through would produce: 1.0 on
+	# the first frame of the game, with no HUD on screen to contradict it.
+	var reading: float = player.body_chill()
 	assert_true(
-		player.body_chill() < 0.1,
-		"a healthy man reads as %f cold; passing fraction_of() straight through gives "
-			% player.body_chill()
-			+ "exactly this, and with no HUD it would look like art direction"
+		reading < player.IDLE_CHILL_FLOOR + 0.05,
+		"a healthy man reads as %f cold, above the floor %f" % [reading, player.IDLE_CHILL_FLOOR]
+	)
+	assert_true(
+		reading < 0.6,
+		"a healthy man reads as %f cold; fraction_of() passed straight through gives "
+			% reading
+			+ "exactly this kind of number, and with no HUD it would look like art direction"
 	)
 
 ## With nothing driving him the authored default stands. BreathFog and the cold
