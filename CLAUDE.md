@@ -4,9 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-WinterTime is an **empty Godot 4.7 scaffold**. It currently contains only `project.godot`, `icon.svg`, editor/git config, and an empty `Docs/` directory — no scenes, scripts, assets, or autoloads yet, and no main scene is set in `project.godot`. Treat any architecture as still to be established rather than looking for existing structure to follow.
+WinterTime is a **Godot 4.7 project in the design phase**: the design is written, no code exists yet. There are no scenes, scripts, assets, or autoloads, and no main scene is set in `project.godot`.
 
-The git repository is initialized but has **no commits yet**; the default branch is `master`.
+**Read the design docs before writing any code** — they are the source of truth for architecture, naming, and art rules:
+
+- [GDD](Docs/superpowers/specs/2026-08-11-winter-survival-gdd.md) — game design: pillars, 7-day structure, survival model, three endings
+- [Art Bible](Docs/superpowers/specs/2026-08-11-winter-survival-art-bible.md) — 12-color palette, 12 hard modeling rules, lighting presets, asset pipeline
+- [System Map](Docs/superpowers/specs/2026-08-11-winter-survival-system-map.md) — folder layout, core framework abstractions, and the 31-task build order
+
+Reference material (video transcript, target screenshots, palette captures) lives in `Refs/game ref/` and is untracked.
+
+### Rules that bind all code
+
+- **Filenames are English `snake_case`.** The source video's plan used Polish names (`zima`, `dolina`, `wrog`, …); these are deprecated — see System Map §0.
+- **Data-driven:** adding a weather event, item, stat, or threat must require **zero `.gd` changes** — only a new `.tres` under `data/`.
+- **Zero direct references between systems.** All cross-system communication goes through `EventBus`.
+- **Color values are never hardcoded** — read from `data/palette/color_bible.tres`.
+- **The test framework is task 0**, not an afterthought. Every task ends with a test.
 
 ## Godot binary
 
