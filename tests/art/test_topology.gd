@@ -5,6 +5,18 @@ extends TestCase
 
 const BUDGETS := {
 	"res://assets/models/buildings": 500,
+	# Rule 6 gives the farmhouse its own tier at 1,500: it is the hero
+	# building, the closest thing to the camera, and the reference house
+	# cannot be built with a porch, railings and icicles for 500. It lives in
+	# its own folder so this key can say so -- longest match wins in
+	# _budget_for(), so this raises the budget for that folder alone and every
+	# other building stays at 500.
+	#
+	# This is a *per-mesh* budget, and the farmhouse is nine meshes, one per
+	# interior-reveal group. The building's own 1,500 total is checked in
+	# tests/art/test_farmhouse_model.gd, because no per-mesh gate can add up an
+	# asset that is split across meshes.
+	"res://assets/models/buildings/farmhouse": 1500,
 	"res://assets/models/props": 200,
 	"res://assets/models/vegetation": 300,
 	"res://assets/models/characters": 8000,

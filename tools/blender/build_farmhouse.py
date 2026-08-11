@@ -1,0 +1,804 @@
+"""Build the farmhouse -- the player's home -- out of boxes and a roof.
+
+Art Bible section 5.1 decides that the *script* is the artifact and the mesh is
+output: when the roof is wrong you change a number here and re-run, you do not
+open the mesh. Nothing in this file sculpts, bevels, subdivides or weathers
+anything. Every part is one convex block, one line, one name.
+
+    "Don't ask AI for realistic meshes. It will not deliver. Simple shapes, it
+     does well. This house is just boxes and a roof. The light does the rest."
+
+Run it -- Blender 5.x, background, no GUI:
+
+    "C:/Program Files/Blender Foundation/Blender 5.2/blender.exe" --background \
+        --python tools/blender/build_farmhouse.py
+
+Optional arguments after `--`:
+
+    --glb    <path>   default assets/models/buildings/farmhouse/farmhouse.glb
+    --blend  <path>   default assets/source/buildings/farmhouse.blend
+    --renders <dir>   default .superpowers/sdd/wave1
+    --no-render       skip the three acceptance renders (they cost ~2 min)
+
+It never touches an open Blender session. It starts from factory settings with
+an empty scene, so the scene a human has open elsewhere is not at risk.
+
+---------------------------------------------------------------------------
+CO-ORDINATES
+---------------------------------------------------------------------------
+Blender is Z-up; glTF and Godot are Y-up, and the exporter converts. What
+survives the conversion, and what the game code may rely on:
+
+    Blender +Z (up)      -> Godot +Y   (up)
+    Blender -Y (front)   -> Godot +Z   (the porch, the door, the front wall)
+    Blender +X (right)   -> Godot +X
+
+So **the front of the house faces +Z in Godot**, and a camera placed at +Z
+looking back at the origin sees the porch. Origin is at the main block's
+front-left corner at ground level, so the model sits on Y=0 with no offset.
+
+---------------------------------------------------------------------------
+MATERIALS
+---------------------------------------------------------------------------
+Twelve materials, named `PAL_<BAND>_<n>` after the Art Bible's 12-colour table
+(section 1.1). The names, not the colours, are the contract: Godot's importer
+runs `tools/palette_import_materials.gd`, which reads the real colour out of
+`data/palette/color_bible.tres` and rebuilds every material as a flat,
+non-metallic, specular-disabled StandardMaterial3D. That is the only way an
+imported .glb can pass tests/art/test_shading_features.gd, because Godot's glTF
+importer leaves `specular_mode` enabled on everything it makes -- including the
+white material it invents for a surface that arrives without one.
+
+The hex values below are therefore only for Blender's own viewport and for the
+acceptance renders. They are hardcoded, which is allowed here and nowhere else:
+`tools/` is the documented exception to the no-hardcoded-colour rule, being the
+place that writes the palette in the first place.
+
+---------------------------------------------------------------------------
+UVs
+---------------------------------------------------------------------------
+Rule 4: the clapboard lines are the shader's job, not geometry's. So every face
+is projected along its own dominant axis at **1 UV unit = 1 metre**, which puts
+world height into V on every vertical face. A siding shader is then
+`fract(UV.y / board_spacing)` with no per-object tuning and no stretching on a
+wall of a different size. glTF flips V on the way out; stripes are periodic, so
+the flip does not matter.
+
+---------------------------------------------------------------------------
+GROUPS -- the interior-reveal contract
+---------------------------------------------------------------------------
+Parts are joined into nine objects named for what the reveal system does with
+them, so the fade list is a list of *names* and never of indices.
+
+Fade these three when the player crosses the threshold -- this is the set:
+
+    FH_Fade_Roof        every roof plane, the ground-floor ceiling, roof snow,
+                        the chimney and the antenna
+    FH_Fade_Front       every -Y facing wall and what is mounted on it: the
+                        front facade, the front gable, the wing's front and
+                        porch-facing walls, their windows, the door
+    FH_Fade_Porch       porch roof, its snow, its icicles, its four posts
+
+Addressable, but not faded by default -- add one of these to the list only if
+the camera's final yaw and pitch prove to need it:
+
+    FH_Fade_SideLeft    the -X walls and their windows, for a camera yawed left
+    FH_Fade_Divider     the wall between the two rooms. Kept by default: it is
+                        what makes the interior read as rooms rather than one
+                        shed. Drop it if it hides too much of the main room.
+
+Never faded:
+
+    FH_Shell            the walls that are never in the way
+    FH_Porch            deck, steps and railing -- knee height, they frame the
+                        view rather than block it
+    FH_Room             floors
+    FH_Furniture        stove, table, bed, bench, storage
+
+Each group is one MeshInstance3D in Godot, so a fade is
+`get_node("FH_Fade_Roof").transparency = t` -- no material juggling.
+"""
+
+import math
+import os
+import sys
+
+import bpy
+from mathutils import Euler, Vector
+
+TRIANGLE_BUDGET = 1500
+
+# ---------------------------------------------------------------------------
+# The 12-colour table (Art Bible section 1.1). Names are the contract; see the
+# module docstring on why the values here are Blender-only.
+# ---------------------------------------------------------------------------
+PALETTE = {
+    "PAL_SNOW_1": "8FB0D8",    # snow, brightest
+    "PAL_SNOW_2": "7FA0C9",
+    "PAL_SNOW_3": "748FBB",
+    "PAL_SNOW_4": "6987B4",
+    "PAL_SNOW_5": "5D7BA6",
+    "PAL_STRUCT_1": "33496E",  # structure, lit face
+    "PAL_STRUCT_2": "2A3854",
+    "PAL_STRUCT_3": "1C2A45",
+    "PAL_STRUCT_4": "131C30",  # structure, darkest -- roofs and trees
+    "PAL_WARM_1": "6E2F2E",    # deep red -- the chimney
+    "PAL_WARM_2": "A05A35",    # rust orange -- the trim line
+    "PAL_WARM_3": "FFB257",    # amber -- lit windows, fire
+}
+
+SIDING = "PAL_STRUCT_1"
+SKIRT = "PAL_STRUCT_3"
+ROOF = "PAL_STRUCT_4"
+TRIM = "PAL_WARM_2"
+GLASS_DARK = "PAL_STRUCT_4"
+GLASS_LIT = "PAL_WARM_3"
+SURROUND = "PAL_SNOW_1"
+SNOW = "PAL_SNOW_1"
+ICE = "PAL_SNOW_2"
+PORCH_PAINT = "PAL_SNOW_2"
+INSIDE = "PAL_STRUCT_2"
+
+# ---------------------------------------------------------------------------
+# Dimensions, in metres. The character is 1.8 m: the door is 2.10, the interior
+# doorway 2.10, the step rise 0.15, the railing 0.90 above the deck, and the
+# clearance under the porch roof at its lowest point 2.27.
+# ---------------------------------------------------------------------------
+T = 0.16                    # wall thickness
+FLOOR_Z = 0.45              # top of the ground floor, and of the porch deck
+CEIL_Z = 3.05               # underside of the ground-floor ceiling
+CEIL_TOP = 3.20
+MAIN_TOP = 5.00             # top of the two-storey walls
+MAIN_X0, MAIN_X1 = -3.60, 3.60
+MAIN_Y0, MAIN_Y1 = 0.00, 6.00
+MAIN_RISE = 2.40            # over a 3.60 half-span: a 33.7 degree pitch
+MAIN_RIDGE_Z = MAIN_TOP + MAIN_RISE
+
+WING_X0, WING_X1 = -3.60, 0.00
+WING_Y0, WING_Y1 = -3.60, 0.00
+WING_TOP = 3.20
+WING_RISE = 1.20            # over a 1.80 half-span: the same 33.7 degrees
+WING_RIDGE_Y = (WING_Y0 + WING_Y1) / 2.0
+WING_RIDGE_Z = WING_TOP + WING_RISE
+
+EAVE = 0.35                 # overhang past the wall on a sloping side
+VERGE = 0.30                # overhang past the wall at a gable end
+ROOF_T = 0.14
+SNOW_T = 0.17
+
+## How far a block that sits on another one sinks into it.
+##
+## Not a style choice. Two exactly coplanar faces make a path tracer shadow the
+## surface against itself, and the first interior render came back with a
+## pure-black floor because the foundation slab's top and the floor's top were
+## both at 0.45. Godot will not do that -- a rasteriser z-fights instead, which
+## is its own kind of wrong -- so parts overlap by this much and neither
+## renderer has a decision to make.
+BITE = 0.03
+
+TRIM_Z0, TRIM_Z1 = 3.02, 3.18
+TRIM_OUT = 0.05             # how far the trim board stands proud of the siding
+
+PORCH_X0, PORCH_X1 = 0.00, 3.35
+PORCH_Y0, PORCH_Y1 = -3.05, 0.00
+PORCH_EAVE_Y = -3.25
+PORCH_HIGH_Z = 3.35         # where the shed roof meets the house
+PORCH_LOW_Z = 2.72          # and where it ends
+RAIL_LINE_X = 3.13          # the open right edge
+RAIL_LINE_Y = -2.92         # the open front edge
+STEP_X0, STEP_X1 = 1.35, 2.25
+BALUSTER_STEP = 0.32
+
+# ---------------------------------------------------------------------------
+# Scene plumbing
+# ---------------------------------------------------------------------------
+GROUPS = {}
+PART_COUNT = {}
+_MATERIALS = {}
+
+
+def srgb_to_linear(c):
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def material(slot):
+    """One Blender material per palette slot, created on first use."""
+    if slot in _MATERIALS:
+        return _MATERIALS[slot]
+    if slot not in PALETTE:
+        raise SystemExit("build_farmhouse: %s is not a palette slot" % slot)
+    hexcode = PALETTE[slot]
+    rgb = [srgb_to_linear(int(hexcode[i:i + 2], 16) / 255.0) for i in (0, 2, 4)]
+    mat = bpy.data.materials.new(name=slot)
+    mat.use_nodes = True
+    bsdf = mat.node_tree.nodes["Principled BSDF"]
+    bsdf.inputs["Base Color"].default_value = (rgb[0], rgb[1], rgb[2], 1.0)
+    bsdf.inputs["Metallic"].default_value = 0.0
+    bsdf.inputs["Roughness"].default_value = 1.0
+    # Rule 8 bans specular highlights. Blender renamed this socket across
+    # versions, so ask rather than assume -- an unknown name would otherwise
+    # leave a highlight in the acceptance renders and nowhere else.
+    for name in ("Specular IOR Level", "Specular"):
+        if name in bsdf.inputs:
+            bsdf.inputs[name].default_value = 0.0
+    mat.diffuse_color = (rgb[0], rgb[1], rgb[2], 1.0)
+    _MATERIALS[slot] = mat
+    return mat
+
+
+def emit(name, group, slot, verts, faces):
+    """Add one part. Vertices are already in world space -- no object transform
+    is ever set, so what the mesh holds is what the exporter writes."""
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata([Vector(v) for v in verts], [], faces)
+    mesh.validate()
+    mesh.materials.append(material(slot))
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    GROUPS.setdefault(group, []).append(obj)
+    PART_COUNT[group] = PART_COUNT.get(group, 0) + 1
+    return obj
+
+
+# A unit cube with every face wound counter-clockwise seen from outside, so
+# nothing ends up inside-out -- Godot culls back faces, and an inverted part
+# does not look wrong, it looks absent.
+_CUBE_V = [(-1, -1, -1), (1, -1, -1), (1, 1, -1), (-1, 1, -1),
+           (-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1)]
+_CUBE_F = [(0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4),
+           (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)]
+
+
+def box(name, group, slot, center, size, rot=(0.0, 0.0, 0.0)):
+    """A convex block. 12 triangles. The only shape this building is made of."""
+    basis = Euler(rot, "XYZ").to_matrix()
+    half = Vector((size[0] / 2.0, size[1] / 2.0, size[2] / 2.0))
+    origin = Vector(center)
+    verts = [origin + basis @ Vector((v[0] * half.x, v[1] * half.y, v[2] * half.z))
+             for v in _CUBE_V]
+    return emit(name, group, slot, verts, _CUBE_F)
+
+
+def block(name, group, slot, x0, x1, y0, y1, z0, z1):
+    """A box given by its bounds, which is how walls are easiest to read."""
+    return box(name, group, slot,
+               ((x0 + x1) / 2.0, (y0 + y1) / 2.0, (z0 + z1) / 2.0),
+               (x1 - x0, y1 - y0, z1 - z0))
+
+
+def prism_x(name, group, slot, x0, x1, x_apex, z_base, z_apex, y0, y1):
+    """A gable end: a triangle in XZ, extruded along Y. 8 triangles."""
+    tri = [(x0, z_base), (x1, z_base), (x_apex, z_apex)]
+    verts = [(p[0], y0, p[1]) for p in tri] + [(p[0], y1, p[1]) for p in tri]
+    faces = [(0, 2, 1), (3, 4, 5), (0, 1, 4, 3), (1, 2, 5, 4), (2, 0, 3, 5)]
+    return emit(name, group, slot, verts, faces)
+
+
+def prism_y(name, group, slot, y0, y1, y_apex, z_base, z_apex, x0, x1):
+    """The same gable end turned ninety degrees: a triangle in YZ, extruded
+    along X. The wing's roof runs at a right angle to the main block's, so its
+    ends are these."""
+    tri = [(y0, z_base), (y1, z_base), (y_apex, z_apex)]
+    verts = [(x0, p[0], p[1]) for p in tri] + [(x1, p[0], p[1]) for p in tri]
+    faces = [(0, 1, 2), (5, 4, 3), (3, 4, 1, 0), (4, 5, 2, 1), (5, 3, 0, 2)]
+    return emit(name, group, slot, verts, faces)
+
+
+def slope_x(name, group, slot, sign, ridge_x, ridge_z, run, rise,
+            y0, y1, thick, d0, d1, lift):
+    """A slab lying on a roof plane whose ridge runs along Y.
+
+    `d0`..`d1` are distances measured down the slope from the ridge, so the
+    roof plane itself and the snow lying on it are the same call with different
+    numbers -- which is the whole point of doing this in a script.
+    `lift` offsets the slab along the plane's outward normal.
+    """
+    ang = math.atan2(rise, run)
+    down = Vector((sign * math.cos(ang), 0.0, -math.sin(ang)))
+    out = Vector((sign * math.sin(ang), 0.0, math.cos(ang)))
+    ridge = Vector((ridge_x, (y0 + y1) / 2.0, ridge_z))
+    center = ridge + down * ((d0 + d1) / 2.0) + out * lift
+    return box(name, group, slot, center, (d1 - d0, y1 - y0, thick),
+               (0.0, sign * ang, 0.0))
+
+
+def slope_y(name, group, slot, sign, ridge_y, ridge_z, run, rise,
+            x0, x1, thick, d0, d1, lift):
+    """The same, for a roof whose ridge runs along X."""
+    ang = math.atan2(rise, run)
+    down = Vector((0.0, sign * math.cos(ang), -math.sin(ang)))
+    out = Vector((0.0, sign * math.sin(ang), math.cos(ang)))
+    ridge = Vector(((x0 + x1) / 2.0, ridge_y, ridge_z))
+    center = ridge + down * ((d0 + d1) / 2.0) + out * lift
+    return box(name, group, slot, center, (x1 - x0, d1 - d0, thick),
+               (-sign * ang, 0.0, 0.0))
+
+
+def panel(name, group, slot, axis, at, u0, u1, v0, v1):
+    """A flat rectangle. Rule 4: a window is this and nothing else -- no frame
+    geometry, no muntins, no reveal. 2 triangles.
+
+    `axis` is the wall's outward direction, one of +x -x +y -y; `at` is where
+    the panel sits on that axis; u runs along the wall and v is height.
+    """
+    if axis in ("+x", "-x"):
+        pts = [(at, u0, v0), (at, u1, v0), (at, u1, v1), (at, u0, v1)]
+        outward = 1 if axis == "+x" else -1
+        if outward < 0:
+            pts.reverse()
+    else:
+        pts = [(u0, at, v0), (u1, at, v0), (u1, at, v1), (u0, at, v1)]
+        outward = 1 if axis == "+y" else -1
+        if outward > 0:
+            pts.reverse()
+    return emit(name, group, slot, pts, [(0, 1, 2, 3)])
+
+
+def window(name, group, axis, at, u_center, u_size, v0, v1, lit=False):
+    """A window: a dark or amber pane, and a shallow flat plane behind it for
+    the white surround. Two flat rectangles, 4 triangles, no moulding."""
+    proud = 0.03 if axis in ("+x", "+y") else -0.03
+    u0, u1 = u_center - u_size / 2.0, u_center + u_size / 2.0
+    panel(name + "_Surround", group, SURROUND, axis, at + proud * 0.5,
+          u0 - 0.11, u1 + 0.11, v0 - 0.11, v1 + 0.11)
+    panel(name + "_Pane", group, GLASS_LIT if lit else GLASS_DARK, axis,
+          at + proud, u0, u1, v0, v1)
+
+
+def spike(name, group, slot, x, y, z_top, length, width):
+    """An icicle: a tapered four-sided spike. 6 triangles. It exists for the
+    silhouette along the porch eave and for nothing else."""
+    h = width / 2.0
+    verts = [(x - h, y - h, z_top), (x + h, y - h, z_top),
+             (x + h, y + h, z_top), (x - h, y + h, z_top),
+             (x, y, z_top - length)]
+    faces = [(0, 1, 2, 3), (0, 4, 1), (1, 4, 2), (2, 4, 3), (3, 4, 0)]
+    return emit(name, group, slot, verts, faces)
+
+
+# ---------------------------------------------------------------------------
+# The building. One line per part.
+# ---------------------------------------------------------------------------
+SHELL = "FH_Shell"
+F_ROOF = "FH_Fade_Roof"
+F_FRONT = "FH_Fade_Front"
+F_PORCH = "FH_Fade_Porch"
+F_LEFT = "FH_Fade_SideLeft"
+F_DIVIDER = "FH_Fade_Divider"
+PORCH = "FH_Porch"
+ROOM = "FH_Room"
+FURN = "FH_Furniture"
+
+## What the interior-reveal system fades when the player crosses the threshold.
+## FH_Fade_SideLeft and FH_Fade_Divider are built and named but left out: they
+## are opt-in, for a camera that turns out to need them.
+DEFAULT_REVEAL = [F_ROOF, F_FRONT, F_PORCH]
+
+
+def build_shell():
+    block("Skirt_Main", SHELL, SKIRT, MAIN_X0 - 0.06, MAIN_X1 + 0.06, MAIN_Y0 - 0.06, MAIN_Y1 + 0.06, 0.00, FLOOR_Z - BITE)
+    block("Skirt_Wing", SHELL, SKIRT, WING_X0 - 0.06, WING_X1 + 0.06, WING_Y0 - 0.06, MAIN_Y0 - 0.06, 0.00, FLOOR_Z - BITE)
+    block("Wall_Back", SHELL, SIDING, MAIN_X0, MAIN_X1, MAIN_Y1 - T, MAIN_Y1, 0.30, MAIN_TOP)
+    block("Wall_Right", SHELL, SIDING, MAIN_X1 - T, MAIN_X1, MAIN_Y0, MAIN_Y1, 0.30, MAIN_TOP)
+    block("Wall_Left", F_LEFT, SIDING, MAIN_X0, MAIN_X0 + T, MAIN_Y0, MAIN_Y1, 0.30, MAIN_TOP)
+    block("Wall_Front_Upper", F_FRONT, SIDING, MAIN_X0, MAIN_X1, MAIN_Y0, MAIN_Y0 + T, CEIL_Z, MAIN_TOP)
+    block("Wall_Front_Porch", F_FRONT, SIDING, 0.00, MAIN_X1, MAIN_Y0, MAIN_Y0 + T, 0.30, CEIL_Z)
+    # The wall between the two rooms, with a 1.00 x 2.10 doorway through it.
+    # Its own group, and deliberately not part of FH_Fade_Front: it is the
+    # thing that makes the interior read as *rooms* rather than one shed, so
+    # the default reveal keeps it. It is still addressable on its own, because
+    # at a steep enough camera it will hide the near third of the main room --
+    # at which point adding one string to the fade list is the whole fix.
+    block("Wall_Party_Left", F_DIVIDER, SIDING, MAIN_X0, -2.70, MAIN_Y0, MAIN_Y0 + T, 0.30, CEIL_Z)
+    block("Wall_Party_Right", F_DIVIDER, SIDING, -1.70, 0.00, MAIN_Y0, MAIN_Y0 + T, 0.30, CEIL_Z)
+    block("Wall_Party_Header", F_DIVIDER, SIDING, -2.70, -1.70, MAIN_Y0, MAIN_Y0 + T, 2.55, CEIL_Z)
+    prism_x("Gable_Front", F_FRONT, SIDING, MAIN_X0, MAIN_X1, 0.00, MAIN_TOP, MAIN_RIDGE_Z, MAIN_Y0, MAIN_Y0 + T)
+    prism_x("Gable_Back", SHELL, SIDING, MAIN_X0, MAIN_X1, 0.00, MAIN_TOP, MAIN_RIDGE_Z, MAIN_Y1 - T, MAIN_Y1)
+
+    block("Wing_Wall_Front", F_FRONT, SIDING, WING_X0, WING_X1, WING_Y0, WING_Y0 + T, 0.30, WING_TOP)
+    block("Wing_Wall_Porch", F_FRONT, SIDING, WING_X1 - T, WING_X1, WING_Y0, WING_Y1, 0.30, WING_TOP)
+    block("Wing_Wall_Left", F_LEFT, SIDING, WING_X0, WING_X0 + T, WING_Y0, WING_Y1, 0.30, WING_TOP)
+    prism_y("Wing_Gable_Left", F_LEFT, SIDING, WING_Y0, WING_Y1, WING_RIDGE_Y, WING_TOP, WING_RIDGE_Z, WING_X0, WING_X0 + T)
+    prism_y("Wing_Gable_Porch", F_FRONT, SIDING, WING_Y0, WING_Y1, WING_RIDGE_Y, WING_TOP, WING_RIDGE_Z, WING_X1 - T, WING_X1)
+
+
+def build_trim():
+    """Rule 12's warm quota, spent deliberately: one rust-orange line at the
+    ground-floor ceiling, all the way round both blocks."""
+    block("Trim_Main_Right", SHELL, TRIM, MAIN_X1 - 0.10, MAIN_X1 + TRIM_OUT, MAIN_Y0 - TRIM_OUT, MAIN_Y1 + TRIM_OUT, TRIM_Z0, TRIM_Z1)
+    block("Trim_Main_Back", SHELL, TRIM, MAIN_X0 - TRIM_OUT, MAIN_X1 + TRIM_OUT, MAIN_Y1 - 0.10, MAIN_Y1 + TRIM_OUT, TRIM_Z0, TRIM_Z1)
+    block("Trim_Main_Left", F_LEFT, TRIM, MAIN_X0 - TRIM_OUT, MAIN_X0 + 0.10, MAIN_Y0 - TRIM_OUT, MAIN_Y1 + TRIM_OUT, TRIM_Z0, TRIM_Z1)
+    block("Trim_Main_Front", F_FRONT, TRIM, 0.00, MAIN_X1 + TRIM_OUT, MAIN_Y0 - TRIM_OUT, MAIN_Y0 + 0.10, TRIM_Z0, TRIM_Z1)
+    block("Trim_Wing_Front", F_FRONT, TRIM, WING_X0 - TRIM_OUT, WING_X1 + TRIM_OUT, WING_Y0 - TRIM_OUT, WING_Y0 + 0.10, TRIM_Z0, TRIM_Z1)
+    block("Trim_Wing_Porch", F_FRONT, TRIM, WING_X1 - 0.10, WING_X1 + TRIM_OUT, WING_Y0 - TRIM_OUT, WING_Y1, TRIM_Z0, TRIM_Z1)
+    block("Trim_Wing_Left", F_LEFT, TRIM, WING_X0 - TRIM_OUT, WING_X0 + 0.10, WING_Y0 - TRIM_OUT, WING_Y1, TRIM_Z0, TRIM_Z1)
+
+
+def build_roof():
+    main_run, main_rise = MAIN_X1, MAIN_RISE
+    main_len = math.hypot(main_run, main_rise)
+    for sign, side in ((1, "Right"), (-1, "Left")):
+        slope_x("Roof_Main_" + side, F_ROOF, ROOF, sign, 0.0, MAIN_RIDGE_Z,
+                main_run, main_rise, MAIN_Y0 - VERGE, MAIN_Y1 + VERGE,
+                ROOF_T, -0.08, main_len + EAVE, -ROOF_T / 2.0)
+    # Snow sits on the planes as separate blocks, not as roof thickness. Six
+    # patches with gaps between them and none of them touching the ridge, so
+    # the near-black roof and its ridge line still read: the roof is the
+    # darkest thing in the frame and the snow is what interrupts it.
+    for tag, sign, y0, y1, d0, d1 in (
+        ("R1", 1, 0.10, 2.30, 0.55, 3.10),
+        ("R2", 1, 2.75, 4.05, 1.40, 4.20),
+        ("R3", 1, 4.50, 6.15, 0.30, 2.40),
+        ("L1", -1, -0.15, 1.75, 0.90, 4.30),
+        ("L2", -1, 2.20, 3.90, 0.25, 2.10),
+        ("L3", -1, 4.35, 6.25, 1.30, 4.10),
+    ):
+        slope_x("Snow_Main_" + tag, F_ROOF, SNOW, sign, 0.0, MAIN_RIDGE_Z,
+                main_run, main_rise, y0, y1, SNOW_T, d0, d1, SNOW_T / 2.0 - BITE)
+
+    wing_run, wing_rise = 1.80, WING_RISE
+    wing_len = math.hypot(wing_run, wing_rise)
+    slope_y("Roof_Wing_Front", F_ROOF, ROOF, -1, WING_RIDGE_Y, WING_RIDGE_Z, wing_run, wing_rise,
+            WING_X0 - VERGE, WING_X1 + VERGE, ROOF_T, -0.08, wing_len + EAVE, -ROOF_T / 2.0)
+    slope_y("Roof_Wing_Back", F_ROOF, ROOF, 1, WING_RIDGE_Y, WING_RIDGE_Z, wing_run, wing_rise,
+            WING_X0 - VERGE, WING_X1 + VERGE, ROOF_T, -0.08, wing_len, -ROOF_T / 2.0)
+    slope_y("Snow_Wing_F1", F_ROOF, SNOW, -1, WING_RIDGE_Y, WING_RIDGE_Z, wing_run, wing_rise, -3.55, -1.35, SNOW_T, 0.30, 2.05, SNOW_T / 2.0 - BITE)
+    slope_y("Snow_Wing_F2", F_ROOF, SNOW, -1, WING_RIDGE_Y, WING_RIDGE_Z, wing_run, wing_rise, -0.95, 0.20, SNOW_T, 0.55, 1.70, SNOW_T / 2.0 - BITE)
+    slope_y("Snow_Wing_B1", F_ROOF, SNOW, 1, WING_RIDGE_Y, WING_RIDGE_Z, wing_run, wing_rise, -3.20, -0.45, SNOW_T, 0.40, 1.75, SNOW_T / 2.0 - BITE)
+
+    # The chimney straddles the ridge, directly above the stove. It is beacon
+    # one (GDD section 6): the first warm point in the valley, lit on day one.
+    block("Chimney_Stack", F_ROOF, "PAL_WARM_1", -0.45, 0.45, 4.90, 5.60, 4.00, 8.40)
+    block("Chimney_Cap", F_ROOF, ROOF, -0.55, 0.55, 4.80, 5.70, 8.40 - BITE, 8.55)
+
+    # The antenna is pure silhouette: thin crossed bars on the ridge.
+    block("Antenna_Mast", F_ROOF, ROOF, -0.03, 0.03, 1.17, 1.23, MAIN_RIDGE_Z - 0.20, MAIN_RIDGE_Z + 1.45)
+    block("Antenna_Boom", F_ROOF, ROOF, -0.03, 0.03, 0.75, 1.85, MAIN_RIDGE_Z + 1.38, MAIN_RIDGE_Z + 1.44)
+    for i, (half, y) in enumerate(((0.52, 0.82), (0.44, 1.08), (0.36, 1.34), (0.28, 1.60))):
+        block("Antenna_Bar_%d" % (i + 1), F_ROOF, ROOF, -half, half, y - 0.03, y + 0.03, MAIN_RIDGE_Z + 1.385, MAIN_RIDGE_Z + 1.425)
+
+    block("Ceiling", F_ROOF, INSIDE, MAIN_X0 + T, MAIN_X1 - T, MAIN_Y0 + T, MAIN_Y1 - T, CEIL_Z, CEIL_TOP)
+
+
+def build_openings():
+    for tag, y in (("1", 1.60), ("2", 4.20)):
+        window("Win_Left_G" + tag, F_LEFT, "-x", MAIN_X0, y, 1.10, 1.15, 2.45)
+        window("Win_Left_U" + tag, F_LEFT, "-x", MAIN_X0, y, 1.00, 3.55, 4.65)
+    for tag, y in (("1", 2.20), ("2", 4.60)):
+        window("Win_Right_G" + tag, SHELL, "+x", MAIN_X1, y, 1.10, 1.15, 2.45)
+        window("Win_Right_U" + tag, SHELL, "+x", MAIN_X1, y, 1.00, 3.55, 4.65)
+    window("Win_Back_G1", SHELL, "+y", MAIN_Y1, -1.60, 1.10, 1.15, 2.45)
+    window("Win_Back_U1", SHELL, "+y", MAIN_Y1, -1.60, 1.00, 3.55, 4.65)
+    window("Win_Front_U1", F_FRONT, "-y", MAIN_Y0, -2.00, 1.00, 3.55, 4.65)
+    window("Win_Front_U2", F_FRONT, "-y", MAIN_Y0, 2.00, 1.00, 3.55, 4.65)
+    # The one small attic window in the main gable.
+    window("Win_Attic", F_FRONT, "-y", MAIN_Y0, 0.00, 0.80, 5.30, 6.00)
+    # Two windows are lit. That is the entire warm-window quota for this
+    # building: one beside the door, one on the wing's front.
+    window("Win_Front_G1", F_FRONT, "-y", MAIN_Y0, 2.90, 1.10, 1.15, 2.45, lit=True)
+    window("Win_Wing_F1", F_FRONT, "-y", WING_Y0, -2.55, 1.40, 1.15, 2.55, lit=True)
+    window("Win_Wing_F2", F_FRONT, "-y", WING_Y0, -0.90, 1.00, 1.15, 2.45)
+    window("Win_Wing_Porch", F_FRONT, "+x", WING_X1, -1.20, 1.00, 1.15, 2.45)
+    window("Win_Wing_Left", F_LEFT, "-x", WING_X0, -1.80, 1.00, 1.15, 2.45)
+
+    # The door: 1.00 x 2.10 against a 1.8 m character, under the porch roof.
+    panel("Door_Surround", F_FRONT, SURROUND, "-y", MAIN_Y0 - 0.02, 1.18, 2.42, FLOOR_Z, 2.67)
+    panel("Door_Panel", F_FRONT, SKIRT, "-y", MAIN_Y0 - 0.04, 1.30, 2.30, FLOOR_Z, 2.55)
+
+
+def build_porch():
+    block("Porch_Deck", PORCH, INSIDE, PORCH_X0, PORCH_X1, PORCH_Y0, PORCH_Y1, 0.05, FLOOR_Z)
+    for i, (z0, z1, y0) in enumerate(((0.30, 0.45, -3.33), (0.15, 0.30, -3.61), (0.00, 0.15, -3.89))):
+        block("Porch_Step_%d" % (3 - i), PORCH, INSIDE, STEP_X0, STEP_X1, y0, PORCH_Y0, z0, z1)
+
+    for i, (x, y) in enumerate(((0.22, RAIL_LINE_Y), (1.70, RAIL_LINE_Y),
+                                (RAIL_LINE_X, RAIL_LINE_Y), (RAIL_LINE_X, -1.45))):
+        block("Porch_Post_%d" % (i + 1), F_PORCH, PORCH_PAINT, x - 0.07, x + 0.07, y - 0.07, y + 0.07, FLOOR_Z, 2.88)
+
+    runs = [("Front_A", "x", 0.22, STEP_X0), ("Front_B", "x", STEP_X1, RAIL_LINE_X),
+            ("Right", "y", RAIL_LINE_Y, -0.05)]
+    balusters = 0
+    for name, axis, a0, a1 in runs:
+        for tag, z0, z1 in (("Top", 1.27, 1.35), ("Bottom", 0.62, 0.70)):
+            if axis == "x":
+                block("Porch_Rail_%s_%s" % (name, tag), PORCH, PORCH_PAINT, a0, a1, RAIL_LINE_Y - 0.05, RAIL_LINE_Y + 0.05, z0, z1)
+            else:
+                block("Porch_Rail_%s_%s" % (name, tag), PORCH, PORCH_PAINT, RAIL_LINE_X - 0.05, RAIL_LINE_X + 0.05, a0, a1, z0, z1)
+        span = a1 - a0
+        count = max(1, int(span / BALUSTER_STEP))
+        for i in range(count):
+            at = a0 + span * (i + 0.5) / count
+            balusters += 1
+            if axis == "x":
+                block("Porch_Baluster_%s_%d" % (name, i + 1), PORCH, PORCH_PAINT, at - 0.025, at + 0.025, RAIL_LINE_Y - 0.025, RAIL_LINE_Y + 0.025, FLOOR_Z, 1.30)
+            else:
+                block("Porch_Baluster_%s_%d" % (name, i + 1), PORCH, PORCH_PAINT, RAIL_LINE_X - 0.025, RAIL_LINE_X + 0.025, at - 0.025, at + 0.025, FLOOR_Z, 1.30)
+
+    run = PORCH_Y1 - PORCH_EAVE_Y
+    rise = PORCH_HIGH_Z - PORCH_LOW_Z
+    length = math.hypot(run, rise)
+    slope_y("Porch_Roof", F_PORCH, ROOF, -1, PORCH_Y1, PORCH_HIGH_Z, run, rise,
+            PORCH_X0 - 0.10, PORCH_X1 + 0.15, 0.12, 0.0, length, -0.06)
+    # Thick with snow, but short of the eave: the icicles need a dark strip of
+    # roof to hang off or they read as part of the snow.
+    slope_y("Porch_Roof_Snow", F_PORCH, SNOW, -1, PORCH_Y1, PORCH_HIGH_Z, run, rise,
+            PORCH_X0 + 0.15, PORCH_X1 - 0.05, 0.22, 0.20, length - 0.42, 0.11 - BITE)
+
+    # A row of icicles along the porch eave. Tapered spikes, nothing more.
+    for i in range(9):
+        x = 0.05 + i * 0.40
+        length_i = (0.52, 0.31, 0.44, 0.26, 0.55, 0.34, 0.47, 0.29, 0.38)[i]
+        spike("Icicle_%d" % (i + 1), F_PORCH, ICE, x, PORCH_EAVE_Y + 0.02, PORCH_LOW_Z - 0.02, length_i, 0.075)
+    return balusters
+
+
+def build_interior():
+    """Two rooms, laid out for what the GDD says the player actually does at
+    home (sections 5 and 6): tend the stove, melt snow, cook, repair gear,
+    sleep. The reference interior's kit is kept -- stove, work surface,
+    storage -- but each verb gets its own station with clearance around it, and
+    repair moves into the wing so the main room stays legible from a camera
+    looking down into it.
+    """
+    block("Floor_Main", ROOM, INSIDE, MAIN_X0 + T, MAIN_X1 - T, MAIN_Y0 + T, MAIN_Y1 - T, 0.30, FLOOR_Z)
+    # Runs past the party wall to meet Floor_Main, or the foundation shows
+    # through the seam once the roof is off.
+    block("Floor_Wing", ROOM, INSIDE, WING_X0 + T, WING_X1 - T, WING_Y0 + T, WING_Y1 + T, 0.30, FLOOR_Z)
+
+    # Heat: the stove, under the chimney. Everything else in the run depends on it.
+    block("Stove_Body", FURN, "PAL_STRUCT_4", -0.48, 0.48, 4.98, 5.72, FLOOR_Z, 1.40)
+    panel("Stove_Firebox", FURN, GLASS_LIT, "-y", 4.96, -0.22, 0.22, 0.75, 1.07)
+    block("Stove_Pipe", FURN, "PAL_STRUCT_4", -0.09, 0.09, 4.96, 5.14, 1.40 - BITE, CEIL_Z)
+    block("Stove_Pot", FURN, INSIDE, -0.17, 0.17, 5.18, 5.52, 1.40 - BITE, 1.74)
+    block("Wood_Stack", FURN, SKIRT, 0.70, 1.80, 5.12, 5.67, FLOOR_Z, 1.10)
+    # Water and food: the counter where snow is melted and meals are made.
+    block("Counter_Base", FURN, INSIDE, 2.37, 3.32, 2.75, 4.65, FLOOR_Z, 1.35)
+    block("Counter_Bucket", FURN, "PAL_SNOW_4", 2.62, 2.98, 3.35, 3.71, 1.35 - BITE, 1.68)
+    # The table.
+    block("Table_Top", FURN, INSIDE, -0.25, 1.45, 2.12, 3.07, 1.19, 1.28)
+    block("Table_Leg_A", FURN, SKIRT, -0.18, -0.08, 2.20, 3.00, FLOOR_Z, 1.19 + BITE)
+    block("Table_Leg_B", FURN, SKIRT, 1.28, 1.38, 2.20, 3.00, FLOOR_Z, 1.19 + BITE)
+    block("Stool_A", FURN, SKIRT, 0.40, 0.80, 1.55, 1.95, FLOOR_Z, 0.90)
+    block("Stool_B", FURN, SKIRT, 0.40, 0.80, 3.25, 3.65, FLOOR_Z, 0.90)
+    # Sleep: the bed advances the day.
+    block("Bed_Frame", FURN, SKIRT, -3.32, -2.17, 0.85, 2.90, FLOOR_Z, 0.80)
+    block("Bed_Bedding", FURN, "PAL_SNOW_4", -3.27, -2.22, 1.10, 2.85, 0.80 - BITE, 1.02)
+    block("Bed_Pillow", FURN, SURROUND, -3.20, -2.30, 0.90, 1.25, 0.80 + BITE, 0.96)
+    block("Cabinet", FURN, INSIDE, -3.20, -1.90, 5.12, 5.67, FLOOR_Z, 2.10)
+    block("Chest", FURN, SKIRT, -3.30, -2.70, 3.45, 4.40, FLOOR_Z, 1.00)
+    # Repair: the wing is the workshop and the store.
+    block("Bench_Base", FURN, SKIRT, -3.15, -0.65, -3.35, -2.80, FLOOR_Z, 0.90)
+    block("Bench_Top", FURN, INSIDE, -3.25, -0.55, -3.42, -2.72, 0.90 - BITE, 1.00)
+    block("Shelf_A", FURN, INSIDE, -3.42, -2.97, -2.90, -0.70, 1.90, 1.98)
+    block("Shelf_B", FURN, INSIDE, -3.42, -2.97, -2.90, -0.70, 2.45, 2.53)
+    block("Crate_A", FURN, SIDING, -1.00, -0.40, -1.05, -0.45, FLOOR_Z, 1.05)
+    block("Crate_B", FURN, SIDING, -1.02, -0.47, -1.72, -1.17, FLOOR_Z, 1.00)
+    block("Crate_C", FURN, SIDING, -0.97, -0.47, -1.00, -0.50, 1.05 - BITE, 1.55)
+    block("Fuel_Drum", FURN, SKIRT, -1.05, -0.55, -2.55, -2.05, FLOOR_Z, 1.30)
+
+
+# ---------------------------------------------------------------------------
+# Finishing
+# ---------------------------------------------------------------------------
+def project_uvs(obj):
+    """One UV unit per metre, projected along each face's dominant axis, so V
+    is world height on every vertical face. See the module docstring."""
+    mesh = obj.data
+    layer = mesh.uv_layers[0] if mesh.uv_layers else mesh.uv_layers.new(name="UVMap")
+    for poly in mesh.polygons:
+        n = poly.normal
+        ax, ay, az = abs(n.x), abs(n.y), abs(n.z)
+        for loop in poly.loop_indices:
+            co = mesh.vertices[mesh.loops[loop].vertex_index].co
+            if az >= ax and az >= ay:
+                layer.data[loop].uv = (co.x, co.y)
+            elif ax >= ay:
+                layer.data[loop].uv = (co.y, co.z)
+            else:
+                layer.data[loop].uv = (co.x, co.z)
+
+
+def join_group(name, objects):
+    bpy.ops.object.select_all(action="DESELECT")
+    for obj in objects:
+        obj.select_set(True)
+    bpy.context.view_layer.objects.active = objects[0]
+    if len(objects) > 1:
+        bpy.ops.object.join()
+    joined = bpy.context.view_layer.objects.active
+    joined.name = name
+    joined.data.name = name
+    bpy.ops.object.select_all(action="DESELECT")
+    return joined
+
+
+def triangles(obj):
+    obj.data.calc_loop_triangles()
+    return len(obj.data.loop_triangles)
+
+
+# ---------------------------------------------------------------------------
+# Renders. Built after the export so no camera, light or ground plane can end
+# up in the .glb.
+# ---------------------------------------------------------------------------
+def add_camera(name, target, azimuth, elevation, distance, scale):
+    cam_data = bpy.data.cameras.new(name)
+    cam_data.type = "ORTHO"          # Art Bible rule 1: the game is orthographic
+    cam_data.ortho_scale = scale
+    cam = bpy.data.objects.new(name, cam_data)
+    az, el = math.radians(azimuth), math.radians(elevation)
+    offset = Vector((math.sin(az) * math.cos(el), -math.cos(az) * math.cos(el), math.sin(el)))
+    cam.location = Vector(target) + offset * distance
+    cam.rotation_euler = (Vector(target) - cam.location).to_track_quat("-Z", "Y").to_euler()
+    bpy.context.scene.collection.objects.link(cam)
+    return cam
+
+
+def add_warm_lamp(name, location, energy, radius):
+    """The amber inside the house. GDD section 6: on day one the whole valley is
+    one lit window, and it is this one."""
+    data = bpy.data.lights.new(name, type="POINT")
+    data.energy = energy
+    data.shadow_soft_size = radius
+    data.color = (1.0, 0.66, 0.32)
+    lamp = bpy.data.objects.new(name, data)
+    lamp.location = location
+    bpy.context.scene.collection.objects.link(lamp)
+    return lamp
+
+
+def setup_render_world():
+    world = bpy.data.worlds.new("Winter")
+    world.use_nodes = True
+    bg = world.node_tree.nodes["Background"]
+    # A blue sky filling the shadows, so the dark band stays blue rather than
+    # going grey -- Art Bible section 4.1, in spirit, for a still.
+    bg.inputs[0].default_value = (0.28, 0.45, 0.72, 1.0)
+    bg.inputs[1].default_value = 0.85
+    bpy.context.scene.world = world
+
+    sun_data = bpy.data.lights.new("Sun", type="SUN")
+    sun_data.energy = 4.2
+    sun_data.angle = math.radians(2.0)
+    sun_data.color = (1.0, 0.95, 0.86)
+    sun = bpy.data.objects.new("Sun", sun_data)
+    # Low winter sun: rule 10 wants long, soft-edged shadows.
+    sun.rotation_euler = Euler((math.radians(72.0), 0.0, math.radians(-38.0)), "XYZ")
+    bpy.context.scene.collection.objects.link(sun)
+
+    ground = bpy.data.meshes.new("Ground")
+    ground.from_pydata([(-40, -40, 0), (40, -40, 0), (40, 40, 0), (-40, 40, 0)], [], [(0, 1, 2, 3)])
+    ground.validate()
+    ground.materials.append(material("PAL_SNOW_1"))
+    obj = bpy.data.objects.new("Ground", ground)
+    bpy.context.scene.collection.objects.link(obj)
+    return obj
+
+
+def render_to(path, camera):
+    scene = bpy.context.scene
+    scene.camera = camera
+    scene.render.filepath = path
+    bpy.ops.render.render(write_still=True)
+    print("build_farmhouse: wrote %s" % path)
+
+
+def do_renders(directory):
+    scene = bpy.context.scene
+    scene.render.engine = "CYCLES"
+    scene.cycles.device = "CPU"
+    scene.cycles.samples = 64
+    scene.cycles.use_denoising = True
+    scene.render.image_settings.file_format = "PNG"
+    # AgX would desaturate the palette into something that is not the palette.
+    scene.view_settings.view_transform = "Standard"
+
+    setup_render_world()
+    # Reaching out of the two lit windows and the stove door, which is why the
+    # porch and the ground in front of it are warm in the exterior view.
+    add_warm_lamp("Lamp_Main", (0.4, 3.4, 2.10), 320.0, 1.2)
+    add_warm_lamp("Lamp_Wing", (-1.9, -1.9, 2.10), 160.0, 1.0)
+
+    exterior = add_camera("Cam_Exterior", (0.10, 1.20, 3.55), 30.0, 45.0, 40.0, 17.2)
+    interior = add_camera("Cam_Interior", (-0.30, 1.40, 1.10), 16.0, 54.0, 40.0, 13.0)
+    closeup = add_camera("Cam_Porch", (1.90, -1.50, 1.55), 24.0, 32.0, 40.0, 8.6)
+
+    scene.render.resolution_x, scene.render.resolution_y = 1600, 1200
+    render_to(os.path.join(directory, "farmhouse-exterior.png"), exterior)
+    scene.render.resolution_x, scene.render.resolution_y = 1600, 900
+    render_to(os.path.join(directory, "farmhouse-porch.png"), closeup)
+
+    # Hiding exactly the groups the reveal system fades by default is also the
+    # cheapest possible test of the naming scheme: if a part is in the wrong
+    # group, this render is where it shows.
+    for name in DEFAULT_REVEAL:
+        for obj in GROUPS[name]:
+            obj.hide_render = True
+    # The room is lit by its stove and its lamp, not by the sky. Cycles renders
+    # the palette's *albedo*, and the structure tones are 2-9% reflective in
+    # linear light, so an honestly-exposed interior is black. The game does not
+    # have this problem -- its two-band light() picks a brighter palette entry
+    # for the lit band rather than multiplying (Art Bible 4.1, briefing trap 7)
+    # -- but a still has to be lit to be looked at.
+    bpy.data.objects["Lamp_Main"].data.energy = 1500.0
+    bpy.data.objects["Lamp_Wing"].data.energy = 650.0
+    scene.render.resolution_x, scene.render.resolution_y = 1600, 1200
+    render_to(os.path.join(directory, "farmhouse-interior.png"), interior)
+    for objects in GROUPS.values():
+        for obj in objects:
+            obj.hide_render = False
+
+
+# ---------------------------------------------------------------------------
+def argument(flag, default):
+    rest = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    return rest[rest.index(flag) + 1] if flag in rest and rest.index(flag) + 1 < len(rest) else default
+
+
+def has_flag(flag):
+    rest = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    return flag in rest
+
+
+def main():
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    glb_path = argument("--glb", os.path.join(root, "assets", "models", "buildings", "farmhouse", "farmhouse.glb"))
+    blend_path = argument("--blend", os.path.join(root, "assets", "source", "buildings", "farmhouse.blend"))
+    render_dir = argument("--renders", os.path.join(root, ".superpowers", "sdd", "wave1"))
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+
+    build_shell()
+    build_trim()
+    build_roof()
+    build_openings()
+    balusters = build_porch()
+    build_interior()
+
+    parts = sum(PART_COUNT.values())
+    order = [SHELL, F_ROOF, F_FRONT, F_PORCH, F_LEFT, F_DIVIDER, PORCH, ROOM, FURN]
+    joined = [join_group(name, GROUPS[name]) for name in order]
+    for obj in joined:
+        project_uvs(obj)
+    GROUPS.clear()
+    for obj in joined:
+        GROUPS[obj.name] = [obj]
+
+    total = 0
+    print("build_farmhouse: %d parts, %d balusters" % (parts, balusters))
+    for obj in joined:
+        count = triangles(obj)
+        total += count
+        print("build_farmhouse:   %-20s %5d tris" % (obj.name, count))
+    print("build_farmhouse: %d triangles against a %d budget" % (total, TRIANGLE_BUDGET))
+    if total > TRIANGLE_BUDGET:
+        raise SystemExit("build_farmhouse: %d triangles is over the %d budget" % (total, TRIANGLE_BUDGET))
+
+    for directory in (os.path.dirname(glb_path), os.path.dirname(blend_path), render_dir):
+        os.makedirs(directory, exist_ok=True)
+
+    bpy.ops.export_scene.gltf(
+        filepath=glb_path,
+        export_format="GLB",
+        export_materials="EXPORT",
+        export_cameras=False,
+        export_lights=False,
+        export_yup=True,
+        export_apply=False,
+        export_normals=True,
+        export_texcoords=True,
+        export_animations=False,
+    )
+    print("build_farmhouse: wrote %s" % glb_path)
+
+    if not has_flag("--no-render"):
+        do_renders(render_dir)
+
+    # Blender's factory default keeps one numbered backup, which would drop a
+    # farmhouse.blend1 into the repo next to the file every single run.
+    bpy.context.preferences.filepaths.save_version = 0
+    bpy.ops.wm.save_as_mainfile(filepath=blend_path)
+    print("build_farmhouse: wrote %s" % blend_path)
+
+
+main()
