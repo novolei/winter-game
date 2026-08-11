@@ -67,10 +67,10 @@ the flip does not matter.
 ---------------------------------------------------------------------------
 GROUPS -- the interior-reveal contract
 ---------------------------------------------------------------------------
-Parts are joined into nine objects named for what the reveal system does with
+Parts are joined into ten objects named for what the reveal system does with
 them, so the fade list is a list of *names* and never of indices.
 
-Fade these three when the player crosses the threshold -- this is the set:
+Fade these five when the player crosses the threshold -- this is the set:
 
     FH_Fade_Roof        every roof plane, the ground-floor ceiling, roof snow,
                         the chimney and the antenna
@@ -78,14 +78,21 @@ Fade these three when the player crosses the threshold -- this is the set:
                         front facade, the front gable, the wing's front and
                         porch-facing walls, their windows, the door
     FH_Fade_Porch       porch roof, its snow, its icicles, its four posts
+    FH_Fade_SideLeft    the -X walls and their windows
+    FH_Fade_Divider     the wall between the two rooms
+    FH_Door             the front door leaf. Its own group because it is the
+                        one part that MOVES -- it is hinged, and its origin is
+                        on the hinge stile rather than at the world origin. It
+                        fades with the facade it sits in, or an open door would
+                        be left hanging in the air once the wall had gone.
 
-Addressable, but not faded by default -- add one of these to the list only if
-the camera's final yaw and pitch prove to need it:
-
-    FH_Fade_SideLeft    the -X walls and their windows, for a camera yawed left
-    FH_Fade_Divider     the wall between the two rooms. Kept by default: it is
-                        what makes the interior read as rooms rather than one
-                        shed. Drop it if it hides too much of the main room.
+FH_Fade_SideLeft and FH_Fade_Divider were built addressable but out of the set, because the camera's
+final yaw and pitch were open when this was written. They are settled now --
+orthographic, pitched 45, yawed -35 -- and that camera looks at the front-LEFT
+corner, so the -X walls face the lens exactly as the +Z ones do. FH_Fade_SideLeft
+was hiding about a third of the room's width including the bed; FH_Fade_Divider
+was hiding the whole wing, so a player walking to the workbench vanished behind
+a wall under a camera that cannot move to look round it.
 
 Never faded:
 
@@ -365,14 +372,37 @@ F_FRONT = "FH_Fade_Front"
 F_PORCH = "FH_Fade_Porch"
 F_LEFT = "FH_Fade_SideLeft"
 F_DIVIDER = "FH_Fade_Divider"
+F_DOOR = "FH_Door"
 PORCH = "FH_Porch"
 ROOM = "FH_Room"
 FURN = "FH_Furniture"
 
+# The door leaf, and where its hinge is.
+#
+# Every other object in this build has its origin at the world origin, because
+# every vertex is written in world space and no object transform is ever set --
+# see emit(). The door is the single exception: its mesh data is shifted so the
+# object origin sits on the hinge stile, and the object is then moved back to
+# where the mesh was. glTF carries that as a node translation, so in Godot the
+# leaf is a node whose local Y rotation swings it about the hinge, and opening
+# the door is one property.
+#
+# Blender +Z is Godot +Y, so a Blender rotation about Z arrives as a Godot
+# rotation about Y. Hinged on the LEFT stile looking at the house, opening
+# INWARD: a door that opened onto the porch would foul the steps it stands at
+# the top of, and would be shut by the first drift against it.
+DOOR_X0, DOOR_X1 = 1.30, 2.30
+DOOR_HINGE = (DOOR_X0, MAIN_Y0 - 0.04, FLOOR_Z)
+
 ## What the interior-reveal system fades when the player crosses the threshold.
 ## FH_Fade_SideLeft and FH_Fade_Divider are built and named but left out: they
 ## are opt-in, for a camera that turns out to need them.
-DEFAULT_REVEAL = [F_ROOF, F_FRONT, F_PORCH]
+# Kept in step with REVEAL_GROUPS in tests/art/test_farmhouse_model.gd and with
+# the authored fade_parts on the InteriorReveal in scenes/main.tscn. It is used
+# here for nothing but hide_render on the interior acceptance render -- no
+# geometry, no material and no export depends on it, so the .glb is unchanged by
+# an edit to this line.
+DEFAULT_REVEAL = [F_ROOF, F_FRONT, F_PORCH, F_LEFT, F_DIVIDER, F_DOOR]
 
 
 def build_shell():
@@ -482,8 +512,18 @@ def build_openings():
     window("Win_Wing_Left", F_LEFT, "-x", WING_X0, -1.80, 1.00, 1.15, 2.45)
 
     # The door: 1.00 x 2.10 against a 1.8 m character, under the porch roof.
+    #
+    # The LEAF is its own group so that it can swing. Everything else in this
+    # model is welded into whichever group the reveal does or does not fade,
+    # which is right for walls and wrong for the one part that has to move: a
+    # door welded into the front facade can only ever be a painted rectangle.
+    # The surround stays in the facade -- it is the frame, and frames do not
+    # move -- so FH_Door is exactly one quad, 2 triangles, one draw call.
+    #
+    # DOOR_HINGE below is where its origin ends up, and the whole reason the
+    # group exists.
     panel("Door_Surround", F_FRONT, SURROUND, "-y", MAIN_Y0 - 0.02, 1.18, 2.42, FLOOR_Z, 2.67)
-    panel("Door_Panel", F_FRONT, SKIRT, "-y", MAIN_Y0 - 0.04, 1.30, 2.30, FLOOR_Z, 2.55)
+    panel("Door_Panel", F_DOOR, SKIRT, "-y", MAIN_Y0 - 0.04, DOOR_X0, DOOR_X1, FLOOR_Z, 2.55)
 
 
 def build_porch():
@@ -491,8 +531,20 @@ def build_porch():
     for i, (z0, z1, y0) in enumerate(((0.30, 0.45, -3.33), (0.15, 0.30, -3.61), (0.00, 0.15, -3.89))):
         block("Porch_Step_%d" % (3 - i), PORCH, INSIDE, STEP_X0, STEP_X1, y0, PORCH_Y0, z0, z1)
 
-    for i, (x, y) in enumerate(((0.22, RAIL_LINE_Y), (1.70, RAIL_LINE_Y),
-                                (RAIL_LINE_X, RAIL_LINE_Y), (RAIL_LINE_X, -1.45))):
+    # Posts 2 and 5 are the NEWELS, one either side of the step opening, and
+    # their x values are derived from STEP_X0/STEP_X1 rather than typed.
+    #
+    # Post 2 used to stand at x = 1.70. The steps run 1.35 .. 2.25 and the door
+    # is 1.30 .. 2.30, so 1.70 is the exact centre of the only way in: the post
+    # stood in the middle of the top step, dead in front of the door. It read
+    # fine in an elevation render and was only obvious once someone walked at
+    # it. Moved flush to the left edge of the steps, where it reads as a newel
+    # terminating the railing instead of as an obstacle, and a matching one
+    # added on the right so the opening is framed rather than merely missing a
+    # post. Twelve triangles for the second newel.
+    for i, (x, y) in enumerate(((0.22, RAIL_LINE_Y), (STEP_X0 - 0.07, RAIL_LINE_Y),
+                                (RAIL_LINE_X, RAIL_LINE_Y), (RAIL_LINE_X, -1.45),
+                                (STEP_X1 + 0.07, RAIL_LINE_Y))):
         block("Porch_Post_%d" % (i + 1), F_PORCH, PORCH_PAINT, x - 0.07, x + 0.07, y - 0.07, y + 0.07, FLOOR_Z, 2.88)
 
     runs = [("Front_A", "x", 0.22, STEP_X0), ("Front_B", "x", STEP_X1, RAIL_LINE_X),
@@ -610,6 +662,24 @@ def join_group(name, objects):
     joined.data.name = name
     bpy.ops.object.select_all(action="DESELECT")
     return joined
+
+
+def set_origin(obj, pivot):
+    """Move `obj`'s origin to `pivot` without moving the geometry in the world.
+
+    The mesh data is walked back by the pivot and the object is walked forward
+    by the same amount, so the vertices land exactly where they were. Done with
+    a data transform rather than bpy.ops.object.origin_set, which needs the 3D
+    cursor, a selection and a context, none of which a --background run has
+    reliably.
+    """
+    from mathutils import Matrix
+
+    offset = Vector(pivot)
+    obj.data.transform(Matrix.Translation(-offset))
+    obj.location = offset
+    obj.data.update()
+    return obj
 
 
 def triangles(obj):
@@ -756,10 +826,13 @@ def main():
     build_interior()
 
     parts = sum(PART_COUNT.values())
-    order = [SHELL, F_ROOF, F_FRONT, F_PORCH, F_LEFT, F_DIVIDER, PORCH, ROOM, FURN]
+    order = [SHELL, F_ROOF, F_FRONT, F_PORCH, F_LEFT, F_DIVIDER, F_DOOR, PORCH, ROOM, FURN]
     joined = [join_group(name, GROUPS[name]) for name in order]
     for obj in joined:
         project_uvs(obj)
+    # After the UVs, never before: project_uvs reads vertex coordinates as world
+    # metres, and moving the mesh first would slide the door's siding stripes.
+    set_origin(GROUPS[F_DOOR][0], DOOR_HINGE)
     GROUPS.clear()
     for obj in joined:
         GROUPS[obj.name] = [obj]

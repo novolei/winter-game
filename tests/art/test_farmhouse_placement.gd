@@ -16,7 +16,6 @@ const MAIN_SCENE := "res://scenes/main.tscn"
 const MODEL_PATH := "res://assets/models/buildings/farmhouse/farmhouse.glb"
 const FARMHOUSE_SCRIPT := "res://src/entities/farmhouse.gd"
 
-const FarmhouseScript := preload("res://src/entities/farmhouse.gd")
 const ModelTest := preload("res://tests/art/test_farmhouse_model.gd")
 
 
@@ -66,13 +65,36 @@ func test_the_farmhouse_stands_near_the_player_start() -> void:
 	assert_almost_eq(spot.y, 0.0, 0.001, "the placement must leave y to Farmhouse._settle(), which reads the terrain at runtime")
 
 
-## The names the placement script will shout about, the names the model actually
-## has, and the names the model test guards must all be the same three strings.
-## Three copies of one list is exactly how a contract drifts.
-func test_the_reveal_group_names_agree_across_the_three_places_that_hold_them() -> void:
+## The scene decides what fades; this test decides that it still agrees with
+## what the model test calls faded.
+##
+## This used to compare src/entities/farmhouse.gd's own hardcoded REVEAL_GROUPS
+## against the model test's. That constant is gone: the list is authored on the
+## InteriorReveal in scenes/main.tscn now, because it has to be per-building
+## data before wave 4 adds four more buildings. So the pair being compared has
+## changed, and the property is unchanged and slightly stronger -- one of the
+## two ends is now the scene that actually ships rather than a third copy of
+## the list sitting in a script.
+##
+## tests/art/test_interior_reveal_wiring.gd checks the same authored list
+## against the .glb itself, so the chain runs scene -> model test -> mesh names.
+func test_the_scene_fades_exactly_what_the_model_test_calls_faded() -> void:
+	var authored := PackedStringArray()
+	var resource := ResourceLoader.load(MAIN_SCENE, "", ResourceLoader.CACHE_MODE_IGNORE)
+	assert_true(resource is PackedScene, "%s did not load as a PackedScene" % MAIN_SCENE)
+	if not (resource is PackedScene):
+		return
+	var state := (resource as PackedScene).get_state()
+	for node in range(state.get_node_count()):
+		for property in range(state.get_node_property_count(node)):
+			if state.get_node_property_name(node, property) != "fade_parts":
+				continue
+			for name in state.get_node_property_value(node, property):
+				authored.append(String(name))
 	assert_eq(
-		Array(FarmhouseScript.REVEAL_GROUPS), Array(ModelTest.REVEAL_GROUPS),
-		"src/entities/farmhouse.gd and tests/art/test_farmhouse_model.gd disagree about the reveal list"
+		Array(authored), Array(ModelTest.REVEAL_GROUPS),
+		"%s fades %s; tests/art/test_farmhouse_model.gd says the fade set is %s"
+			% [MAIN_SCENE, ", ".join(authored), ", ".join(ModelTest.REVEAL_GROUPS)]
 	)
 
 
@@ -88,7 +110,7 @@ func test_every_reveal_group_is_reachable_through_an_instance() -> void:
 	var model := (resource as PackedScene).instantiate()
 	var holder := Node3D.new()
 	holder.add_child(model)
-	for group in FarmhouseScript.REVEAL_GROUPS:
+	for group in ModelTest.REVEAL_GROUPS:
 		assert_not_null(
 			holder.find_child(group, true, false),
 			"%s is not reachable under an instanced farmhouse; the reveal system addresses it by that name" % group

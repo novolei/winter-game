@@ -31,19 +31,41 @@ const MODEL_PATH := "res://assets/models/buildings/farmhouse/farmhouse.glb"
 const HERO_BUDGET := 1500
 
 ## Faded when the player steps inside. Keep in step with DEFAULT_REVEAL in
-## tools/blender/build_farmhouse.py.
+## tools/blender/build_farmhouse.py and with the authored list in
+## scenes/main.tscn, which tests/art/test_interior_reveal_wiring.gd checks
+## against the .glb itself.
+##
+## ALL FIVE, and the last two were the open question the farmhouse task left.
+## It built FH_Fade_SideLeft and FH_Fade_Divider addressable but out of the
+## default set, because the camera's final yaw and pitch were not fixed yet.
+## They are now -- CameraRig is orthographic, pitched 45 and yawed -35 -- and
+## that camera looks at this building from off its front-LEFT corner, so the
+## -X walls face the lens exactly as the +Z ones do. Shot both ways at game
+## framing:
+##
+##   * with FH_Fade_SideLeft standing, the left wall covers about a third of
+##     the room's width from the inside, and the two things it hides are the
+##     bed and the chest -- one of them a station GDD section 4 needs the
+##     player to reach every night;
+##   * with FH_Fade_Divider standing, the wing is not visible at all. The
+##     player walks through the doorway and vanishes behind a wall, under a
+##     camera that cannot move to look round it.
+##
+## The divider was the more interesting call, because it is what makes the
+## interior read as rooms rather than one shed. It loses to the second point
+## above: losing the character is a harder failure than losing the read.
 const REVEAL_GROUPS: Array[String] = [
 	"FH_Fade_Roof",
 	"FH_Fade_Front",
 	"FH_Fade_Porch",
-]
-
-## Built, named and addressable, but not in the default fade set: they exist so
-## that a camera angle which turns out to need them costs one string rather
-## than a rebuild.
-const OPTIONAL_REVEAL_GROUPS: Array[String] = [
 	"FH_Fade_SideLeft",
 	"FH_Fade_Divider",
+	# The hinged leaf. It fades with the facade it sits in -- an open door left
+	# standing after the front wall had gone would be a rectangle floating in
+	# the snow -- but it is its own object because it is the one part of this
+	# building that moves. Its origin is on the hinge stile; see DOOR_HINGE in
+	# tools/blender/build_farmhouse.py and src/entities/interior/door.gd.
+	"FH_Door",
 ]
 
 ## Never faded.
@@ -84,7 +106,7 @@ func test_the_model_is_importable() -> void:
 
 func test_every_reveal_group_is_in_the_model() -> void:
 	var names := _mesh_node_names()
-	for group in REVEAL_GROUPS + OPTIONAL_REVEAL_GROUPS:
+	for group in REVEAL_GROUPS:
 		assert_true(
 			names.has(group),
 			"the reveal system fades %s by name, and no mesh in %s is called that; it holds %s" % [group, MODEL_PATH, ", ".join(names)]
@@ -104,7 +126,7 @@ func test_every_kept_group_is_in_the_model() -> void:
 ## that belongs to no group is a part the reveal system cannot address, so it
 ## stays solid in front of the camera forever. The group list must be total.
 func test_the_model_holds_no_ungrouped_mesh() -> void:
-	var known := REVEAL_GROUPS + OPTIONAL_REVEAL_GROUPS + KEPT_GROUPS
+	var known := REVEAL_GROUPS + KEPT_GROUPS
 	var strays := PackedStringArray()
 	for name in _mesh_node_names():
 		if not known.has(name):

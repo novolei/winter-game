@@ -125,6 +125,23 @@ const TARGET_REST := &"fatigue:recovery"
 @export var light_range_m := 9.0
 @export var light_fade_seconds := 60.0
 
+## Which render layers this fire may light. Default is everything, which is
+## what a fire in the open should do.
+##
+## IT MUST NOT BE THE DEFAULT INDOORS, and this export exists because leaving it
+## so shipped a visible defect. The world's two-band cel light() picks a palette
+## colour from `lambert * ATTENUATION` and never reads LIGHT_COLOR, and this
+## light has shadows off by design -- so a stove inside a house shone through
+## its walls and pushed an 18 m disc of snow from the shade band into the lit
+## one. A bright, texel-stepped circle centred on the building, which read as a
+## debug gizmo rather than as firelight.
+##
+## Set it to InteriorWarmth.INTERIOR_LAYER | PlayerController.CHARACTER_LAYER
+## for a fire in a room: it then lights the room and the person standing at it,
+## and the valley outside does not know it is burning. Same mechanism as the
+## character's own key light.
+@export_flags_3d_render var light_cull_mask := 0xFFFFF
+
 var _fuel := 0.0
 var _lit := false
 var _source_id: StringName = &""
@@ -344,6 +361,7 @@ func _build_light() -> void:
 	if bible != null and not bible.warm_tones.is_empty():
 		_light.light_color = bible.warm_tones[bible.warm_tones.size() - 1]
 	_light.omni_range = light_range_m
+	_light.light_cull_mask = light_cull_mask
 	# Off: the world is lit by one directional sun through a two-band cel
 	# shader, and a second shadow-casting light would lay a second band across
 	# the snow. The fire is a glow, not a lamp.

@@ -21,6 +21,38 @@
 [ext_resource type="PackedScene" uid="uid://bh0jlvu5vmc8l" path="res://assets/models/vegetation/tree_bare_d.glb" id="20_tree_d"]
 [ext_resource type="PackedScene" uid="uid://8f6s67vpwpy8" path="res://assets/models/vegetation/tree_bare_e.glb" id="21_tree_e"]
 [ext_resource type="PackedScene" uid="uid://om3b6intvn5p" path="res://assets/models/props/flatbed_truck.glb" id="22_flatbed"]
+[ext_resource type="Script" path="res://src/entities/interior/interior_reveal.gd" id="23_reveal"]
+[ext_resource type="PackedScene" uid="uid://dalphxjcfaohp" path="res://scenes/entities/stove/stove.tscn" id="24_stove"]
+[ext_resource type="Script" path="res://src/entities/interior/door.gd" id="25_door"]
+[ext_resource type="Script" path="res://src/entities/interior/interior_warmth.gd" id="26_warmth"]
+
+; The two rooms of the farmhouse ground floor, in the model's own coordinates.
+; The boundary of these boxes IS the threshold -- the front face of MainRoom
+; sits in the doorway at z = -0.16, which is the inside face of the front wall,
+; so the reveal fires as the player steps through the door and not while they
+; are still on the porch.
+;
+; Two shapes on one Area3D rather than one box, because the ground floor is an
+; L: a single box big enough to hold the wing would also stick out through the
+; front wall and put half the porch inside the house. Area3D reports entering
+; once for the whole area however many shapes it is made of, so walking from
+; the main room into the wing is not a crossing -- which it must not be, or the
+; roof would slam back on every time the player went to the workbench.
+;
+; Wing overlaps MainRoom by 0.44 m through the divider doorway. Abutting exactly
+; would leave one frame, at some frame rate, where the capsule is inside neither.
+[sub_resource type="BoxShape3D" id="BoxShape3D_room_main"]
+size = Vector3(6.88, 3.2, 5.68)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_room_wing"]
+size = Vector3(3.28, 3.2, 4.04)
+
+; Where the player can reach the front door: the porch in front of it, plus the
+; doorway itself. The door leaf spans x 1.30 .. 2.30 at z 0 and the steps come
+; up at x 1.35 .. 2.25, so this covers the whole approach a player who walked
+; up the steps is standing on.
+[sub_resource type="BoxShape3D" id="BoxShape3D_doorstep"]
+size = Vector3(2.4, 3.2, 2.6)
 
 [node name="Main" type="Node3D" unique_id=1508188971]
 
@@ -51,6 +83,38 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 0, -12)
 script = ExtResource("8_farmhouse")
 
 [node name="Model" parent="Farmhouse" instance=ExtResource("9_farmhouse_model") unique_id=1902244518]
+
+[node name="InteriorReveal" type="Area3D" parent="Farmhouse" unique_id=1902244519]
+script = ExtResource("23_reveal")
+fade_parts = Array[StringName]([&"FH_Fade_Roof", &"FH_Fade_Front", &"FH_Fade_Porch", &"FH_Fade_SideLeft", &"FH_Fade_Divider", &"FH_Door"])
+entry_gate_path = NodePath("../Door")
+
+[node name="MainRoom" type="CollisionShape3D" parent="Farmhouse/InteriorReveal" unique_id=1902244520]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, -3)
+shape = SubResource("BoxShape3D_room_main")
+
+[node name="Wing" type="CollisionShape3D" parent="Farmhouse/InteriorReveal" unique_id=1902244521]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.8, 1.1, 1.42)
+shape = SubResource("BoxShape3D_room_wing")
+
+[node name="Door" type="Area3D" parent="Farmhouse" unique_id=1902244523]
+script = ExtResource("25_door")
+leaf_part = &"FH_Door"
+
+[node name="Doorstep" type="CollisionShape3D" parent="Farmhouse/Door" unique_id=1902244524]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.8, 1.1, 1.2)
+shape = SubResource("BoxShape3D_doorstep")
+
+[node name="InteriorWarmth" type="Node3D" parent="Farmhouse" unique_id=1902244525]
+script = ExtResource("26_warmth")
+warm_parts = Array[StringName]([&"FH_Room", &"FH_Furniture", &"FH_Shell"])
+fire_path = NodePath("../Stove")
+
+[node name="Stove" parent="Farmhouse" instance=ExtResource("24_stove") unique_id=1902244522]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.45, -5.35)
+starting_fuel_seconds = 600.0
+start_lit = true
+light_cull_mask = 6
 
 [node name="Farmstead" type="Node3D" parent="." unique_id=1902244600]
 script = ExtResource("10_farmstead")

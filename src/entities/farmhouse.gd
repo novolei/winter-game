@@ -15,17 +15,23 @@ extends Node3D
 ##    StandardMaterial3D beside the cel-shaded snow reads as a render pasted
 ##    into a painting.
 ##
-## THE REVEAL SYSTEM IS NOT BUILT HERE. Fading FH_Fade_Roof / FH_Fade_Front /
-## FH_Fade_Porch when the player crosses the threshold is a later wave. What
-## this does do is check the three names still resolve after placement, loudly,
-## because the failure mode is a wall left standing in front of the camera with
-## nothing anywhere reporting it.
-
-## Named here only so placing the house cannot quietly break them. The list is
-## the same one in tests/art/test_farmhouse_model.gd and in DEFAULT_REVEAL in
-## tools/blender/build_farmhouse.py; those two are the contract, this is a
-## smoke alarm.
-const REVEAL_GROUPS: Array[String] = ["FH_Fade_Roof", "FH_Fade_Front", "FH_Fade_Porch"]
+## THE REVEAL SYSTEM IS NOT BUILT HERE, AND DELIBERATELY SO. This script used
+## to carry a hardcoded REVEAL_GROUPS list and shout if one of the three names
+## stopped resolving. Both jobs now belong to
+## src/entities/interior/interior_reveal.gd, an Area3D the building carries as
+## a child in scenes/main.tscn:
+##
+##   * WHICH parts fade is authored per building, in the scene, because wave 4
+##     adds four more buildings and each needs its own list. A building script
+##     holding a second copy of that list is exactly how a contract drifts --
+##     and this one already had a comment saying so.
+##   * The missing-name alarm moved with it, and got louder: the reveal names
+##     the building AND the part it could not find, and it does it for every
+##     building rather than only this one.
+##
+## What is still checked, and where: the .glb's nine group names in
+## tests/art/test_farmhouse_model.gd, and the scene's authored fade list
+## against those same meshes in tests/art/test_interior_reveal_wiring.gd.
 
 ## The model's own footprint about its origin, from its bind-pose AABB:
 ## x -3.90..+3.89, z -6.30..+3.89. Sampled on a 1 m grid, which is finer than
@@ -50,7 +56,6 @@ func _ready() -> void:
 	var painter := CelPainter.new(snow_shade_step, structure_shade_step)
 	painter.paint(self)
 	_settle()
-	_check_reveal_groups()
 
 
 ## Sit on the lowest snow surface anywhere under the footprint.
@@ -90,14 +95,3 @@ func _settle() -> void:
 	if lowest == INF:
 		return
 	global_position.y = lowest - bed_depth
-
-
-func _check_reveal_groups() -> void:
-	for group in REVEAL_GROUPS:
-		if find_child(group, true, false) == null:
-			push_error(
-				"farmhouse: %s is not under this node any more. The interior-reveal "
-				% group
-				+ "system addresses the building by these names, and a missing one "
-				+ "leaves a wall in front of the camera with nothing reporting it."
-			)

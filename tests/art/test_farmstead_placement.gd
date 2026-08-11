@@ -168,6 +168,24 @@ func test_three_wires_are_placed_where_the_script_strings_them() -> void:
 ## height saved in the file is a height that is wrong the moment the noise seed
 ## changes -- and a building a hand's width above a drift is the one defect that
 ## kills the frame instantly.
+##
+## The exemption is for things that do not stand on the GROUND. Their heights
+## are just as authored and just as real, but they are measured from the object
+## underneath them, which is itself settled at runtime -- so they ride along and
+## nothing about them goes stale when the noise seed changes.
+##
+##   TireSwing   hangs off a branch, 3.56 m up a tree
+##   Stove       stands on the farmhouse floor, 0.45 m above the building's own
+##               origin. Added by the interior-reveal task: the reveal is only
+##               worth having if there is something in the room, and the thing
+##               in the room is the fire.
+##
+## Named rather than derived from the parent, because "is my parent settled?" is
+## a rule with an obvious wrong reading -- Farmhouse/Model is a child of a
+## settling building too and must still be at 0. Two names, each with a sentence
+## saying what it stands on, is the version that cannot be misapplied.
+const STANDS_ON_SOMETHING_OTHER_THAN_THE_GROUND: Array[String] = ["TireSwing", "Stove"]
+
 func test_nothing_is_placed_at_a_height_the_scene_file_guessed() -> void:
 	var placed := _placed()
 	var offenders := PackedStringArray()
@@ -175,8 +193,8 @@ func test_nothing_is_placed_at_a_height_the_scene_file_guessed() -> void:
 		var entry: Dictionary = placed[name]
 		if entry["instance"] == "" or not entry["has_transform"]:
 			continue
-		if entry["instance"] == SWING_MODEL:
-			continue  # hangs off a branch; its height is the branch's business
+		if STANDS_ON_SOMETHING_OTHER_THAN_THE_GROUND.has(str(name)):
+			continue
 		var spot: Vector3 = (entry["transform"] as Transform3D).origin
 		if absf(spot.y) > 0.001:
 			offenders.append("%s is placed at y = %.3f" % [name, spot.y])
