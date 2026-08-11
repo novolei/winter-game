@@ -1444,36 +1444,41 @@ git add src/definitions/ data/palette/ tools/generate_palette.gd tests/unit/test
 ### Task 7: Art verification suite (static analysis)
 
 **Files:**
+- Create: `tests/framework/asset_scanner.gd`
+- Create: `tests/unit/test_asset_scanner.gd`
 - Create: `tests/art/test_palette.gd`
 - Create: `tests/art/test_topology.gd`
 - Create: `tests/art/test_shading_features.gd`
 
 **Interfaces:**
 - Consumes: `ColorBible` from Task 6, `TestCase` from Task 1.
-- Produces: three always-on build gates. Every wave that adds a model or material is checked by these automatically; no later task needs to invoke them explicitly.
+- Produces: `AssetScanner.find_files(root: String, suffixes: Array[String]) -> PackedStringArray` (static), plus three always-on build gates. Every wave that adds a model or material is checked by these automatically; no later task needs to invoke them explicitly.
 
-These scan `res://assets/models/` and `res://scenes/`. Both are empty in Wave 0, so the tests pass by finding nothing to reject — but the *machinery* is asserted against synthetic fixtures built in memory, so the suite is proven to catch violations before any real asset exists.
+These scan `res://assets/models/` and `res://scenes/`. Both are empty in Wave 0, so the project-wide assertions pass by finding nothing to reject.
+
+**That is exactly why this task carries two extra layers of proof.** A gate that silently inspects nothing is worse than no gate — it reports "verified" forever:
+
+1. Each gate has a pair of tests that run its check against **synthetic in-memory fixtures** — one violating, one compliant — proving the check itself discriminates.
+2. `AssetScanner` has its own tests that create **real files on disk** and assert they are found, proving the walker is not a no-op.
 
 **Deferred:** the warmth-budget test (≤ 0.5% warm pixels) needs a rendered frame and therefore lighting and a scene. It is the first task of Wave 3's plan.
 
-- [ ] **Step 1: Write the palette test**
+- [ ] **Step 1: Write the shared asset scanner**
 
-Create `tests/art/test_palette.gd`:
+All three gates need the same recursive walk. Write it once.
+
+Create `tests/framework/asset_scanner.gd`:
 
 ```gdscript
-extends TestCase
+class_name AssetScanner
+extends RefCounted
 
-## Rule 9 of the Art Bible: every surface is flat-shaded and its color comes
-## from the 12-color palette. This test is the gate.
+## Recursive file walk shared by the art gates.
+##
+## Returns an empty result for a missing root rather than erroring: the
+## gates run against folders that do not exist yet in early waves.
 
-const SCAN_ROOTS: Array[String] = ["res://assets/models", "res://scenes"]
-
-var _bible
-
-func before_each() -> void:
-	_bible = ResourceLoader.load("res://data/palette/color_bible.tres", "", ResourceLoader.CACHE_MODE_IGNORE)
-
-func _collect_resource_paths(root: String, suffixes: Array[String]) -> PackedStringArray:
+static func find_files(root: String, suffixes: Array[String]) -> PackedStringArray:
 	var found := PackedStringArray()
 	var dir := DirAccess.open(root)
 	if dir == null:
@@ -1486,7 +1491,7 @@ func _collect_resource_paths(root: String, suffixes: Array[String]) -> PackedStr
 			continue
 		var full := root.path_join(entry)
 		if dir.current_is_dir():
-			found.append_array(_collect_resource_paths(full, suffixes))
+			found.append_array(find_files(full, suffixes))
 		else:
 			for suffix in suffixes:
 				if entry.ends_with(suffix):
@@ -1495,6 +1500,75 @@ func _collect_resource_paths(root: String, suffixes: Array[String]) -> PackedStr
 		entry = dir.get_next()
 	dir.list_dir_end()
 	return found
+```
+
+- [ ] **Step 2: Prove the scanner is not a no-op**
+
+Create `tests/unit/test_asset_scanner.gd`:
+
+```gdscript
+extends TestCase
+
+## The art gates are only as real as this walker. If find_files() silently
+## returned nothing, every gate would pass forever while inspecting zero
+## assets. These tests put real files on disk and demand they be found.
+
+const AssetScannerScript := preload("res://tests/framework/asset_scanner.gd")
+
+const FIXTURE_ROOT := "user://scanner_fixture"
+
+func _write(relative_path: String) -> void:
+	var handle := FileAccess.open(FIXTURE_ROOT.path_join(relative_path), FileAccess.WRITE)
+	handle.store_string("fixture")
+	handle.close()
+
+func before_each() -> void:
+	var absolute := ProjectSettings.globalize_path(FIXTURE_ROOT)
+	DirAccess.make_dir_recursive_absolute(absolute.path_join("nested"))
+	_write("top.tres")
+	_write("nested/deep.tres")
+	_write("ignored.txt")
+
+func after_each() -> void:
+	var absolute := ProjectSettings.globalize_path(FIXTURE_ROOT)
+	DirAccess.remove_absolute(absolute.path_join("nested/deep.tres"))
+	DirAccess.remove_absolute(absolute.path_join("nested"))
+	DirAccess.remove_absolute(absolute.path_join("top.tres"))
+	DirAccess.remove_absolute(absolute.path_join("ignored.txt"))
+	DirAccess.remove_absolute(absolute)
+
+func test_finds_files_recursively() -> void:
+	var found := AssetScannerScript.find_files(FIXTURE_ROOT, [".tres"] as Array[String])
+	assert_eq(found.size(), 2, "should find top.tres and nested/deep.tres")
+
+func test_filters_by_suffix() -> void:
+	var found := AssetScannerScript.find_files(FIXTURE_ROOT, [".txt"] as Array[String])
+	assert_eq(found.size(), 1, "should find only ignored.txt")
+
+func test_missing_root_yields_empty_not_error() -> void:
+	var found := AssetScannerScript.find_files("res://this_folder_does_not_exist", [".tres"] as Array[String])
+	assert_eq(found.size(), 0, "a missing folder should yield an empty result, not an error")
+```
+
+- [ ] **Step 3: Write the palette test**
+
+Create `tests/art/test_palette.gd`:
+
+```gdscript
+extends TestCase
+
+## Rule 9 of the Art Bible: every surface is flat-shaded and its color comes
+## from the 12-color palette. This test is the gate.
+
+const AssetScannerScript := preload("res://tests/framework/asset_scanner.gd")
+
+const SCAN_ROOTS: Array[String] = ["res://assets/models", "res://scenes"]
+const MATERIAL_SUFFIXES: Array[String] = [".tres", ".material", ".res"]
+
+var _bible
+
+func before_each() -> void:
+	_bible = ResourceLoader.load("res://data/palette/color_bible.tres", "", ResourceLoader.CACHE_MODE_IGNORE)
 
 func test_the_gate_catches_an_off_palette_material() -> void:
 	# Proves the check works before any real asset exists.
@@ -1508,9 +1582,8 @@ func test_the_gate_accepts_an_on_palette_material() -> void:
 	assert_true(_bible.contains(good.albedo_color), "a palette snow tone must be accepted")
 
 func test_every_material_in_the_project_is_on_palette() -> void:
-	var suffixes: Array[String] = [".tres", ".material", ".res"]
 	for root in SCAN_ROOTS:
-		for path in _collect_resource_paths(root, suffixes):
+		for path in AssetScannerScript.find_files(root, MATERIAL_SUFFIXES):
 			var resource := ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
 			if resource == null or not (resource is BaseMaterial3D):
 				continue
@@ -1521,7 +1594,7 @@ func test_every_material_in_the_project_is_on_palette() -> void:
 			)
 ```
 
-- [ ] **Step 2: Write the topology test**
+- [ ] **Step 4: Write the topology test**
 
 Create `tests/art/test_topology.gd`:
 
@@ -1538,25 +1611,9 @@ const BUDGETS := {
 	"res://assets/models/characters": 8000,
 }
 
-func _collect_mesh_paths(root: String) -> PackedStringArray:
-	var found := PackedStringArray()
-	var dir := DirAccess.open(root)
-	if dir == null:
-		return found
-	dir.list_dir_begin()
-	var entry := dir.get_next()
-	while entry != "":
-		if entry.begins_with("."):
-			entry = dir.get_next()
-			continue
-		var full := root.path_join(entry)
-		if dir.current_is_dir():
-			found.append_array(_collect_mesh_paths(full))
-		elif entry.ends_with(".mesh") or entry.ends_with(".res") or entry.ends_with(".tres"):
-			found.append(full)
-		entry = dir.get_next()
-	dir.list_dir_end()
-	return found
+const AssetScannerScript := preload("res://tests/framework/asset_scanner.gd")
+
+const MESH_SUFFIXES: Array[String] = [".mesh", ".res", ".tres"]
 
 func _triangle_count(mesh: Mesh) -> int:
 	var total := 0
@@ -1578,7 +1635,7 @@ func test_the_gate_counts_triangles_correctly() -> void:
 func test_every_mesh_is_within_its_budget() -> void:
 	for root in BUDGETS.keys():
 		var budget: int = BUDGETS[root]
-		for path in _collect_mesh_paths(root):
+		for path in AssetScannerScript.find_files(root, MESH_SUFFIXES):
 			var resource := ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
 			if resource == null or not (resource is Mesh):
 				continue
@@ -1589,7 +1646,7 @@ func test_every_mesh_is_within_its_budget() -> void:
 			)
 ```
 
-- [ ] **Step 3: Write the shading-features test**
+- [ ] **Step 5: Write the shading-features test**
 
 Create `tests/art/test_shading_features.gd`:
 
@@ -1599,27 +1656,10 @@ extends TestCase
 ## Rule 8 of the Art Bible: the banned list. Flat color only -- the light
 ## does the work.
 
-const SCAN_ROOTS: Array[String] = ["res://assets/models", "res://scenes"]
+const AssetScannerScript := preload("res://tests/framework/asset_scanner.gd")
 
-func _collect_resource_paths(root: String) -> PackedStringArray:
-	var found := PackedStringArray()
-	var dir := DirAccess.open(root)
-	if dir == null:
-		return found
-	dir.list_dir_begin()
-	var entry := dir.get_next()
-	while entry != "":
-		if entry.begins_with("."):
-			entry = dir.get_next()
-			continue
-		var full := root.path_join(entry)
-		if dir.current_is_dir():
-			found.append_array(_collect_resource_paths(full))
-		elif entry.ends_with(".tres") or entry.ends_with(".material") or entry.ends_with(".res"):
-			found.append(full)
-		entry = dir.get_next()
-	dir.list_dir_end()
-	return found
+const SCAN_ROOTS: Array[String] = ["res://assets/models", "res://scenes"]
+const MATERIAL_SUFFIXES: Array[String] = [".tres", ".material", ".res"]
 
 func _violations(material: BaseMaterial3D) -> PackedStringArray:
 	var problems := PackedStringArray()
@@ -1652,7 +1692,7 @@ func test_the_gate_accepts_a_compliant_material() -> void:
 
 func test_no_material_in_the_project_uses_a_banned_feature() -> void:
 	for root in SCAN_ROOTS:
-		for path in _collect_resource_paths(root):
+		for path in AssetScannerScript.find_files(root, MATERIAL_SUFFIXES):
 			var resource := ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
 			if resource == null or not (resource is BaseMaterial3D):
 				continue
@@ -1660,7 +1700,7 @@ func test_no_material_in_the_project_uses_a_banned_feature() -> void:
 			assert_eq(problems.size(), 0, "%s violates the banned list: %s" % [path, ", ".join(problems)])
 ```
 
-- [ ] **Step 4: Create the empty asset folders**
+- [ ] **Step 6: Create the empty asset folders**
 
 The scanners tolerate missing folders, but creating them now documents the layout. Git does not track empty directories, so add a `.gitkeep` to each:
 
@@ -1670,18 +1710,18 @@ mkdir -p assets/models/buildings assets/models/props assets/models/vegetation as
 touch assets/models/buildings/.gitkeep assets/models/props/.gitkeep assets/models/vegetation/.gitkeep assets/models/characters/.gitkeep scenes/entities/.gitkeep scenes/locations/.gitkeep scenes/ui/.gitkeep
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [ ] **Step 7: Run the tests to verify they pass**
 
 ```bash
 "D:/Godot_v4.7.1/Godot_v4.7.1-stable_win64_console.exe" --headless --path "D:/Godot resource/winter-time" --script res://tests/framework/test_runner.gd
 ```
 
-Expected: `55 passed, 0 failed`.
+Expected: `58 passed, 0 failed`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add tests/art/ assets/ scenes/ && git commit -m "test: add palette, topology, and shading-feature art gates"
+git add tests/framework/asset_scanner.gd tests/unit/test_asset_scanner.gd tests/art/ assets/ scenes/ && git commit -m "test: add shared asset scanner and three art gates"
 ```
 
 ---
@@ -2018,7 +2058,7 @@ The generators stay in `tools/` and stay in version control — regenerating an 
 
 Run the Step 2 command.
 
-Expected: `66 passed, 0 failed`.
+Expected: `69 passed, 0 failed`.
 
 - [ ] **Step 6: Register the autoload**
 
@@ -2052,11 +2092,12 @@ git add src/systems/world_clock.gd data/schedule/ tools/generate_schedules.gd te
 
 All must hold before Wave 1 starts:
 
-- [ ] `66 passed, 0 failed` from the headless runner, exit code 0
+- [ ] `69 passed, 0 failed` from the headless runner, exit code 0
 - [ ] The runner has been observed going **red** and returning exit code 1 (Task 1, Step 5)
 - [ ] `project.godot` lists exactly three autoloads: `EventBus`, `ServiceRegistry`, `WorldClock`
-- [ ] No `.gd` file outside `data/` contains a hardcoded hex color
+- [ ] No hardcoded hex color outside `tools/` — the generators in `tools/` are where color values legitimately live, since they are the source that writes `data/palette/color_bible.tres`
 - [ ] `src/core/` contains no reference to snow, weather, beacons, threats, or any other game noun
+- [ ] `AssetScanner`'s disk-fixture tests pass, proving the art gates inspect real files rather than silently scanning nothing
 - [ ] Every filename is English `snake_case`
 
 ## Handoff to Wave 1
