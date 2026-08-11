@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="LightingPreset" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/lighting_preset.gd" id="1_74gby"]
+
+[resource]
+script = ExtResource("1_74gby")
+id = &"whiteout"
+display_name = "WHITEOUT"
+sun_energy = 0.35
+sun_color = Color(0.56078434, 0.6901961, 0.84705883, 1)
+shadows_enabled = false
+ambient_color = Color(0.9472941, 0.9628235, 0.9816471, 1)
+ambient_energy = 2.9
+fog_density = 0.013
+glow_strength = 0.8
+tonemap_exposure = 1.15
+cel_band_threshold = 0.35
+cel_band_softness = 0.3
+warm_accent_energy = 1.8

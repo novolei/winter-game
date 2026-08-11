@@ -5,4 +5,5 @@
 [resource]
 script = ExtResource("1_hdosc")
 primary_lighting_preset = &"pale_day"
+night_lighting_preset = &"nightfall"
 beacon_unlocked = &"farmhouse_chimney"

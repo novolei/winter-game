@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="LightingPreset" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/lighting_preset.gd" id="1_7mguw"]
+
+[resource]
+script = ExtResource("1_7mguw")
+id = &"pale_day"
+display_name = "PALE DAY"
+sun_color = Color(0.56078434, 0.6901961, 0.84705883, 1)
+ambient_color = Color(0.9033725, 0.93184316, 0.96635294, 1)
+ambient_energy = 3.2
+fog_density = 0.0016
+glow_strength = 0.12
+tonemap_exposure = 1.38
+warm_accent_energy = 0.5

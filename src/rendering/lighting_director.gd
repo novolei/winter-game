@@ -1,9 +1,10 @@
 class_name LightingDirector
 extends WorldEnvironment
 
-## Builds the Environment and aims the sun. Both in code, for the same reason
-## the terrain material is: every colour comes out of the palette at runtime,
-## so no colour literal ends up sitting in scenes/main.tscn.
+## Builds the Environment, aims the sun, and decides which of Art Bible section
+## 4.2's six looks is on screen. All in code, for the same reason the terrain
+## material is: every colour comes out of the palette at runtime, so no colour
+## literal ends up sitting in scenes/main.tscn.
 ##
 ## Art Bible rule 10 -- shadows are the subject, not a by-product:
 ##
@@ -14,8 +15,44 @@ extends WorldEnvironment
 ##     soft over that length instead of turning to a hard stencil.
 ##   * The shadow *colour* is not set here at all -- it is a palette uniform on
 ##     the cel shaders. Nothing multiplies anything.
+##
+## ---------------------------------------------------------------------------
+## THE SIX PRESETS, AND WHAT A PRESET CAN ACTUALLY MOVE
+## ---------------------------------------------------------------------------
+## data/lighting/*.tres holds the six; data/schedule/day_NN.tres names two of
+## them per day, one for the daylight phase and one for the night. WorldClock
+## announces the phase changes on the EventBus and this crossfades between them.
+## Neither system holds a reference to the other, and this file loads the day
+## table itself rather than asking the clock for it -- deleting WorldClock has to
+## leave the lighting compiling.
+##
+## CROSSFADING RATHER THAN CUTTING is not decoration. DEEP NIGHT's exposure is a
+## third of PALE DAY's, and dropping that in one frame in a game with no HUD
+## reads as a rendering fault rather than as nightfall.
+##
+## What a preset moves, and what it does not, is the single most surprising thing
+## about lighting this project. The long version is in
+## src/definitions/lighting_preset.gd; the short version:
+##
+##   THE WORLD is on the two cel shaders. They pick a palette colour outright and
+##   read nothing from a light but ATTENUATION. Sun energy, sun colour and
+##   ambient do not reach it AT ALL. Exposure, fog, glow and the shadow switch
+##   do.
+##
+##   THE CHARACTER is the only stock StandardMaterial3D in the game. Sun energy,
+##   sun colour and ambient reach him and nothing else.
+##
+## So every preset carries a matched pair of numbers, and the two controls that
+## move both halves together are the exposure and the fog.
 
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
+const PRESET_DIRECTORY := "res://data/lighting"
+const SCHEDULE_DIRECTORY := "res://data/schedule"
+
+## Spelled out rather than preloaded off WorldClock, the same way MusicDirector
+## spells them out: systems never hold references to one another.
+const EVENT_DAY_STARTED := &"clock.day_started"
+const EVENT_NIGHT_STARTED := &"clock.night_started"
 
 ## Shadow length on flat ground is height / tan(elevation), and the derivative
 ## of that is savage down here: at 11 degrees a shadow ran 5.1x its caster and
@@ -23,108 +60,159 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 ## shadow, so the walk lurched. At 21.5 it runs 2.5x -- still unmistakably a low
 ## raking winter sun, still long enough for rule 10 -- and halves the
 ## amplification of anything that moves vertically.
+##
+## THE PRESETS CARRY THIS TOO, in LightingPreset.sun_angle_degrees, because the
+## six have to be readable side by side and a value hidden in code is a value
+## nobody checks. The applied preset is what actually aims the sun; this is the
+## reference all six are pinned to, by
+## test_every_preset_agrees_with_the_tuned_elevation, and the fallback when no
+## preset is loaded. Neither can drift without the other going red.
 @export var sun_elevation_degrees := 21.5
-@export var sun_azimuth_degrees := 118.0
+
+## THE AZIMUTH IS THE SHADOWS' DIRECTION ON SCREEN, AND IT WAS SOLVED, NOT PICKED.
+##
+## The camera never rotates (rule 1), so a ground direction has one fixed screen
+## direction. With the rig pitched 45 and yawed -35, a ground vector (x, z) lands
+## on screen at
+##
+##     screen right = (x, z) . ( 0.8192,  0.5736)
+##     screen up    = (x, z) . ( 0.5736, -0.8192) * sin(45)
+##
+## and a shadow runs along the light's own horizontal travel, (-sin a, -cos a).
+## Substituting and simplifying, for phi = a + 35:
+##
+##     screen right = -sin(phi)          screen up = cos(phi) * 0.7071
+##
+## so the on-screen rake below horizontal is atan(0.7071 * |cot(phi)|). At the
+## previous 118 that is **54 degrees** -- shadows that fall down the screen. In
+## `Refs/game ref/level.jpg` they rake nearly across it: measured off the crops,
+## the farmhouse throws its shadow left and 16 degrees down, the well house left
+## and 13 degrees down. Solving the line above for 20 degrees gives phi = 117.2
+## and **a = 82**, which is what this is.
+##
+## Elevation is untouched at 21.5 and must stay there -- see above, it is what
+## stops the shadow length lurching with every step. Azimuth is the only control
+## that moves a shadow sideways, and it costs nothing: shadow *length* is
+## height / tan(elevation) whichever way the sun faces.
+##
+## What it does change, and what a reviewer should look at: at 118 the sun was
+## almost directly behind the subject from the lens, so nearly every camera-facing
+## surface in the world was in shade -- that is the defect character_fill_energy
+## below was raised to paper over. At 82 the sun is 63 degrees off the view axis
+## instead of 27, so more of what the camera sees is lit, and the shadows are 22%
+## longer on screen because they now lie across the frame rather than into it.
+@export var sun_azimuth_degrees := 82.0
 ## Penumbra width grows with distance from the caster, and these shadows are
 ## 25 m long. At 2.2 degrees the far half of every shadow was penumbra and the
 ## sheds cast fuzzy ovals; rule 10 wants a soft *edge* around a solid block.
 @export var sun_angular_softness := 0.9
 
-## Distant snow lifts slightly toward the sky, which is what stops the far edge
-## of a 120 m field from reading as a wall of flat colour. Kept very low: this
-## is aerial perspective, not weather.
-@export var fog_density := 0.0015
+## What is on screen before the clock has said anything. Day 1's daylight, so
+## the first frame of a run is already the frame the run opens on rather than
+## whatever the engine defaults to.
+@export var boot_preset: StringName = &"pale_day"
 
-## Art Bible section 1.2 is explicit that the six reference colours are screen
-## pixels *after* lighting and tone mapping, and that the 12-colour table is
-## albedo. A cel shader that selects a palette colour outright therefore lands
-## on the albedo, which is measurably darker than the reference: sampled from
-## level.jpg the open snow is #A2C5EF, and the palette's lightest snow tone is
-## #8FB0D8. This is the tone-map row of the lighting panel in section 4.3, and
-## at 1.3 the lit snow renders as #A1C5F4 -- within two points per channel of
-## the reference. It scales every band equally, so it is not the per-band
-## multiply rule 10 forbids.
-@export var exposure := 1.3
+## How long a phase change takes to arrive. Long, and deliberately so: the six
+## presets are far apart -- DEEP NIGHT's exposure is a third of PALE DAY's -- and
+## a cut between two of them reads as a rendering fault rather than as nightfall.
+## Day 1's night is 300 s, so eight seconds is under 3% of the shortest phase in
+## the game and still slow enough to be a dusk rather than a switch.
+@export var crossfade_seconds := 8.0
 
-## ---------------------------------------------------------------------------
-## The character's fill -- and, today, nothing else's
-## ---------------------------------------------------------------------------
-## Both shaders in assets/shaders/ declare `ambient_light_disabled` (checked,
-## and there are only two). So the Environment's ambient reaches exactly one
-## thing on screen: the character, which is the only object in the game drawn
-## with a stock StandardMaterial3D. These two numbers are therefore a
-## **character control that happens to live on the Environment**, not a world
-## shadow tint, and they should be read and tuned as such.
-##
-## They used to be `structure_tones[2]` at 0.35 -- the palette's darkest navy --
-## with a comment saying ambient "reaches nothing that matters". It reached the
-## character, and it was very nearly *all* the light on him: the sun sits at
-## azimuth 118 against a camera yawed -35, which is almost behind the lens, so
-## practically every surface the camera can see on any object is in shade. The
-## measured result, sampled off the rendered frame at the shoulder, was
-## **#02050C** -- black. The coat is painted #343E4C and the scarf #944328; the
-## whole figure was a silhouette, and that is the defect this fixes.
-##
-## NEUTRAL RATHER THAN PALETTE-BLUE, and that is the one deliberate departure.
-## The palette governs albedo; this is a light, and lights already leave it
-## (the sun is snow_tones[0] because a low sun on snow is that colour). Filling
-## with a snow tone was measured at four energies and does not work: the coat's
-## blue channel clips while its red is still at a quarter, so the coat renders a
-## saturated blue instead of the blue-grey it is painted. `fill_tint` keeps a
-## little of the snow in it so the figure stays in the frame's colour family.
-##
-## WARNING for whoever adds the first world object that is *not* on a cel
-## shader: this energy is far above a physical ambient, because it is standing
-## in for a studio render's whole light rig on a model whose albedo was authored
-## for one. Such an object will blow out. Give the character its own fill then
-## -- an extra cull-masked light beside PlayerController's key -- and hand this
-## number back to the world.
-@export var character_fill_energy := 3.2
-
-## How much of the snow's blue the neutral fill keeps, 0 = white, 1 = snow.
-@export var character_fill_tint := 0.2
+## Art Bible section 4.3's slider panel, and the six hotkeys of section 4.2.
+## Debug builds only, and it also has to be asked for: it is built the first time
+## F1 is pressed and never before, so nothing that renders a frame -- a
+## screenshot harness, a test -- ever has it in shot.
+@export var debug_controls_enabled := true
 
 var _sun: DirectionalLight3D
+var _bible: ColorBible
+
+## id -> LightingPreset, and day number -> [daylight id, night id].
+var _presets: Dictionary = {}
+var _days: Dictionary = {}
+
+var _bus = null
+var _subscribed := false
+
+## What is written to the Environment right now -- a blended preset while a
+## crossfade is running, one of the six otherwise.
+var _active: LightingPreset = null
+var _from: LightingPreset = null
+var _to: LightingPreset = null
+var _fade_elapsed := 0.0
+var _fade_duration := 0.0
+
+var _panel: Node = null
 
 
 func _ready() -> void:
-	var bible: ColorBible = load(PALETTE_PATH)
+	_bible = load(PALETTE_PATH)
+	_load_presets()
+	_load_days()
+	_build_environment()
+	_resolve_sun()
+	# The boot look, applied outright rather than faded: there is nothing to fade
+	# from on the first frame.
+	if not apply_preset(boot_preset):
+		# Not silently. A missing preset directory means the whole run plays in
+		# whatever LightingPreset's script defaults happen to be, and with no HUD
+		# there is nothing on screen to say so.
+		push_warning("lighting_director: no preset '%s' in %s" % [boot_preset, PRESET_DIRECTORY])
+		_write(LightingPreset.new())
+	_attach_bus()
+	var registry := get_node_or_null("/root/ServiceRegistry") if is_inside_tree() else null
+	if registry != null:
+		registry.register(&"lighting", self)
 
+
+func _exit_tree() -> void:
+	_detach_bus()
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.get_service(&"lighting") == self:
+		registry.unregister(&"lighting")
+
+
+func _build_environment() -> void:
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
-	env.background_color = bible.snow_tones[0]
-	# See character_fill_energy above: this is the character's fill, because the
-	# character is the only thing on screen that reads ambient at all.
+	env.background_color = _bible.snow_tones[0]
+	# Ambient is the CHARACTER's fill and nothing else's -- every world shader
+	# declares ambient_light_disabled. The colour and the energy come off the
+	# preset; the source mode is what makes them mean anything.
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color.WHITE.lerp(bible.snow_tones[0], character_fill_tint)
-	env.ambient_light_energy = character_fill_energy
 	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
-	env.tonemap_exposure = exposure
 	env.ssao_enabled = false
 	env.ssil_enabled = false
 	env.sdfgi_enabled = false
-	env.glow_enabled = false
-	env.fog_enabled = fog_density > 0.0
-	env.fog_mode = Environment.FOG_MODE_DEPTH
-	env.fog_light_color = bible.snow_tones[0]
-	env.fog_density = fog_density
+	# EXPONENTIAL, not DEPTH, and the difference matters at this camera. The rig
+	# is orthographic on a 90 m boom, so every fragment in the frame sits within
+	# a few metres of the same depth. Under DEPTH mode, with its begin/end
+	# window, that lands the whole frame on one point of the ramp and
+	# `fog_density` stops behaving like a density at all. Exponential fog is
+	# 1 - exp(-density * depth), so at 90 m a density of 0.0016 is 13% of the way
+	# to the fog colour and 0.045 is 98% -- a knob that means the same thing in
+	# every preset and reads as aerial perspective at the bottom of its range and
+	# as a whiteout at the top.
+	env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
+	# The sky is behind a 140 m ground plane and never in shot; fogging it would
+	# only wash the horizon the frame does not contain.
 	env.fog_sky_affect = 0.0
+	env.fog_aerial_perspective = 0.0
+	# Bloom off whatever is brightest in the frame. The threshold sits just under
+	# 1.0 so a palette colour at full intensity -- a lit window, snow in a storm
+	# -- crosses it and nothing in the shadow band comes close.
+	env.glow_hdr_threshold = 0.95
+	env.glow_bloom = 0.05
+	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
 	environment = env
 
+
+func _resolve_sun() -> void:
 	_sun = get_node_or_null("Sun") as DirectionalLight3D
 	if _sun == null:
 		return
-	_sun.rotation = Vector3(
-		deg_to_rad(-sun_elevation_degrees),
-		deg_to_rad(sun_azimuth_degrees),
-		0.0
-	)
-	_sun.light_color = bible.snow_tones[0]
-	_sun.light_energy = 1.0
-	# The cel shaders read ATTENUATION, not LIGHT_COLOR, so specular from this
-	# light would be the one thing on screen that ignored the palette.
 	_sun.light_specular = 0.0
-	_sun.shadow_enabled = true
 	_sun.light_angular_distance = sun_angular_softness
 	_sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
 	# The orthographic frame is about 18 m by 16 m of ground, so the shadow
@@ -144,3 +232,322 @@ func _ready() -> void:
 	_sun.shadow_normal_bias = 2.0
 	_sun.shadow_bias = 0.04
 	_sun.shadow_blur = 1.0
+
+
+# --- the six ----------------------------------------------------------------
+
+func _load_presets() -> void:
+	_presets.clear()
+	var dir := DirAccess.open(PRESET_DIRECTORY)
+	if dir == null:
+		return
+	var file_names := dir.get_files()
+	file_names.sort()
+	for entry in file_names:
+		var file_name := entry
+		# An exported build serves data/*.tres as *.tres.remap.
+		if file_name.ends_with(".remap"):
+			file_name = file_name.trim_suffix(".remap")
+		if not (file_name.ends_with(".tres") or file_name.ends_with(".res")):
+			continue
+		var resource := ResourceLoader.load(PRESET_DIRECTORY.path_join(file_name))
+		if resource is LightingPreset and (resource as LightingPreset).id != &"":
+			_presets[(resource as LightingPreset).id] = resource
+
+
+## GDD section 4's table, read straight off the day files rather than out of
+## WorldClock: the clock announces WHEN the phase changed and this owns WHAT it
+## changed to, so neither has to know the other exists.
+func _load_days() -> void:
+	_days.clear()
+	var dir := DirAccess.open(SCHEDULE_DIRECTORY)
+	if dir == null:
+		return
+	for entry in dir.get_files():
+		var file_name := entry
+		if file_name.ends_with(".remap"):
+			file_name = file_name.trim_suffix(".remap")
+		if not (file_name.ends_with(".tres") or file_name.ends_with(".res")):
+			continue
+		var resource := ResourceLoader.load(SCHEDULE_DIRECTORY.path_join(file_name))
+		if resource is DaySchedule:
+			var schedule := resource as DaySchedule
+			_days[schedule.day_number] = [
+				schedule.primary_lighting_preset,
+				schedule.night_lighting_preset,
+			]
+
+
+func preset(id: StringName) -> LightingPreset:
+	return _presets.get(id, null)
+
+
+func preset_ids() -> Array:
+	var ids: Array = _presets.keys()
+	ids.sort()
+	return ids
+
+
+## The blended preset currently written to the Environment. Not one of the six
+## while a crossfade is running -- that is the point of it.
+func active_preset() -> LightingPreset:
+	return _active
+
+
+## Where the frame is going: the far end of a running crossfade, or where it
+## already is.
+func target_preset_id() -> StringName:
+	if _to != null:
+		return _to.id
+	return _active.id if _active != null else &""
+
+
+## Art Bible rule 12's warm quota, published for whatever burns. Nothing warm has
+## been placed in the world yet, so this is a seam rather than a value with a
+## consumer -- a stove or a lit window scales its own energy by it.
+func warm_accent_energy() -> float:
+	return _active.warm_accent_energy if _active != null else 0.0
+
+
+## Snaps to one of the six, abandoning any crossfade. False if there is no such
+## preset, and nothing moves.
+func apply_preset(id: StringName) -> bool:
+	var found: LightingPreset = _presets.get(id, null)
+	if found == null:
+		return false
+	apply_look(found)
+	return true
+
+
+## Snaps to a look that is not necessarily one of the six -- what the debug
+## panel drags. Abandons any crossfade, for the same reason apply_preset does:
+## a fade still running underneath would drag the frame away from whatever was
+## just set, which from a slider looks like the slider not working.
+func apply_look(look: LightingPreset) -> void:
+	_from = null
+	_to = null
+	_fade_duration = 0.0
+	_fade_elapsed = 0.0
+	_write(look)
+
+
+## Starts a crossfade. False when there is nothing to fade to, or when the frame
+## is already there.
+##
+## It fades from where the frame ACTUALLY IS, not from the last whole preset:
+## interrupting a fade halfway to DEEP NIGHT and turning for WHITEOUT must
+## continue from the half-dark frame on screen, not snap back to PALE DAY and set
+## off again.
+func crossfade_to(id: StringName, seconds := -1.0) -> bool:
+	var found: LightingPreset = _presets.get(id, null)
+	if found == null:
+		return false
+	if _to == null and _active != null and _active.id == id:
+		return false
+	if _to != null and _to.id == id:
+		return false
+	var duration := seconds if seconds >= 0.0 else crossfade_seconds
+	if duration <= 0.0 or _active == null:
+		return apply_preset(id)
+	_from = _active
+	_to = found
+	_fade_duration = duration
+	_fade_elapsed = 0.0
+	return true
+
+
+func is_crossfading() -> bool:
+	return _to != null
+
+
+func _process(delta: float) -> void:
+	if _to == null:
+		return
+	_fade_elapsed += delta
+	var t := clampf(_fade_elapsed / _fade_duration, 0.0, 1.0)
+	if t >= 1.0:
+		var arrived := _to
+		_from = null
+		_to = null
+		_write(arrived)
+		return
+	_write(blend(_from, _to, t))
+
+
+# --- blending ---------------------------------------------------------------
+
+## A preset partway between two others. Static and allocation-only so the whole
+## crossfade is testable without a SceneTree, an Environment or a frame.
+##
+## Two fields are not interpolable and each is handled where it is least
+## visible:
+##
+##   FOG is switched on the moment either end wants it and the DENSITY carries
+##   the fade, because fog off IS fog at density zero. Flipping the switch at the
+##   midpoint instead would make the haze appear all at once, at half strength --
+##   exactly the pop a crossfade exists to prevent.
+##
+##   SHADOWS have no continuous parameter: a shadow is cast or it is not. So the
+##   switch flips at the midpoint, where it lands against a frame that is already
+##   half-way to somewhere else rather than against either look at full strength.
+static func blend(from: LightingPreset, to: LightingPreset, t: float) -> LightingPreset:
+	var result := LightingPreset.new()
+	var k := clampf(t, 0.0, 1.0)
+	# A blend reports the preset it is BECOMING, so target_preset_id() and any
+	# readout stay meaningful for the whole of the fade.
+	result.id = to.id
+	result.display_name = to.display_name
+	result.sun_energy = lerpf(from.sun_energy, to.sun_energy, k)
+	result.sun_color = from.sun_color.lerp(to.sun_color, k)
+	result.sun_angle_degrees = lerpf(from.sun_angle_degrees, to.sun_angle_degrees, k)
+	result.shadows_enabled = to.shadows_enabled if k >= 0.5 else from.shadows_enabled
+	result.ambient_color = from.ambient_color.lerp(to.ambient_color, k)
+	result.ambient_energy = lerpf(from.ambient_energy, to.ambient_energy, k)
+	result.fog_enabled = from.fog_enabled or to.fog_enabled
+	result.fog_color = from.fog_color.lerp(to.fog_color, k)
+	result.fog_density = lerpf(
+		from.fog_density if from.fog_enabled else 0.0,
+		to.fog_density if to.fog_enabled else 0.0,
+		k
+	)
+	result.glow_enabled = from.glow_enabled or to.glow_enabled
+	result.glow_strength = lerpf(
+		from.glow_strength if from.glow_enabled else 0.0,
+		to.glow_strength if to.glow_enabled else 0.0,
+		k
+	)
+	result.cel_band_threshold = lerpf(from.cel_band_threshold, to.cel_band_threshold, k)
+	result.cel_band_softness = lerpf(from.cel_band_softness, to.cel_band_softness, k)
+	result.tonemap_exposure = lerpf(from.tonemap_exposure, to.tonemap_exposure, k)
+	result.warm_accent_energy = lerpf(from.warm_accent_energy, to.warm_accent_energy, k)
+	return result
+
+
+## The only place anything is written to the Environment or the sun.
+func _write(look: LightingPreset) -> void:
+	_active = look
+	var env := environment
+	if env != null:
+		env.ambient_light_color = look.ambient_color
+		env.ambient_light_energy = look.ambient_energy
+		env.tonemap_exposure = look.tonemap_exposure
+		env.fog_enabled = look.fog_enabled
+		env.fog_light_color = look.fog_color
+		env.fog_density = look.fog_density
+		env.glow_enabled = look.glow_enabled
+		env.glow_intensity = look.glow_strength
+	if _sun == null:
+		return
+	_sun.rotation = Vector3(
+		deg_to_rad(-look.sun_angle_degrees),
+		deg_to_rad(sun_azimuth_degrees),
+		0.0
+	)
+	# The cel shaders read ATTENUATION, not LIGHT_COLOR, so both of these reach
+	# the character and nothing else in the frame. Set anyway, and correctly:
+	# the character is the one thing here that IS lit by a light.
+	_sun.light_color = look.sun_color
+	_sun.light_energy = look.sun_energy
+	_sun.shadow_enabled = look.shadows_enabled
+
+
+# --- the clock drives it ----------------------------------------------------
+
+func set_event_bus(bus) -> void:
+	_detach_bus()
+	_bus = bus
+	_attach_bus()
+
+
+func _attach_bus() -> void:
+	if _bus == null and is_inside_tree():
+		_bus = get_node_or_null("/root/EventBus")
+	if _bus == null or _subscribed:
+		return
+	_bus.subscribe(EVENT_DAY_STARTED, _on_day_started)
+	_bus.subscribe(EVENT_NIGHT_STARTED, _on_night_started)
+	_subscribed = true
+
+
+func _detach_bus() -> void:
+	if _bus == null or not _subscribed:
+		return
+	_bus.unsubscribe(EVENT_DAY_STARTED, _on_day_started)
+	_bus.unsubscribe(EVENT_NIGHT_STARTED, _on_night_started)
+	_subscribed = false
+
+
+# EventBus always calls back with exactly one argument, so the day number is
+# named even where it would otherwise be dropped.
+func _on_day_started(payload) -> void:
+	_change_to(int(payload), false)
+
+
+func _on_night_started(payload) -> void:
+	_change_to(int(payload), true)
+
+
+## A day the schedule does not have leaves the frame exactly where it is. Silent
+## on purpose: the clock cannot emit one, and a push_warning here would fire from
+## any test that pokes the bus.
+func _change_to(day: int, night: bool) -> void:
+	var pair: Array = _days.get(day, [])
+	if pair.size() != 2:
+		return
+	if crossfade_to(pair[1] if night else pair[0]) and _panel != null:
+		# The panel's sliders must not go on claiming a look the clock has moved
+		# away from. Synced at the START of the fade rather than at its end: the
+		# readouts are for typing into the generator, and the number worth having
+		# is the preset's own, not a frame of the blend.
+		_panel.call_deferred(&"sync")
+
+
+# --- the debug controls -----------------------------------------------------
+#
+# Art Bible section 4.2's six hotkeys and section 4.3's slider panel. Debug
+# builds only -- OS.is_debug_build() is false in an exported build -- and the
+# panel is built the first time it is asked for and never before, so nothing
+# that renders a frame unattended ever has it in shot.
+#
+# The hotkeys are a debug OVERRIDE, not a mode: the next phase change crossfades
+# away from whatever was forced, which is correct. They exist to answer "what
+# does this scene look like at midnight" without playing four days to find out.
+
+const _HOTKEYS := {
+	KEY_BACKSPACE: &"flat",
+	KEY_F2: &"nightfall",
+	KEY_F3: &"deep_night",
+	KEY_F4: &"whiteout",
+	KEY_F5: &"sunrise",
+	KEY_F6: &"pale_day",
+}
+
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	if not debug_controls_enabled or not OS.is_debug_build():
+		return
+	var key := event as InputEventKey
+	if key == null or not key.pressed or key.echo:
+		return
+	if key.keycode == KEY_F1:
+		_toggle_panel()
+		get_viewport().set_input_as_handled()
+		return
+	if not _HOTKEYS.has(key.keycode):
+		return
+	apply_preset(_HOTKEYS[key.keycode])
+	if _panel != null:
+		_panel.sync()
+	get_viewport().set_input_as_handled()
+
+
+func _toggle_panel() -> void:
+	if _panel == null:
+		_panel = LightingDebugPanel.new()
+		add_child(_panel)
+		(_panel as LightingDebugPanel).attach(self)
+		return
+	var panel := _panel as CanvasLayer
+	panel.visible = not panel.visible
+	if panel.visible:
+		(_panel as LightingDebugPanel).sync()

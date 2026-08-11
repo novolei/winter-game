@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="LightingPreset" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/lighting_preset.gd" id="1_li6y1"]
+
+[resource]
+script = ExtResource("1_li6y1")
+id = &"flat"
+display_name = "FLAT"
+sun_color = Color(0.56078434, 0.6901961, 0.84705883, 1)
+ambient_color = Color(0.9121569, 0.93803924, 0.9694118, 1)
+ambient_energy = 3.2
+fog_enabled = false
+fog_density = 0.0
+glow_enabled = false
+glow_strength = 0.0
+warm_accent_energy = 0.0

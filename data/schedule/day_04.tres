@@ -8,5 +8,6 @@ day_number = 4
 daylight_seconds = 480.0
 night_seconds = 420.0
 primary_lighting_preset = &"deep_night"
+night_lighting_preset = &"deep_night"
 allowed_weather_events = Array[StringName]([&"wind_shift", &"snow_fog"])
 beacon_unlocked = &"logging_camp"

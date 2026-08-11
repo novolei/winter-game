@@ -8,4 +8,5 @@ day_number = 6
 daylight_seconds = 300.0
 night_seconds = 600.0
 primary_lighting_preset = &"nightfall"
+night_lighting_preset = &"whiteout"
 allowed_weather_events = Array[StringName]([&"cold_snap", &"freezing_rain", &"wind_shift"])

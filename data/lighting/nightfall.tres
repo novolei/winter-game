@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="LightingPreset" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/lighting_preset.gd" id="1_aurps"]
+
+[resource]
+script = ExtResource("1_aurps")
+id = &"nightfall"
+display_name = "NIGHTFALL"
+sun_energy = 0.5
+sun_color = Color(0.56078434, 0.6901961, 0.84705883, 1)
+ambient_color = Color(0.87701964, 0.9132549, 0.95717645, 1)
+ambient_energy = 2.3
+fog_density = 0.007
+fog_color = Color(0.2, 0.28627452, 0.43137255, 1)
+glow_strength = 0.45
+tonemap_exposure = 0.78
+cel_band_threshold = 0.18
+cel_band_softness = 0.1
+warm_accent_energy = 1.6

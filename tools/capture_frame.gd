@@ -11,9 +11,17 @@ extends Node
 ##       --resolution 1600x1000 -- --out D:/somewhere/shot.png [--seconds 37]
 ##
 ## Optional: `--settle`, `--ortho` (frame height in metres), `--start x,z` (walk
-## the route from somewhere else) and `--look x,z` (aim the camera at a place
+## the route from somewhere else), `--look x,z` (aim the camera at a place
 ## rather than at the player -- which is what an establishing shot of a
-## farmstead the player is standing in the middle of needs).
+## farmstead the player is standing in the middle of needs), and `--preset <id>`
+## (force one of Art Bible section 4.2's six looks).
+##
+## `--preset` is applied at the shutter and NOT at startup, deliberately. RunBoot
+## starts WorldClock on the first frame, which announces day 1 and sets the
+## director crossfading to that day's own preset -- so a look forced in _ready()
+## would be faded away again before the shot. Snapping it at the last moment is
+## also what makes the six comparable: every frame is the preset at full
+## strength, never a blend.
 ##
 ## Input goes through Input.action_press rather than by poking the controller,
 ## so the route exercises the same code path a player would.
@@ -54,6 +62,7 @@ var _start := Vector2.ZERO
 var _has_start := false
 var _look := Vector2.ZERO
 var _has_look := false
+var _preset := ""
 
 # Sampled along the route so the run can state, rather than assume, that the
 # snow actually varies and that speed actually responds to it. A shot of a
@@ -111,6 +120,10 @@ func _ready() -> void:
 		if look_parts.size() == 2:
 			_look = Vector2(float(look_parts[0]), float(look_parts[1]))
 			_has_look = true
+
+	# `--preset <id>` forces one of the six. Recorded here, applied at the
+	# shutter -- see the header.
+	_preset = _string_arg(args, "--preset", "")
 
 	# `--start x,z` walks the same route from somewhere else. The camera frames
 	# 17 m by 15 m of ground, so anything more than a short walk from the origin
@@ -218,6 +231,18 @@ func _capture() -> void:
 		# After the snap, so it wins. The rig only ever translates -- the frame
 		# is the same frame, aimed somewhere else.
 		(rig as Node3D).global_position = Vector3(_look.x, 1.0, _look.y)
+	# The look, snapped rather than faded, after the rig has settled and before
+	# the shutter. apply_preset() abandons whatever crossfade the clock started.
+	if _preset != "":
+		var lighting := get_node_or_null("Main/Lighting")
+		if lighting == null or not lighting.apply_preset(StringName(_preset)):
+			push_error("capture_frame: no lighting preset '%s'" % _preset)
+		else:
+			print("capture_frame: lit with %s" % _preset)
+		# One frame for the Environment change to reach the compositor before the
+		# frame that gets saved.
+		await RenderingServer.frame_post_draw
+
 	await RenderingServer.frame_post_draw
 	var image := get_viewport().get_texture().get_image()
 	var error := image.save_png(_output)

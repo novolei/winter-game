@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="LightingPreset" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/lighting_preset.gd" id="1_1acwi"]
+
+[resource]
+script = ExtResource("1_1acwi")
+id = &"sunrise"
+display_name = "SUNRISE"
+sun_energy = 0.9
+sun_color = Color(1, 0.69803923, 0.34117648, 1)
+ambient_color = Color(0.9560784, 0.9690196, 0.98470587, 1)
+ambient_energy = 2.6
+fog_density = 0.0022
+fog_color = Color(1, 0.69803923, 0.34117648, 1)
+glow_strength = 0.5
+tonemap_exposure = 1.1
+cel_band_threshold = 0.1
+cel_band_softness = 0.14
+warm_accent_energy = 1.2

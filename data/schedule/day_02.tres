@@ -6,5 +6,6 @@
 script = ExtResource("1_tgx4r")
 day_number = 2
 primary_lighting_preset = &"pale_day"
+night_lighting_preset = &"nightfall"
 allowed_weather_events = Array[StringName]([&"snow_fog"])
 beacon_unlocked = &"fuel_station"

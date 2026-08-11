@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="LightingPreset" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/lighting_preset.gd" id="1_ihf17"]
+
+[resource]
+script = ExtResource("1_ihf17")
+id = &"deep_night"
+display_name = "DEEP NIGHT"
+sun_energy = 0.28
+sun_color = Color(0.56078434, 0.6901961, 0.84705883, 1)
+ambient_color = Color(0.859451, 0.90086275, 0.9510588, 1)
+ambient_energy = 1.5
+fog_density = 0.009
+fog_color = Color(0.16470589, 0.21960784, 0.32941177, 1)
+glow_strength = 0.65
+tonemap_exposure = 0.42
+cel_band_threshold = 0.24
+cel_band_softness = 0.1
+warm_accent_energy = 2.2
