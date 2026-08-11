@@ -200,6 +200,27 @@ Assertions **record** failures rather than halting, so one test reports every pr
 
 ---
 
+## 4.5 Git, when other agents are live
+
+Several agents often work in this repository at once. Two things follow.
+
+**`git commit` commits the whole index, not what you just added.** `git add -- my/file.gd` followed by `git commit` will also commit anything *another* agent had already staged. This has happened: a staged `git rm src/rendering/blockout.gd` was swept into a commit whose message only mentioned registering an autoload. The net state was correct and the record was a lie.
+
+Pass the paths to `commit` as well, so the commit is scoped no matter what else sits in the index:
+
+```bash
+git add -- src/foo.gd tests/unit/test_foo.gd
+git commit -m "..." -- src/foo.gd tests/unit/test_foo.gd
+```
+
+**Argument order matters and is easy to get wrong.** `-m` must come *before* the `--`; everything after `--` is a pathspec, so `git commit -- file.gd -m "msg"` makes git look for files literally named `-m` and `msg`. I made exactly that mistake writing this section.
+
+**Never `git commit --amend` while others are live.** Amending rewrites a commit that another agent may already have built on, and it re-stages the whole index. One agent caught itself sweeping another's staged deletion this way and had to restore it byte for byte.
+
+Also: never `git add -A`, never `git add <directory>`. On `index.lock`, wait a few seconds and retry — do not delete the lock file.
+
+**A red suite may not be yours.** Another agent mid-TDD leaves a failing test on purpose between its RED and GREEN steps. Before assuming you broke something, check whether the failure names files you have never touched — and say so in your report rather than fixing someone else's in-flight work.
+
 ## 5. How to work
 
 Follow your task brief's steps **in order**. Where it prescribes TDD, that means: write the failing test, **run it and observe the failure**, then implement, then run again. A test you never saw fail has not been shown to test anything.
