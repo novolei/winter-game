@@ -1,0 +1,92 @@
+[gd_resource type="Resource" script_class="MusicMap" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/music_cue.gd" id="1_1y8ud"]
+[ext_resource type="Script" path="res://src/definitions/music_map.gd" id="2_84ch0"]
+
+[sub_resource type="Resource" id="Resource_rwjvw"]
+resource_name = "first_light"
+script = ExtResource("1_1y8ud")
+cue_id = &"first_light"
+stream_path = "res://assets/audio/vfxmusic/morning.mp3"
+situations = Array[StringName]([&"dawn"])
+gain_db = -10.1
+notes = "morning.mp3 -- 2:27, F# major, 69 BPM with the clearest pulse of any bed (tempo confidence 0.47) and the most harmonic movement (1.00). Warm and bright: content out to 10.5 kHz where the other beds die by 4-5 kHz. Ramps in over 2.4 s and ends on a sustain rather than a fade. Name and material agree, so it is cast where its name says: first light."
+
+[sub_resource type="Resource" id="Resource_nxxcx"]
+resource_name = "open_ground"
+script = ExtResource("1_1y8ud")
+cue_id = &"open_ground"
+stream_path = "res://assets/audio/vfxmusic/queite.mp3"
+situations = Array[StringName]([&"day"])
+gain_db = -5.699999999999999
+notes = "queite.mp3 (\"quiet\") -- 2:59, F# major but the weakest key reading in the set (0.67), which is why it sits ambiguous. The distinguishing feature is spectral, not dynamic: it is bass-light (20-63 Hz sits 18 dB below its own peak band) and centred at 500-1000 Hz. That leaves the low end free for wind and the high end free for footsteps, and thin mid-range reads as exposure. Cast for ordinary daylight -- GDD section 9's solitude colour."
+
+[sub_resource type="Resource" id="Resource_3jsl0"]
+resource_name = "long_walk"
+script = ExtResource("1_1y8ud")
+cue_id = &"long_walk"
+stream_path = "res://assets/audio/vfxmusic/bgm.mp3"
+situations = Array[StringName]([&"day", &"dusk"])
+gain_db = -3.1999999999999993
+notes = "bgm.mp3 -- 4:00, the longest bed, C major, very dark (nothing above 3.8 kHz despite a 320 kbps encode, so that is the material and not the encoder). Its ten-segment loudness arc is flat to within 1 dB for eight segments before a 6.7 s fade-out. No shape, no events, long: the definition of a bed. Doubles for dusk so that neither daylight nor nightfall is a single predictable track."
+
+[sub_resource type="Resource" id="Resource_n8o38"]
+resource_name = "hearth"
+script = ExtResource("1_1y8ud")
+cue_id = &"hearth"
+stream_path = "res://assets/audio/vfxmusic/bgm2.mp3"
+situations = Array[StringName]([&"shelter"])
+gain_db = -3.6000000000000014
+notes = "bgm2.mp3 -- 2:50, C major, and the most featureless thing in the set: 6.3 dB of dynamic range (the narrowest), zero frames classified as transients, harmonic movement 0.47 (the most static -- close to a drone), bass-weighted at 63 Hz. A track with no events in it cannot pull focus, and low, static and warm is what a fire sounds like. Cast for GDD section 9's warmth layer: indoors, or at a lit beacon."
+
+[sub_resource type="Resource" id="Resource_qgmfv"]
+resource_name = "failing_light"
+script = ExtResource("1_1y8ud")
+cue_id = &"failing_light"
+stream_path = "res://assets/audio/vfxmusic/winter2.mp3"
+situations = Array[StringName]([&"dusk", &"night"])
+gain_db = -3.6000000000000014
+weight = 1.2
+notes = "winter2.mp3 -- 2:04, C major, 60 BPM. Flattest arc of any track with real content (-23.6 to -21.1 dB across eight of ten segments), 2.2% transient frames, and head/tail spectral similarity 0.98 -- the highest in the set, meaning it can repeat without an audible seam. Bass-weighted but with air out to 11 kHz. Present without being eventful: nightfall, and ordinary night."
+
+[sub_resource type="Resource" id="Resource_cwhjm"]
+resource_name = "deep_cold"
+script = ExtResource("1_1y8ud")
+cue_id = &"deep_cold"
+stream_path = "res://assets/audio/vfxmusic/winnter1.mp3"
+situations = Array[StringName]([&"night"])
+weight = 1.5
+notes = "winnter1.mp3 (\"winter1\") -- 2:04, C major, and the most valuable track here for this particular game, which the filename gives no hint of. Quietest in the set by 3.3 dB (-26.1 dBFS RMS), slowest (~50 BPM), widest dynamic range (28.9 dB). Its second half decays monotonically -- -23.6, -24.4, -28.6, -30.8, -29.0, -37.5 dB -- while its spectral centroid RISES from 353 to 863 Hz: the low end leaves first and only thin high material is left, then a 10.5 s fade to -79 dB, which is digital silence. Head/tail similarity 0.73, the lowest here: it does not loop, it ends. A track that dies away to nothing is GDD section 9's \"fear by absence\" already written into the material. Deep night, weighted to be drawn more often than its alternative."
+
+[sub_resource type="Resource" id="Resource_32fe2"]
+resource_name = "rescue"
+script = ExtResource("1_1y8ud")
+cue_id = &"rescue"
+stream_path = "res://assets/audio/vfxmusic/victory.mp3"
+situations = Array[StringName]([&"ending_rescue"])
+gain_db = -9.0
+notes = "victory.mp3 -- 2:04, F major with the highest key confidence in the set (0.92), the loudest track by 3.7 dB, brightest encode (12 kHz), and dual mono (both channels bit-identical, which is worth knowing before anyone tries to widen it). Builds across its arc from -15.8 to -9.0 dB with a flux peak two thirds through -- an arranged climax and resolution. GDD section 10's helicopter."
+
+[sub_resource type="Resource" id="Resource_kaqo7"]
+resource_name = "death"
+script = ExtResource("1_1y8ud")
+cue_id = &"death"
+stream_path = "res://assets/audio/vfxmusic/sad1.mp3"
+situations = Array[StringName]([&"ending_death"])
+gain_db = -5.300000000000001
+notes = "sad1.mp3 -- 2:00, F major, 128 kbps (the only low-bitrate file). 77% of its energy sits below 250 Hz, peaking at 63-125 Hz, with 1.1% transient frames: heavy, low and entirely sustained. Its last two segments lighten and rise in centroid (203 to 455 Hz) as the low weight lifts away, which is a real ending gesture rather than a stop. Death."
+
+[sub_resource type="Resource" id="Resource_x0gq7"]
+resource_name = "unseen"
+script = ExtResource("1_1y8ud")
+cue_id = &"unseen"
+stream_path = "res://assets/audio/vfxmusic/mm.mp3"
+situations = Array[StringName]([&"ending_unseen"])
+gain_db = -2.6000000000000014
+notes = "mm.mp3 -- 3:58, and the ONLY minor-key track in the set (A minor, dominant pitch class A, confidence 0.72). 24.1 dB of dynamic range: it opens at -42 dB, builds to -14.2, then fades out over 7.3 s. Long, minor, arc-shaped, resolving to nothing. Cast for GDD section 10's third ending -- the helicopter that does not see you -- because that ending is the artistic landing point and this is the only piece with the length and the mode for it. THIS IS THE LEAST CERTAIN CALL IN THIS FILE: \"mm\" most likely means main menu, and a menu theme is exactly this shape. If it is wanted there, move it and give ending_unseen to deep_cold, which also ends in silence."
+
+[resource]
+script = ExtResource("2_84ch0")
+silent_situations = Array[StringName]([&"danger"])
+oneshot_situations = Array[StringName]([&"ending_rescue", &"ending_death", &"ending_unseen"])
+cues = Array[ExtResource("1_1y8ud")]([SubResource("Resource_rwjvw"), SubResource("Resource_nxxcx"), SubResource("Resource_3jsl0"), SubResource("Resource_n8o38"), SubResource("Resource_qgmfv"), SubResource("Resource_cwhjm"), SubResource("Resource_32fe2"), SubResource("Resource_kaqo7"), SubResource("Resource_x0gq7")])

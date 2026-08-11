@@ -20,6 +20,7 @@ config/icon="res://icon.svg"
 EventBus="*res://src/core/event_bus.gd"
 ServiceRegistry="*res://src/core/service_registry.gd"
 WorldClock="*res://src/systems/world_clock.gd"
+MusicDirector="*res://src/audio/music_director.gd"
 _mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
 
 [display]
