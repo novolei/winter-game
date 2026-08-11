@@ -135,6 +135,11 @@ func _collect_banned_feature_offenders(roots: Array[String]) -> PackedStringArra
 	var offenders := PackedStringArray()
 	for root in roots:
 		for path in AssetScannerScript.find_files(root, AssetScannerScript.MATERIAL_SUFFIXES):
+			# Rule 8's banned list is a rule about the world. Characters are
+			# exempt -- see AssetScanner.SURFACE_RULE_EXEMPT_ROOTS, and the test
+			# below that proves the exemption is load-bearing.
+			if AssetScannerScript.is_surface_rule_exempt(path):
+				continue
 			offenders.append_array(_offenders_in(path, AssetProbeScript.probe(path)))
 	return offenders
 
@@ -291,3 +296,31 @@ func test_the_gate_finds_a_banned_material_inside_a_real_glb() -> void:
 func test_no_material_in_the_project_uses_a_banned_feature() -> void:
 	var offenders := _collect_banned_feature_offenders(AssetScannerScript.SCAN_ROOTS)
 	assert_eq(offenders.size(), 0, "; ".join(offenders))
+
+
+## The other half of the same decision -- see the matching test in
+## test_palette.gd for why an exemption gets a test of its own. Rule 8's banned
+## list is about the world; the protagonist ships with the normal, roughness and
+## metallic maps it was generated with.
+func test_characters_are_exempt_and_the_exemption_is_load_bearing() -> void:
+	var character := "res://assets/models/characters/winter_wanderer.glb"
+	assert_true(FileAccess.file_exists(character), "the exempt character must exist: %s" % character)
+	assert_true(
+		AssetScannerScript.is_surface_rule_exempt(character),
+		"the character must be exempt from the surface rules"
+	)
+	assert_false(
+		AssetScannerScript.is_surface_rule_exempt("res://assets/models/props/lantern.glb"),
+		"the exemption must not reach props"
+	)
+
+	var direct := _offenders_in(character, AssetProbeScript.probe(character))
+	assert_true(
+		direct.size() > 0,
+		"the exemption reports as load-bearing only while the character actually carries "
+		+ "something this gate rejects; it now carries nothing, so either the model changed "
+		+ "or the exemption is no longer needed. Decide which -- do not delete this assertion."
+	)
+
+	var report := "; ".join(_collect_banned_feature_offenders(AssetScannerScript.SCAN_ROOTS))
+	assert_false(report.contains(character), "the project-wide scan must not report it: %s" % report)

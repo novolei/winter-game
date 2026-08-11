@@ -113,6 +113,11 @@ func _collect_palette_offenders(roots: Array[String]) -> PackedStringArray:
 	var offenders := PackedStringArray()
 	for root in roots:
 		for path in AssetScannerScript.find_files(root, AssetScannerScript.MATERIAL_SUFFIXES):
+			# Rule 9 is a rule about the world. Characters are exempt -- see
+			# AssetScanner.SURFACE_RULE_EXEMPT_ROOTS, and the test below that
+			# proves the exemption is load-bearing rather than decorative.
+			if AssetScannerScript.is_surface_rule_exempt(path):
+				continue
 			offenders.append_array(_offenders_in(path, AssetProbeScript.probe(path)))
 	return offenders
 
@@ -223,3 +228,44 @@ func test_the_gate_finds_an_off_palette_material_inside_a_real_glb() -> void:
 func test_every_material_in_the_project_is_on_palette() -> void:
 	var offenders := _collect_palette_offenders(AssetScannerScript.SCAN_ROOTS)
 	assert_eq(offenders.size(), 0, "; ".join(offenders))
+
+
+## Characters are exempt from rule 9 by the owner's ruling. The exemption is the
+## dangerous kind of change -- it makes a gate stop reporting -- so this pins all
+## three things a silent skip could never demonstrate:
+##
+##   it exists, and names a file that is really there;
+##   it is scoped to characters and waives nothing else;
+##   it is LOAD-BEARING -- the shipped character genuinely is something this
+##   gate would report, so the green above is the exemption working and not the
+##   gate having quietly found nothing to look at.
+##
+## The third is the one worth the lines. A gate that is silent for the wrong
+## reason is worse than one that fails, and this project has already shipped
+## three gates that were green having inspected nothing.
+func test_characters_are_exempt_and_the_exemption_is_load_bearing() -> void:
+	var character := "res://assets/models/characters/winter_wanderer.glb"
+	assert_true(FileAccess.file_exists(character), "the exempt character must exist: %s" % character)
+	assert_true(
+		AssetScannerScript.is_surface_rule_exempt(character),
+		"the character must be exempt from the surface rules"
+	)
+	assert_false(
+		AssetScannerScript.is_surface_rule_exempt("res://assets/models/buildings/farmhouse.glb"),
+		"the exemption must not reach buildings"
+	)
+	assert_false(
+		AssetScannerScript.is_surface_rule_exempt("res://scenes/main.tscn"),
+		"the exemption must not reach scenes"
+	)
+
+	var direct := _offenders_in(character, AssetProbeScript.probe(character))
+	assert_true(
+		direct.size() > 0,
+		"the exemption reports as load-bearing only while the character actually carries "
+		+ "something this gate rejects; it now carries nothing, so either the model changed "
+		+ "or the exemption is no longer needed. Decide which -- do not delete this assertion."
+	)
+
+	var report := "; ".join(_collect_palette_offenders(AssetScannerScript.SCAN_ROOTS))
+	assert_false(report.contains(character), "the project-wide scan must not report it: %s" % report)

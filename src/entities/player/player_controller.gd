@@ -12,15 +12,16 @@ extends CharacterBody3D
 ## and SnowField. The player does not need to know either of them exists, and
 ## when the bear starts leaving prints in Wave 4 it emits the same event.
 ##
-## The body is the supplied Winter Wanderer: mesh, rig and animation takes, with
-## the model's own PBR set discarded (Art Bible rule 8 bans normal, roughness,
-## metallic and specular outright) and flat palette colour applied instead. The
-## rust-orange scarf is the one warm thing on the character and, by rule 12, one
-## of only five places warmth is allowed at all.
+## The body is the supplied Winter Wanderer, rendered with the maps Meshy
+## delivered. The character is exempt from the Art Bible's surface rules by the
+## owner's ruling -- see _build_body() -- so unlike everything else in this
+## project it reads no colour out of the palette at all.
 
-const PALETTE_PATH := "res://data/palette/color_bible.tres"
-const CEL_SHADER_PATH := "res://assets/shaders/cel_flat.gdshader"
 const MODEL_PATH := "res://assets/models/characters/winter_wanderer.glb"
+const ALBEDO_PATH := "res://assets/models/characters/winter_wanderer_albedo.png"
+const NORMAL_PATH := "res://assets/models/characters/winter_wanderer_normal.png"
+const ROUGHNESS_PATH := "res://assets/models/characters/winter_wanderer_roughness.png"
+const METALLIC_PATH := "res://assets/models/characters/winter_wanderer_metallic.png"
 const STEP_SOUND_PATHS := [
 	"res://assets/audio/foley/footstep_snow_01.wav",
 	"res://assets/audio/foley/footstep_snow_02.wav",
@@ -74,30 +75,36 @@ const RUN_CLIP := &"Running"
 @export var print_scale_jitter := 0.08
 
 ## ---------------------------------------------------------------------------
-## Prints trenching together in deep snow
+## Prints trenching together in the deepest snow
 ## ---------------------------------------------------------------------------
 ## Past about knee depth the legs stop clearing the snow between footfalls and
-## start ploughing through it, so consecutive prints stop being separate marks
-## and run together into one channel. On a scoured crest nothing of the sort
-## happens, which is why this is gated on the same depth ratio that already
-## drives the print's size, softness and raggedness -- one fact about the snow,
-## read four ways.
+## start ploughing through it, so the gap between consecutive prints partly
+## fills in. On a scoured crest nothing of the sort happens, which is why this
+## is gated on the same depth ratio that already drives the print's size,
+## softness and raggedness -- one fact about the snow, read four ways.
 ##
-## Kept deliberately slight: at full depth the groove is 30% of the print's own
-## strength and 42% of its half-width. The first pass ran at 50% and 70% and it
-## was plainly wrong -- at nearly the prints' own width the chain dissolved into
-## one continuous ridge and no individual print survived. Width matters more
-## than depth here, because the rim the shader derives from the mask profile is
-## what turns a wide shallow groove into a bright wall.
-@export var trench_depth_start := 0.55
-@export var trench_strength := 0.3
-@export var trench_width := 0.42
-@export var trench_irregularity := 0.22
+## A HINT, and the numbers here are what "a hint" costs. Two earlier passes were
+## both plainly wrong and both are worth recording, because the failure is not
+## the one you would guess:
+##
+##   0.50 strength / 0.70 width, from 0.45 depth -- the prints dissolved
+##       outright and the trail became a continuous white ridge.
+##   0.30 strength / 0.42 width, from 0.55 depth -- still a ribbon: an angular
+##       zigzag snake with the prints absorbed into its corners.
+##
+## The second failure was geometric rather than a matter of degree, and no
+## reduction in strength would have fixed it -- see _place_print() on why the
+## groove now runs down the centre line instead of foot to foot. What is left is
+## a groove a sixth as strong as a print, a third of its width, and only in the
+## deepest fifth of the depth range.
+@export var trench_depth_start := 0.8
+@export var trench_strength := 0.16
+@export var trench_width := 0.32
+@export var trench_irregularity := 0.25
 
 ## A groove is only drawn between two steps that actually followed each other.
-## Beyond this many strides apart the previous print is somewhere else entirely
-## -- the walker stopped, turned, or the game restarted -- and joining them
-## would rule a line across untouched snow.
+## Beyond this many strides apart the walker stopped, turned, or the game
+## restarted, and joining them would rule a line across untouched snow.
 @export var trench_max_stride_gap := 1.8
 
 ## How far a print skews down the fall line, per unit of slope. The mask is a
@@ -144,17 +151,6 @@ const RUN_CLIP := &"Running"
 ## ---------------------------------------------------------------------------
 ## The character
 ## ---------------------------------------------------------------------------
-## Which bone the scarf rides, and how big a ring it makes. The model is a
-## single mesh with a single surface, so the scarf cannot be a second material
-## on it -- it is separate geometry, parented into the rig, which also means it
-## swings with the head instead of being painted on.
-@export var scarf_bone := &"neck"
-@export var scarf_inner_radius := 0.1
-@export var scarf_outer_radius := 0.175
-
-## Along the neck bone's own axes, so it sits on the collar rather than in it.
-@export var scarf_offset := Vector3(0.0, 0.02, 0.0)
-
 ## How fast the figure turns to face where it is going, in the same
 ## closed-fraction-per-second form as the camera's follow.
 @export var turn_speed := 12.0
@@ -197,7 +193,7 @@ var _stride_accumulator := 0.0
 var _left_foot := true
 var _facing := Vector3.FORWARD
 var _grounded := false
-var _last_print_spot := Vector3.ZERO
+var _last_print_centre := Vector3.ZERO
 var _has_last_print := false
 
 
@@ -232,16 +228,22 @@ func _exit_tree() -> void:
 		_steps.stop()
 
 
-## The model carries geometry and a rig and nothing else -- its materials are
-## stripped at import by tools/strip_scene_materials.gd, because Godot invents a
-## white, specular-enabled StandardMaterial3D for any surface that arrives
-## without one and that is an offender under rules 8 and 9. Everything visible
-## about this character is therefore decided here, from the palette, at runtime,
-## the same way the terrain is.
+## The character renders with the maps Meshy delivered, not with the palette.
+##
+## That is the owner's ruling -- 人物的颜色不受 GDD 的影响 -- and the Art Bible is
+## being amended to match: rules 8 and 9 (no normal/roughness/metallic/specular,
+## flat colour from the 12-entry table) are about the *world*. They still hold
+## for buildings, terrain, props and vegetation, and the art gates still enforce
+## them there; assets/models/characters/ is exempt, listed in
+## AssetScanner.SURFACE_RULE_EXEMPT_ROOTS so the exemption is a decision on the
+## record rather than a silence.
+##
+## The material is assembled here rather than carried by the model because Meshy
+## delivered the four maps as loose files next to the FBX -- only the albedo was
+## ever embedded in it. Building it in Godot also keeps each map a separate
+## imported texture, so the normal map gets normal-map compression and the
+## albedo does not.
 func _build_body() -> void:
-	var bible: ColorBible = load(PALETTE_PATH)
-	var shader: Shader = load(CEL_SHADER_PATH)
-
 	var shape := CapsuleShape3D.new()
 	shape.radius = body_radius
 	shape.height = body_height
@@ -260,19 +262,24 @@ func _build_body() -> void:
 	add_child(_model)
 	_scale_to_body_height()
 
-	# One surface for the whole figure, so this is one colour for the whole
-	# figure. Structure tones rather than a skin or a coat colour: in the
-	# reference frames the character is very nearly a dark silhouette carrying a
-	# single warm accent, and reading as a shape at 11% of frame height is worth
-	# more than reading as a person.
-	var body_material := ShaderMaterial.new()
-	body_material.shader = shader
-	body_material.set_shader_parameter("lit_color", bible.structure_tones[1])
-	body_material.set_shader_parameter("shade_color", bible.structure_tones[3])
+	var body_material := StandardMaterial3D.new()
+	body_material.albedo_texture = load(ALBEDO_PATH)
+	body_material.normal_enabled = true
+	body_material.normal_texture = load(NORMAL_PATH)
+	body_material.roughness_texture = load(ROUGHNESS_PATH)
+	# metallic defaults to 0 and *multiplies* the map, so the map does nothing at
+	# all until this is 1. roughness already defaults to 1 and needs no such line,
+	# which is exactly the sort of asymmetry that gets a metallic map shipped
+	# wired up and inert.
+	body_material.metallic = 1.0
+	body_material.metallic_texture = load(METALLIC_PATH)
+	# Overridden rather than assigned into the mesh: the .glb's own surface
+	# material is whatever Godot invented for a primitive that arrived without
+	# one, and the model file is not the place to keep a material that is
+	# assembled from four separate files.
 	for surface in _mesh_instances(_model):
 		surface.material_override = body_material
 
-	_attach_scarf(bible, shader)
 	_build_animation()
 
 
@@ -307,58 +314,6 @@ func _first_of_type(node: Node, type: StringName) -> Node:
 		if found != null:
 			return found
 	return null
-
-
-## Art Bible rule 12: the warm quota is 0.5% of the frame, and the scarf is one
-## of the five places warmth may appear at all. Section 5.3 makes it the point
-## of the character -- "the only warm colour on the protagonist, and the
-## player's visual anchor on the snow field".
-##
-## Geometry rather than a second material, because the model is a single surface
-## and there is nothing to assign a second material to. Parented into the rig so
-## it turns with the head.
-func _attach_scarf(bible: ColorBible, shader: Shader) -> void:
-	var skeleton := _first_of_type(_model, &"Skeleton3D") as Skeleton3D
-	if skeleton == null or skeleton.find_bone(scarf_bone) < 0:
-		return
-
-	var anchor := BoneAttachment3D.new()
-	skeleton.add_child(anchor)
-	# After add_child: resolving a bone name needs the Skeleton3D parent.
-	anchor.bone_name = scarf_bone
-
-	var material := ShaderMaterial.new()
-	material.shader = shader
-	material.set_shader_parameter("lit_color", bible.warm_tones[1])
-	material.set_shader_parameter("shade_color", bible.warm_tones[0])
-
-	var ring := TorusMesh.new()
-	ring.inner_radius = scarf_inner_radius
-	ring.outer_radius = scarf_outer_radius
-	# A default TorusMesh is 4,096 triangles, which for eight pixels of scarf
-	# would be more geometry than the character wearing it.
-	ring.rings = 10
-	ring.ring_segments = 6
-
-	var scarf := MeshInstance3D.new()
-	scarf.mesh = ring
-	scarf.material_override = material
-
-	# The rig came from an FBX authored in centimetres, and Godot carries that
-	# as a 0.01 scale on the Armature -- so anything parented into the skeleton
-	# is drawn a hundredth of the size it asks for, and any offset is read in
-	# centimetres. Undone here rather than upstream: applying the scale in
-	# Blender would have to rescale every take's translation curves with it,
-	# and eighteen animations is a lot to risk for a tidier number.
-	# Divided by the model's own scale, not taken raw: the figure is scaled to
-	# body_height, and the scarf has to keep that -- what is being undone here is
-	# only the rig's centimetre units, not the character's size.
-	var rig_scale := maxf(
-		skeleton.global_transform.basis.get_scale().x / maxf(_model.scale.x, 0.0001), 0.0001
-	)
-	scarf.scale = Vector3.ONE / rig_scale
-	scarf.position = scarf_offset / rig_scale
-	anchor.add_child(scarf)
 
 
 ## Walk and run, blended by the speed the snow already decides.
@@ -577,11 +532,11 @@ func _place_print() -> void:
 	var depth_ratio := clampf(depth / max_depth, 0.0, 1.0)
 	var strength := clampf(0.34 + 0.66 * depth_ratio, 0.0, 1.0)
 
-	# Recorded whether or not the event goes out, so the next step measures its
-	# gap from where this foot actually landed.
-	var previous := _last_print_spot
+	# The walker's centre line, not the foot. Recorded whether or not the event
+	# goes out, so the next step measures its gap from the right place.
+	var previous := _last_print_centre
 	var had_previous := _has_last_print
-	_last_print_spot = spot
+	_last_print_centre = global_position
 	_has_last_print = true
 
 	if _bus == null:
@@ -636,16 +591,28 @@ func _place_print() -> void:
 	}
 
 	# Ramped in rather than switched on: a hard threshold would put a visible
-	# line across the snow at whatever depth it sat at, with a continuous
-	# channel on one side of it and separate prints on the other.
+	# line across the snow at whatever depth it sat at, with a channel on one
+	# side of it and separate prints on the other.
 	var trench := smoothstep(trench_depth_start, 1.0, depth_ratio)
 	if trench > 0.0 and had_previous \
-			and spot.distance_to(previous) <= stride_length * trench_max_stride_gap:
+			and global_position.distance_to(previous) <= stride_length * trench_max_stride_gap:
+		# DOWN THE CENTRE LINE, not from the last print to this one. Consecutive
+		# prints alternate sides, so joining them draws a polyline that reverses
+		# its lateral offset at every step -- an angular zigzag with a hard
+		# corner in each print, which is what the second pass shipped and what
+		# made it read as a snake rather than as snow. The walker's own path has
+		# no such corners: it is a smooth curve sampled every stride, so the
+		# segments meet almost straight. It is also what actually happens --
+		# the legs plough a channel down the middle and the boots punch pockets
+		# either side of it.
 		payload["trench_from"] = previous
+		payload["trench_to"] = global_position
 		payload["trench_strength"] = strength * trench_strength * trench
 		# Measured off the print's half-width, not its half-length -- the groove
 		# is as wide as the leg that dragged through it, and the print is longer
-		# than it is wide.
+		# than it is wide. At this width it reaches the inner edge of each print
+		# and no further, which is the whole of the effect: the gap partly fills,
+		# the outlines survive.
 		payload["trench_radius"] = print_radius * scale / print_aspect * trench_width
 		payload["trench_irregularity"] = trench_irregularity * trench
 

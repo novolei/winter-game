@@ -217,19 +217,21 @@ func stamp(
 				_dirty = true
 
 
-## Drags a groove between two prints, so a trail through deep powder reads as
-## one channel with foot pockets in it rather than as a row of separate marks.
+## Drags a shallow groove along a stretch of the walker's path, so a trail
+## through the deepest powder reads as slightly connected rather than as a row
+## of isolated holes.
 ##
-## That is what wading actually leaves: below about knee depth the legs never
-## clear the snow between footfalls, they plough through it, and the sides of
-## each hole collapse into the next. On a wind-scoured crest none of that
-## happens and the prints stay separate and sharp -- so the caller gates this on
-## snow depth and simply does not call it up there.
+## That is what wading leaves: below about knee depth the legs never clear the
+## snow between footfalls, they plough through it, and the gaps between the
+## boot pockets partly fill in. On a wind-scoured crest none of that happens and
+## the prints stay separate and sharp -- so the caller gates this on snow depth
+## and simply does not call it up there.
 ##
-## Deliberately weaker and narrower than the prints it joins. Composited with
-## max() like everything else here, so wherever a print is deeper the print
-## wins and stays legible: this fills the gaps between them, it does not
-## replace them with a ditch.
+## Deliberately far weaker and narrower than the prints it runs past. Composited
+## with max() like everything else here, so wherever a print is deeper the print
+## wins outright and keeps its outline and its rim. A groove wide or strong
+## enough to be read as a groove in its own right is the failure mode, not the
+## goal -- this has been overshot twice.
 ##
 ## Geometrically it is `stamp()`'s profile measured from a segment instead of
 ## from a point -- flat to `core`, then smoothstep out, with the same edge noise
@@ -353,10 +355,13 @@ func _on_footprint(payload) -> void:
 	var data: Dictionary = payload
 	# The groove first, so the print is composited over it -- immaterial with
 	# max(), but it is the order the two things happen in.
-	if data.has("trench_from"):
+	# `trench_to` is the walker's centre at this step, which is NOT the print's
+	# position -- the print sits a half-stride-width off it. The groove runs
+	# down the centre line; see player_controller._place_print().
+	if data.has("trench_from") and data.has("trench_to"):
 		drag(
 			data.get("trench_from", Vector3.ZERO),
-			data.get("position", Vector3.ZERO),
+			data.get("trench_to", Vector3.ZERO),
 			data.get("trench_radius", 0.12),
 			data.get("trench_strength", 0.0),
 			data.get("core", 0.55),

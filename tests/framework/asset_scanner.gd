@@ -9,6 +9,40 @@ extends RefCounted
 ## Shared across the three gates so their coverage cannot silently diverge.
 const SCAN_ROOTS: Array[String] = ["res://assets/models", "res://scenes"]
 
+## Roots exempt from the *surface* rules, and from those only.
+##
+## Art Bible rules 8 and 9 -- no normal, roughness, metallic or specular maps,
+## every surface flat and coloured from the 12-entry table -- are about the
+## **world**: buildings, terrain, props, vegetation. Characters are exempt by the
+## owner's ruling (人物的颜色不受 GDD 的影响) and ship with the photographic
+## albedo, normal, roughness and metallic maps they were generated with.
+##
+## Nothing else is waived. Rule 6's triangle budget still applies here and
+## tests/art/test_topology.gd still enforces it -- the character was decimated
+## from 12,108 to 6,999 triangles to satisfy it -- and so does any gate added
+## later that is not about surfaces.
+##
+## Written down here, and tested, for the same reason AssetProbe.EXEMPT_SHADERS
+## is: an asset that passes because a gate was told to look away is fine, and an
+## asset that passes because a gate quietly never saw it is the failure this
+## whole framework exists to end. Adding a line here is a person deciding.
+##
+## Lives beside SCAN_ROOTS rather than in either gate because both gates need
+## the identical answer, and a policy duplicated in two files is a policy that
+## will diverge.
+const SURFACE_RULE_EXEMPT_ROOTS: Array[String] = ["res://assets/models/characters"]
+
+
+## True when `path` is under a root the surface rules do not apply to.
+##
+## Prefix-matched on a trailing slash, so a sibling folder that merely starts
+## with the same letters -- assets/models/characters_wip -- is not swept in.
+static func is_surface_rule_exempt(path: String) -> bool:
+	for root in SURFACE_RULE_EXEMPT_ROOTS:
+		if path == root or path.begins_with(root + "/"):
+			return true
+	return false
+
 ## Files that may contain a material or a mesh, whether or not they *are* one.
 ##
 ## The two lists are identical and that is deliberate rather than lazy: every

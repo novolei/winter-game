@@ -212,12 +212,14 @@ func test_a_footprint_without_a_trench_leaves_the_snow_between_untouched() -> vo
 	_mask._on_footprint({"position": Vector3(0.72, 0.0, 0.0), "radius": 0.28, "strength": 0.9})
 	assert_almost_eq(_mask.value_at(Vector3(0.36, 0.0, 0.0)), 0.0, 0.01)
 
-	# ...and the same pair with the keys present does join up.
+	# ...and the same pair with the keys present does join up. `trench_to` is
+	# the walker's centre, not the print's position, so both ends are given.
 	_mask._on_footprint({
 		"position": Vector3(1.44, 0.0, 0.0),
 		"radius": 0.28,
 		"strength": 0.9,
 		"trench_from": Vector3(0.72, 0.0, 0.0),
+		"trench_to": Vector3(1.44, 0.0, 0.0),
 		"trench_strength": 0.45,
 		"trench_radius": 0.13,
 	})
@@ -225,6 +227,18 @@ func test_a_footprint_without_a_trench_leaves_the_snow_between_untouched() -> vo
 		_mask.value_at(Vector3(1.08, 0.0, 0.0)) > 0.2,
 		"the trench keys must reach TrackMask.drag()"
 	)
+
+	# A half-specified payload draws nothing rather than a groove from the
+	# origin: `trench_from` alone used to default its other end to the print.
+	_mask._on_footprint({
+		"position": Vector3(6.0, 0.0, 0.0),
+		"radius": 0.28,
+		"strength": 0.9,
+		"trench_from": Vector3(5.28, 0.0, 0.0),
+		"trench_strength": 0.45,
+		"trench_radius": 0.13,
+	})
+	assert_almost_eq(_mask.value_at(Vector3(5.64, 0.0, 0.0)), 0.0, 0.01)
 
 
 ## An event carrying a payload this system does not understand must be ignored,
