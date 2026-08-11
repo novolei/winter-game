@@ -46,6 +46,44 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 ## multiply rule 10 forbids.
 @export var exposure := 1.3
 
+## ---------------------------------------------------------------------------
+## The character's fill -- and, today, nothing else's
+## ---------------------------------------------------------------------------
+## Both shaders in assets/shaders/ declare `ambient_light_disabled` (checked,
+## and there are only two). So the Environment's ambient reaches exactly one
+## thing on screen: the character, which is the only object in the game drawn
+## with a stock StandardMaterial3D. These two numbers are therefore a
+## **character control that happens to live on the Environment**, not a world
+## shadow tint, and they should be read and tuned as such.
+##
+## They used to be `structure_tones[2]` at 0.35 -- the palette's darkest navy --
+## with a comment saying ambient "reaches nothing that matters". It reached the
+## character, and it was very nearly *all* the light on him: the sun sits at
+## azimuth 118 against a camera yawed -35, which is almost behind the lens, so
+## practically every surface the camera can see on any object is in shade. The
+## measured result, sampled off the rendered frame at the shoulder, was
+## **#02050C** -- black. The coat is painted #343E4C and the scarf #944328; the
+## whole figure was a silhouette, and that is the defect this fixes.
+##
+## NEUTRAL RATHER THAN PALETTE-BLUE, and that is the one deliberate departure.
+## The palette governs albedo; this is a light, and lights already leave it
+## (the sun is snow_tones[0] because a low sun on snow is that colour). Filling
+## with a snow tone was measured at four energies and does not work: the coat's
+## blue channel clips while its red is still at a quarter, so the coat renders a
+## saturated blue instead of the blue-grey it is painted. `fill_tint` keeps a
+## little of the snow in it so the figure stays in the frame's colour family.
+##
+## WARNING for whoever adds the first world object that is *not* on a cel
+## shader: this energy is far above a physical ambient, because it is standing
+## in for a studio render's whole light rig on a model whose albedo was authored
+## for one. Such an object will blow out. Give the character its own fill then
+## -- an extra cull-masked light beside PlayerController's key -- and hand this
+## number back to the world.
+@export var character_fill_energy := 3.2
+
+## How much of the snow's blue the neutral fill keeps, 0 = white, 1 = snow.
+@export var character_fill_tint := 0.2
+
 var _sun: DirectionalLight3D
 
 
@@ -55,12 +93,11 @@ func _ready() -> void:
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = bible.snow_tones[0]
-	# The cel shaders declare ambient_light_disabled, so ambient reaches
-	# nothing that matters; it is set from the palette's dark end anyway so
-	# that anything added later without the cel shader still lands in-family.
+	# See character_fill_energy above: this is the character's fill, because the
+	# character is the only thing on screen that reads ambient at all.
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = bible.structure_tones[2]
-	env.ambient_light_energy = 0.35
+	env.ambient_light_color = Color.WHITE.lerp(bible.snow_tones[0], character_fill_tint)
+	env.ambient_light_energy = character_fill_energy
 	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
 	env.tonemap_exposure = exposure
 	env.ssao_enabled = false

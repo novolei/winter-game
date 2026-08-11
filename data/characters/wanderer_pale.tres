@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="CharacterScheme" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/character_scheme.gd" id="1_vl35h"]
+
+[resource]
+script = ExtResource("1_vl35h")
+id = &"pale"
+display_name = "Pale — the model's own colours"
+albedo_tint = Color(0.8, 0.8, 0.82, 1)

@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="CharacterScheme" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/character_scheme.gd" id="1_bsiup"]
+
+[resource]
+script = ExtResource("1_bsiup")
+id = &"dark"
+display_name = "Dark — the silhouette"
+albedo_tint = Color(0.34, 0.34, 0.36, 1)
+key_energy = 0.0

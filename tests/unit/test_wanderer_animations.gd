@@ -70,8 +70,95 @@ func test_every_take_is_in_the_library() -> void:
 ## are the ones whose absence stops the game rather than a later wave.
 func test_the_clips_the_movement_code_asks_for_resolve() -> void:
 	var library := _library()
-	for clip in [Wanderer.IDLE, Wanderer.WALK, Wanderer.RUN]:
+	for clip in [Wanderer.IDLE, Wanderer.IDLE_COLD, Wanderer.WALK, Wanderer.RUN]:
 		assert_true(library.has_animation(clip), "player_controller plays %s and it is not in the library" % clip)
+
+
+## The one the owner asked for by name, and the one claim about it that a
+## screenshot cannot make.
+##
+## `idle` is Meshy's `Idle_4` and the owner's word for it was 僵硬 -- stiff. That
+## is measurable: a shiver is a high-frequency tremor, so the direction of every
+## joint reverses many times a second, where a slow warm sway reverses a handful
+## of times across its whole loop. Counting those reversals is the difference
+## between the two takes, it is what makes the cold idle a readout for 体温 under
+## GDD section 5, and it is invisible in any still frame.
+##
+## Measured on the shipped library: idle 1.80 reversals/s, idle_cold 5.13.
+func test_the_cold_idle_is_the_one_that_actually_shivers() -> void:
+	var library := _library()
+	var warm := _reversals_per_second(library.get_animation(Wanderer.IDLE))
+	var cold := _reversals_per_second(library.get_animation(Wanderer.IDLE_COLD))
+	assert_true(
+		warm > 0.0, "the neutral idle measured %f reversals/s; the comparison below means nothing" % warm
+	)
+	assert_true(
+		cold >= warm * 2.0,
+		"idle_cold reverses %f times a second against idle's %f: these two are the "
+			% [cold, warm]
+			+ "same kind of stand, and the cold one is supposed to be a tremor"
+	)
+
+
+## A visible pop at the loop point is worse than a stiff idle, so the seam is
+## pinned rather than trusted. Measured: 6.87 degrees, on RightForeArm -- against
+## walk_balance's 27.76 on a planted foot, which the inventory flags as *not*
+## looping. LOOP_LINEAR interpolates across the seam over one frame, so on a take
+## whose whole character is high-frequency micro-motion it is not distinguishable
+## from the shiver.
+func test_the_cold_idle_closes_its_loop() -> void:
+	var animation := _library().get_animation(Wanderer.IDLE_COLD)
+	assert_eq(animation.loop_mode, Animation.LOOP_LINEAR, "idle_cold is played as a loop")
+	var worst := 0.0
+	for index in range(animation.get_track_count()):
+		if animation.track_get_type(index) != Animation.TYPE_ROTATION_3D:
+			continue
+		var first: Quaternion = animation.rotation_track_interpolate(index, 0.0)
+		var last: Quaternion = animation.rotation_track_interpolate(index, animation.length)
+		worst = maxf(worst, rad_to_deg(first.angle_to(last)))
+	assert_true(
+		worst <= 12.0,
+		"idle_cold's worst joint is %f degrees out at the loop seam; past about a "
+			% worst
+			+ "dozen the wrap reads as a twitch of its own rather than as the shiver"
+	)
+
+
+## Reversals per second of a take's angular motion, averaged over the bones a
+## shiver actually shows in. Sampled at 30 Hz, which is the rate Meshy authors at
+## -- sampling faster would only interpolate.
+func _reversals_per_second(animation: Animation) -> float:
+	if animation == null:
+		return 0.0
+	const BONES := ["Spine02", "Head", "LeftHand", "RightHand", "Hips"]
+	var total := 0.0
+	var counted := 0
+	for index in range(animation.get_track_count()):
+		if animation.track_get_type(index) != Animation.TYPE_ROTATION_3D:
+			continue
+		if not BONES.has(String(animation.track_get_path(index)).get_slice(":", 1)):
+			continue
+		var step := 1.0 / 30.0
+		var base: Quaternion = animation.rotation_track_interpolate(index, 0.0)
+		var previous_delta := 0.0
+		var last := 0.0
+		var reversals := 0
+		for frame in range(int(animation.length / step)):
+			var here: Quaternion = animation.rotation_track_interpolate(index, float(frame) * step)
+			var angle := base.angle_to(here)
+			var delta := angle - last
+			# The epsilon keeps float noise on a genuinely still bone from
+			# counting as a tremor, which would make every take look like a shiver.
+			if frame > 1 and absf(delta) > 0.00002 and signf(delta) != signf(previous_delta):
+				reversals += 1
+			if absf(delta) > 0.00002:
+				previous_delta = delta
+			last = angle
+		total += float(reversals) / animation.length
+		counted += 1
+	if counted == 0:
+		return 0.0
+	return total / float(counted)
 
 
 func test_no_take_keeps_the_name_meshy_gave_it() -> void:

@@ -32,9 +32,10 @@ const MODEL_PATH := "res://assets/models/characters/winter_wanderer.glb"
 ## every track in the merged library has to address.
 const SKELETON_PATH := "Armature/Skeleton3D"
 
-## The three the movement code asks for by name. Named constants rather than
+## The four the movement code asks for by name. Named constants rather than
 ## string literals at the call site so a rename here is a compile-time move.
 const IDLE := &"idle"
+const IDLE_COLD := &"idle_cold"
 const WALK := &"walk"
 const RUN := &"run"
 
@@ -47,6 +48,7 @@ const RUN := &"run"
 ## misses by 14 cm and does.
 const TAKES: Array = [
 	# --- what the game uses now ---
+	[MODEL_PATH, "idle_cold_shiver", "idle_cold", true],
 	[MODEL_PATH, "idle_neutral", "idle", true],
 	[MODEL_PATH, "Walking", "walk", true],
 	[MODEL_PATH, "Running", "run", true],

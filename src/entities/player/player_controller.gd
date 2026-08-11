@@ -28,13 +28,25 @@ const STEP_SOUND_PATHS := [
 ]
 const FOOTPRINT_EVENT := &"player.footprint"
 
-## The three takes this slice uses, out of the twenty in the merged library.
+## The four takes this slice uses, out of the twenty-one in the merged library.
 ## Shooting, aiming, sneaking, the limp, the knockdown and the two deaths are
 ## all built and addressable -- see WandererAnimations -- and belong to later
 ## waves.
 const IDLE_CLIP := WandererAnimations.IDLE
+const IDLE_COLD_CLIP := WandererAnimations.IDLE_COLD
 const WALK_CLIP := WandererAnimations.WALK
 const RUN_CLIP := WandererAnimations.RUN
+
+## The visual layer the character's own surfaces are put on, so a light can be
+## aimed at him and at nothing else. Bit 0 stays set: the sun still lights him
+## and he still casts into the world's shadow map.
+const CHARACTER_LAYER := 1 << 1
+
+## Where the breath comes from. The rig has no jaw or mouth bone -- 24 bones,
+## `Head` and then `headfront` a few centimetres in front of it -- so the mouth
+## is an offset from the head, in metres, forward and a little down.
+const BREATH_BONE := &"Head"
+const BREATH_MOUTH_OFFSET := Vector3(0.0, -0.03, 0.17)
 
 @export var run_speed := 5.4
 @export var wade_speed := 1.5
@@ -184,6 +196,40 @@ const RUN_CLIP := WandererAnimations.RUN
 @export var anim_idle_speed := 0.12
 @export var anim_moving_speed := 0.85
 
+## How cold he looks when he stops, 0 = the warm relaxed stand, 1 = shivering.
+##
+## GDD section 5 and section 9 make body language the readout for the survival
+## stats and there is no HUD, so this is the beginning of that: `set_chill()`
+## takes it, and the temperature system drives it when it lands.
+##
+## It defaults to 1 rather than to 0, which inverts the obvious mapping, and the
+## screenshots decided it. `idle` is Meshy's `Idle_4` and it barely moves --
+## measured, not judged: its dominant frequency is 0.07 Hz and its per-frame
+## direction reverses about a tenth as often as the cold take's. The owner's
+## word for it was 僵硬, stiff, and they are right. Every minute of this game so
+## far is spent outdoors in a wind, where nobody stands still; the warm stand is
+## the special case and belongs to the farmhouse interior, so it waits there
+## with a name on it.
+@export var chill := 1.0
+
+## ---------------------------------------------------------------------------
+## Which of the wanderer's looks to wear
+## ---------------------------------------------------------------------------
+## A path rather than a preloaded resource, so adding a third look is a new
+## `.tres` in data/characters/ and nothing else -- no `.gd` anywhere changes.
+## See CharacterScheme for what the two shipped looks are and why both exist.
+##
+## The scheme also carries the character's own key light, because the sun cannot
+## do that job: it is at azimuth 118 against a camera yawed -35, which is nearly
+## behind the lens, so every surface of the figure the camera can see is in its
+## shade. Left to the Environment's fill alone the figure is evenly lit from all
+## sides -- correctly coloured, but a flat paper cut-out with no form. The key
+## puts the form back, aimed from the camera's own quarter for exactly that
+## reason, and culled to CHARACTER_LAYER because every other surface in the game
+## is on a cel shader whose light() would add it a second time and lay a second
+## shadow band across the snow.
+@export_file("*.tres") var scheme_path := "res://data/characters/wanderer_pale.tres"
+
 ## ---------------------------------------------------------------------------
 ## Footstep audio
 ## ---------------------------------------------------------------------------
@@ -204,7 +250,9 @@ const RUN_CLIP := WandererAnimations.RUN
 
 var _snow: Node
 var _bus: Node
+var _scheme: CharacterScheme
 var _steps: AudioStreamPlayer
+var _breath: BreathFog
 var _model: Node3D
 var _animation: AnimationTree
 var _stride_accumulator := 0.0
@@ -280,25 +328,101 @@ func _build_body() -> void:
 	add_child(_model)
 	_scale_to_body_height()
 
+	_scheme = load(scheme_path) as CharacterScheme
+	if _scheme == null:
+		# Never silently: a missing scheme means the figure is painted by
+		# whatever StandardMaterial3D defaults to, which is white plastic.
+		push_warning("player_controller: no CharacterScheme at %s" % scheme_path)
+		_scheme = CharacterScheme.new()
+
 	var body_material := StandardMaterial3D.new()
 	body_material.albedo_texture = load(ALBEDO_PATH)
-	body_material.normal_enabled = true
-	body_material.normal_texture = load(NORMAL_PATH)
-	body_material.roughness_texture = load(ROUGHNESS_PATH)
-	# metallic defaults to 0 and *multiplies* the map, so the map does nothing at
-	# all until this is 1. roughness already defaults to 1 and needs no such line,
-	# which is exactly the sort of asymmetry that gets a metallic map shipped
-	# wired up and inert.
-	body_material.metallic = 1.0
-	body_material.metallic_texture = load(METALLIC_PATH)
+	# The scheme's whole job. Multiplies the model's own maps; see
+	# CharacterScheme.albedo_tint for why it is also what unclips the scarf.
+	body_material.albedo_color = _scheme.albedo_tint
+	if _scheme.normal_map_enabled:
+		body_material.normal_enabled = true
+		body_material.normal_texture = load(NORMAL_PATH)
+	if _scheme.roughness_map_enabled:
+		body_material.roughness_texture = load(ROUGHNESS_PATH)
+	if _scheme.metallic_map_enabled:
+		# metallic defaults to 0 and *multiplies* the map, so the map does nothing
+		# at all until this is 1. roughness already defaults to 1 and needs no such
+		# line, which is exactly the sort of asymmetry that gets a metallic map
+		# shipped wired up and inert.
+		body_material.metallic = 1.0
+		body_material.metallic_texture = load(METALLIC_PATH)
 	# Overridden rather than assigned into the mesh: the .glb's own surface
 	# material is whatever Godot invented for a primitive that arrived without
 	# one, and the model file is not the place to keep a material that is
 	# assembled from four separate files.
 	for surface in _mesh_instances(_model):
 		surface.material_override = body_material
+		surface.layers |= CHARACTER_LAYER
 
+	_build_key_light()
 	_build_animation()
+	_build_breath()
+
+
+## The breath rides the head bone. See BreathFog for why that matters and for
+## what drives it.
+##
+## The aim node exists because the Head bone's own axes are not the character's:
+## its rest basis is rolled, so "forward" on that bone is not the way he is
+## facing. Cancelling the rest basis leaves a node whose +Z is the model's +Z --
+## which is the way this model faces -- while still following the head through
+## every take. The scale term cancels the model's own, so BreathFog's numbers
+## are metres of world rather than of Meshy's centimetres.
+func _build_breath() -> void:
+	var skeleton := _first_of_type(_model, &"Skeleton3D") as Skeleton3D
+	if skeleton == null:
+		return
+	var head := skeleton.find_bone(BREATH_BONE)
+	if head < 0:
+		push_warning("player_controller: the rig has no %s bone to breathe from" % BREATH_BONE)
+		return
+
+	var attachment := BoneAttachment3D.new()
+	attachment.name = "BreathAnchor"
+	attachment.bone_name = BREATH_BONE
+	skeleton.add_child(attachment)
+
+	var aim := Node3D.new()
+	aim.name = "BreathAim"
+	var rest := skeleton.get_bone_global_rest(head).basis.orthonormalized().inverse()
+	var world_scale := skeleton.global_transform.basis.get_scale().y
+	if world_scale > 0.0001:
+		rest = rest.scaled(Vector3.ONE / world_scale)
+	aim.transform = Transform3D(rest, BREATH_MOUTH_OFFSET / maxf(world_scale, 0.0001))
+	attachment.add_child(aim)
+
+	_breath = BreathFog.new()
+	_breath.name = "Breath"
+	aim.add_child(_breath)
+
+
+## The form, not the level -- the level is the Environment's fill. See
+## scheme_path above, and LightingDirector.character_fill_energy.
+func _build_key_light() -> void:
+	if _scheme == null or _scheme.key_energy <= 0.0:
+		return
+	var key := DirectionalLight3D.new()
+	key.name = "KeyLight"
+	key.rotation = Vector3(
+		deg_to_rad(-_scheme.key_elevation_degrees),
+		deg_to_rad(_scheme.key_azimuth_degrees),
+		0.0)
+	key.light_energy = _scheme.key_energy
+	# Left white. Every other colour in this project comes out of the palette;
+	# this one must not, for the reason LightingDirector.character_fill_energy
+	# spells out -- a blue light on a blue-grey coat clips the blue channel
+	# before the red one is halfway up, and the coat stops reading as its own
+	# colour. Nothing else in the game is lit by it.
+	key.light_cull_mask = CHARACTER_LAYER
+	key.shadow_enabled = false
+	key.light_specular = 0.0
+	add_child(key)
 
 
 ## Measured off the mesh rather than against a constant, so regenerating the
@@ -346,10 +470,18 @@ func _first_of_type(node: Node, type: StringName) -> Node:
 ## THE GRAPH'S SHAPE IS THE WHOLE OF THE IDLE FIX, and the ordering is not
 ## arbitrary:
 ##
-##     walk ---.
-##              >-- gait --> pace ---.
-##     run  ---'                      >-- motion --> output
-##     idle --------------------------'
+##     walk ------.
+##                 >-- gait --> pace ---.
+##     run  ------'                      >-- motion --> output
+##     idle -----.                      /
+##                >-- chill -----------'
+##     idle_cold '
+##
+## `chill` is the standing-still half of GDD section 5's no-HUD readout: one
+## number from the survival stats decides how cold the man looks when he stops.
+## It sits inside the idle branch rather than over the output so that it costs
+## nothing while he is moving -- at full speed `motion` is 1 and neither idle
+## contributes at all.
 ##
 ## The time scale sits *inside* the locomotion branch, not over the whole graph.
 ## It has to: pace goes to zero with the ground speed, which is what stops a
@@ -372,13 +504,15 @@ func _build_animation() -> void:
 	if player.has_animation_library(&""):
 		player.remove_animation_library(&"")
 	player.add_animation_library(&"", WandererAnimations.build())
-	for clip in [IDLE_CLIP, WALK_CLIP, RUN_CLIP]:
+	for clip in [IDLE_CLIP, IDLE_COLD_CLIP, WALK_CLIP, RUN_CLIP]:
 		if not player.has_animation(clip):
 			push_warning("player_controller: the merged library is missing %s" % clip)
 			return
 
 	var idle := AnimationNodeAnimation.new()
 	idle.animation = IDLE_CLIP
+	var idle_cold := AnimationNodeAnimation.new()
+	idle_cold.animation = IDLE_COLD_CLIP
 	var walk := AnimationNodeAnimation.new()
 	walk.animation = WALK_CLIP
 	var run := AnimationNodeAnimation.new()
@@ -386,15 +520,19 @@ func _build_animation() -> void:
 
 	var graph := AnimationNodeBlendTree.new()
 	graph.add_node("idle", idle)
+	graph.add_node("idle_cold", idle_cold)
+	graph.add_node("chill", AnimationNodeBlend2.new())
 	graph.add_node("walk", walk)
 	graph.add_node("run", run)
 	graph.add_node("gait", AnimationNodeBlend2.new())
 	graph.add_node("pace", AnimationNodeTimeScale.new())
 	graph.add_node("motion", AnimationNodeBlend2.new())
+	graph.connect_node("chill", 0, "idle")
+	graph.connect_node("chill", 1, "idle_cold")
 	graph.connect_node("gait", 0, "walk")
 	graph.connect_node("gait", 1, "run")
 	graph.connect_node("pace", 0, "gait")
-	graph.connect_node("motion", 0, "idle")
+	graph.connect_node("motion", 0, "chill")
 	graph.connect_node("motion", 1, "pace")
 	graph.connect_node("output", 0, "motion")
 
@@ -431,6 +569,26 @@ func _drive_animation() -> void:
 	_animation.set(&"parameters/motion/blend_amount", motion)
 	_animation.set(&"parameters/gait/blend_amount", gait)
 	_animation.set(&"parameters/pace/scale", clampf(speed / reference, 0.0, anim_max_pace))
+	_animation.set(&"parameters/chill/blend_amount", clampf(chill, 0.0, 1.0))
+	# The same number, twice, on purpose: GDD section 9's readouts have to agree
+	# with each other or they stop being a readout. `motion` is already the
+	# ground speed normalised between standing and walking, which is exactly what
+	# exertion means here.
+	if _breath != null:
+		_breath.set_exertion(clampf(inverse_lerp(anim_idle_speed, run_speed, speed), 0.0, 1.0))
+		_breath.set_chill(clampf(chill, 0.0, 1.0))
+
+
+## How cold he looks standing still. 0 is the warm relaxed stand, 1 the shiver.
+##
+## The seam GDD section 5's survival stats plug into: whoever owns 体温 calls
+## this and the body says it, with no HUD in between. Kept as a method rather
+## than left to whoever wants to poke `chill` so that the clamp and the
+## parameter name stay in one place.
+func set_chill(amount: float) -> void:
+	chill = clampf(amount, 0.0, 1.0)
+	if _animation != null:
+		_animation.set(&"parameters/chill/blend_amount", chill)
 
 
 ## Non-positional, deliberately. The sources are stereo, which Godot spatialises
