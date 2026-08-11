@@ -36,6 +36,18 @@ func test_filters_by_suffix() -> void:
 	var found := AssetScannerScript.find_files(FIXTURE_ROOT, [".txt"] as Array[String])
 	assert_eq(found.size(), 1, "should find only ignored.txt")
 
+## SCAN_ROOTS is a hardcoded path list that nothing else checks. Rename or
+## misspell an entry and find_files() returns empty for it, so every gate
+## silently scans nothing and stays green forever -- the failure this suite
+## exists to prevent. The art gates' end-to-end tests cannot catch this,
+## because they point the same code path at a seeded fixture root instead.
+func test_the_scan_roots_exist_on_disk() -> void:
+	for root in AssetScannerScript.SCAN_ROOTS:
+		assert_true(
+			DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(root)),
+			"%s is a scan root but not a real folder" % root
+		)
+
 func test_missing_root_yields_empty_not_error() -> void:
 	var found := AssetScannerScript.find_files("res://this_folder_does_not_exist", [".tres"] as Array[String])
 	assert_eq(found.size(), 0, "a missing folder should yield an empty result, not an error")

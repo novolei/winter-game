@@ -12,6 +12,22 @@ const BUDGETS := {
 
 const AssetScannerScript := preload("res://tests/framework/asset_scanner.gd")
 
+## Seeded under user://, deliberately not under a budgeted folder: the
+## project-wide test must keep measuring the project, not this fixture.
+const FIXTURE_ROOT := "user://topology_gate_fixture"
+const FIXTURE_MESH := "user://topology_gate_fixture/over_budget.tres"
+const FIXTURE_BUDGET := 200
+
+func before_each() -> void:
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(FIXTURE_ROOT))
+	# A default SphereMesh is thousands of triangles, so it is over any budget
+	# this project sets for a prop without depending on an exact count here.
+	ResourceSaver.save(SphereMesh.new(), FIXTURE_MESH)
+
+func after_each() -> void:
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE_MESH))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE_ROOT))
+
 func _triangle_count(mesh: Mesh) -> int:
 	var total := 0
 	for surface in range(mesh.get_surface_count()):
@@ -34,6 +50,27 @@ func _triangle_count(mesh: Mesh) -> int:
 ## off-by-one comparison would pass forever.
 func _within_budget(triangle_count: int, budget: int) -> bool:
 	return triangle_count <= budget
+
+## The gate's whole walk-load-judge body, with the budget map as a parameter
+## so the exact code path the project-wide scan uses can also be aimed at a
+## seeded fixture root. That parameter is the only reason this gate is
+## testable at all right now: the budgeted folders are empty, so a broken scan
+## and an empty folder produce identical results. It takes the map rather than
+## a root list because the budget is keyed off the folder.
+func _collect_budget_offenders(budgets: Dictionary) -> PackedStringArray:
+	var offenders := PackedStringArray()
+	for root in budgets.keys():
+		var budget: int = budgets[root]
+		for path in AssetScannerScript.find_files(root, AssetScannerScript.MESH_SUFFIXES):
+			var resource := ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
+			if resource == null or not (resource is Mesh):
+				continue
+			var count := _triangle_count(resource as Mesh)
+			if not _within_budget(count, budget):
+				offenders.append(
+					"%s has %d triangles, over the %d budget for %s" % [path, count, budget, root]
+				)
+	return offenders
 
 func test_the_gate_counts_an_indexed_mesh() -> void:
 	# A BoxMesh is 6 quads = 12 triangles, and PrimitiveMesh always indexes.
@@ -59,6 +96,30 @@ func test_the_gate_rejects_a_count_over_budget() -> void:
 func test_the_gate_accepts_a_count_at_budget() -> void:
 	assert_true(_within_budget(500, 500), "exactly the budget must pass")
 
+## Joins the halves the other tests each prove separately: the counter, the
+## comparison, and the walker in test_asset_scanner.gd. Runs the real chain
+## -- find_files -> ResourceLoader.load -> type filter -> count -> compare --
+## against a real mesh on disk. Without this, emptying MESH_SUFFIXES leaves
+## the entire suite green, because the budgeted folders are empty and nothing
+## would notice.
+func test_the_gate_finds_an_over_budget_mesh_on_disk() -> void:
+	var offenders := _collect_budget_offenders({FIXTURE_ROOT: FIXTURE_BUDGET})
+	var report := "; ".join(offenders)
+	assert_eq(offenders.size(), 1, "the seeded mesh must be reported exactly once, got: %s" % report)
+	assert_true(report.contains(FIXTURE_MESH), "the report must name the seeded file, got: %s" % report)
+
+## BUDGETS' keys are hardcoded paths that nothing else checks. Rename or
+## misspell one and find_files() returns empty for it, so that asset class
+## stops being budgeted with no other test noticing -- the gate reports
+## "verified" while inspecting nothing, which is the failure this suite
+## exists to prevent.
+func test_every_budget_root_exists_on_disk() -> void:
+	for root in BUDGETS.keys():
+		assert_true(
+			DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(root)),
+			"%s is a budget key but not a real folder" % root
+		)
+
 ## Offenders are collected and asserted on once, after the walk, rather than
 ## asserted per asset inside it. The budgeted folders are empty in this wave,
 ## so a per-asset assertion would execute zero assertions and the runner fails
@@ -66,16 +127,5 @@ func test_the_gate_accepts_a_count_at_budget() -> void:
 ## a runtime error aborted. The check is unchanged: it fails on exactly the
 ## same meshes and still names every one of them.
 func test_every_mesh_is_within_its_budget() -> void:
-	var offenders := PackedStringArray()
-	for root in BUDGETS.keys():
-		var budget: int = BUDGETS[root]
-		for path in AssetScannerScript.find_files(root, AssetScannerScript.MESH_SUFFIXES):
-			var resource := ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
-			if resource == null or not (resource is Mesh):
-				continue
-			var count := _triangle_count(resource as Mesh)
-			if not _within_budget(count, budget):
-				offenders.append(
-					"%s has %d triangles, over the %d budget for %s" % [path, count, budget, root]
-				)
+	var offenders := _collect_budget_offenders(BUDGETS)
 	assert_eq(offenders.size(), 0, "; ".join(offenders))
