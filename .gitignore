@@ -4,3 +4,13 @@
 
 # Subagent-driven-development scratch: ledgers, briefs, reports, review packages
 .superpowers/
+
+# Third-party asset packs unzipped into the project root. Source material, not
+# source code: we import what we need out of them and the originals stay local.
+#
+# These also carry a .gdignore so Godot stops trying to import them -- the sound
+# pack was printing eight "Not a WAV file" errors on every single --import.
+/Sound FX Starter Pack Vol. 1/
+/Unarmed/
+/__MACOSX/
+/RPG-Character*
