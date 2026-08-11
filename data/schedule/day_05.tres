@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="DaySchedule" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/day_schedule.gd" id="1_e4i4a"]
+
+[resource]
+script = ExtResource("1_e4i4a")
+day_number = 5
+daylight_seconds = 420.0
+night_seconds = 480.0
+primary_lighting_preset = &"sunrise"
+allowed_weather_events = Array[StringName]([&"clear_break", &"cold_snap"])
+beacon_unlocked = &"power_pylon"

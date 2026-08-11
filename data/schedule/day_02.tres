@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="DaySchedule" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/day_schedule.gd" id="1_tgx4r"]
+
+[resource]
+script = ExtResource("1_tgx4r")
+day_number = 2
+primary_lighting_preset = &"pale_day"
+allowed_weather_events = Array[StringName]([&"snow_fog"])
+beacon_unlocked = &"fuel_station"

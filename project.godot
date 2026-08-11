@@ -27,6 +27,7 @@ window/stretch/aspect="expand"
 
 EventBus="*res://src/core/event_bus.gd"
 ServiceRegistry="*res://src/core/service_registry.gd"
+WorldClock="*res://src/systems/world_clock.gd"
 
 [rendering]
 

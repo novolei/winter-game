@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="DaySchedule" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/day_schedule.gd" id="1_poj3e"]
+
+[resource]
+script = ExtResource("1_poj3e")
+day_number = 3
+daylight_seconds = 480.0
+night_seconds = 420.0
+primary_lighting_preset = &"nightfall"
+allowed_weather_events = Array[StringName]([&"snow_fog", &"clear_break"])
+beacon_unlocked = &"church_tower"

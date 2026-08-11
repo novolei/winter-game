@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="DaySchedule" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/day_schedule.gd" id="1_hdosc"]
+
+[resource]
+script = ExtResource("1_hdosc")
+primary_lighting_preset = &"pale_day"
+beacon_unlocked = &"farmhouse_chimney"
