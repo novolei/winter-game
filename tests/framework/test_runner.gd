@@ -8,6 +8,7 @@ extends SceneTree
 ## their subjects directly with preload(...).new().
 
 const TEST_ROOTS: Array[String] = ["res://tests/unit", "res://tests/art"]
+const TestDiscovery := preload("res://tests/framework/test_discovery.gd")
 
 var _passed := 0
 var _failed := 0
@@ -18,30 +19,10 @@ func _initialize() -> void:
 	print("WinterTime test run")
 	print("=".repeat(60))
 	for root in TEST_ROOTS:
-		for path in _find_test_scripts(root):
+		for path in TestDiscovery.find_test_scripts(root):
 			_run_file(path)
 	_print_report()
 	quit(1 if _failed > 0 else 0)
-
-func _find_test_scripts(root: String) -> PackedStringArray:
-	var found := PackedStringArray()
-	var dir := DirAccess.open(root)
-	if dir == null:
-		return found
-	dir.list_dir_begin()
-	var entry := dir.get_next()
-	while entry != "":
-		if entry.begins_with("."):
-			entry = dir.get_next()
-			continue
-		var full := root.path_join(entry)
-		if dir.current_is_dir():
-			found.append_array(_find_test_scripts(full))
-		elif entry.begins_with("test_") and entry.ends_with(".gd"):
-			found.append(full)
-		entry = dir.get_next()
-	dir.list_dir_end()
-	return found
 
 func _run_file(path: String) -> void:
 	var script: GDScript = load(path)
@@ -49,10 +30,12 @@ func _run_file(path: String) -> void:
 		_failed += 1
 		_failure_log.append("  %s :: <load> -- could not load script" % path)
 		return
-	for method in script.get_script_method_list():
-		var method_name: String = method.name
-		if not method_name.begins_with("test_"):
-			continue
+	var methods := TestDiscovery.test_methods(script)
+	if methods.is_empty():
+		_failed += 1
+		_failure_log.append("  %s :: <no tests> -- no test methods found; the file may have failed to parse" % path)
+		return
+	for method_name in methods:
 		var instance = script.new()
 		instance.reset_failures()
 		instance.before_each()
