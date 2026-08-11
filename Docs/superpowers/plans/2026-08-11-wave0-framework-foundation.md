@@ -226,7 +226,7 @@ func test_reset_failures_clears_the_log() -> void:
 "D:/Godot_v4.7.1/Godot_v4.7.1-stable_win64_console.exe" --headless --path "D:/Godot resource/winter-time" --script res://tests/framework/test_runner.gd
 ```
 
-Expected: `5 passed, 0 failed`, exit code 0.
+Expected: `8 passed, 0 failed`, exit code 0.
 
 - [ ] **Step 5: Prove the runner actually reports failures**
 
@@ -239,7 +239,7 @@ func test_deliberate_failure_placeholder() -> void:
 
 Run the command from Step 4 again.
 
-Expected: `5 passed, 1 failed`, the FAILURES block names `test_deliberate_failure_placeholder`, and **exit code 1**. Confirm the exit code:
+Expected: `8 passed, 1 failed`, the FAILURES block names `test_deliberate_failure_placeholder`, and **exit code 1**. Confirm the exit code:
 
 ```bash
 echo $?
@@ -249,7 +249,7 @@ echo $?
 
 Delete `test_deliberate_failure_placeholder` from `tests/unit/test_framework_selfcheck.gd`. Run Step 4's command again.
 
-Expected: `5 passed, 0 failed`, exit code 0.
+Expected: `8 passed, 0 failed`, exit code 0.
 
 - [ ] **Step 7: Commit**
 
@@ -400,7 +400,7 @@ func clear() -> void:
 
 Run the Step 2 command.
 
-Expected: `11 passed, 0 failed` (5 from the harness self-check + 6 here).
+Expected: `15 passed, 0 failed` (5 from the harness self-check + 6 here).
 
 - [ ] **Step 5: Register the autoload**
 
@@ -524,7 +524,28 @@ func test_clear_empties_the_stack() -> void:
 	stack.clear()
 	assert_eq(stack.size(), 0, "clear must empty the stack")
 	assert_almost_eq(stack.apply(10.0), 10.0, 0.0001, "a cleared stack must not alter the base value")
+
+func test_the_same_instance_added_twice_expires_per_slot() -> void:
+	var stack = ModifierStackScript.new()
+	var shared = _make(&"cold_snap", ModifierScript.Operation.ADD, 5.0, 2.0)
+	stack.add(shared)
+	stack.add(shared)
+	assert_almost_eq(stack.apply(0.0), 10.0, 0.0001, "both slots should contribute")
+	stack.tick(1.0)
+	assert_eq(stack.size(), 2, "one second into a two-second duration, neither slot has expired")
+	assert_almost_eq(stack.apply(0.0), 10.0, 0.0001, "both slots should still contribute")
+	stack.tick(1.5)
+	assert_eq(stack.size(), 0, "both slots expire once their full duration elapses")
+	assert_almost_eq(stack.apply(0.0), 0.0, 0.0001, "nothing contributes after expiry")
+
+func test_modifier_expires_exactly_at_its_duration() -> void:
+	var stack = ModifierStackScript.new()
+	stack.add(_make(&"gust", ModifierScript.Operation.ADD, 5.0, 2.0))
+	stack.tick(2.0)
+	assert_eq(stack.size(), 0, "remaining hitting exactly zero must expire")
 ```
+
+> **Why `test_the_same_instance_added_twice_expires_per_slot` exists.** Godot's `ResourceLoader` caches `.tres` files, so two systems that each load the same modifier resource receive the **same instance**. An earlier design kept remaining times in a `Dictionary` keyed by the `Modifier` object, which collapsed two independent slots into one entry — consuming the duration twice as fast, then stranding the survivor so it never expired at all. Both callers were correct and the result was still wrong. This test is the regression guard.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -557,7 +578,8 @@ enum Operation { ADD, MULTIPLY, OVERRIDE }
 
 @export var value: float = 0.0
 
-## Seconds until this expires. -1 means permanent until removed by source.
+## Seconds until this expires. Any value <= 0 means permanent until removed
+## by source; -1 is the conventional way to write it.
 @export var duration: float = -1.0
 ```
 
@@ -577,19 +599,26 @@ extends RefCounted
 ## then any OVERRIDE replaces the result outright; the last one added wins.
 
 var _modifiers: Array[Modifier] = []
-var _remaining: Dictionary = {}
+
+## Seconds left for the modifier at the same index; INF means permanent.
+## Deliberately parallel to _modifiers rather than a Dictionary keyed by
+## Modifier: Godot's ResourceLoader caches .tres files, so two systems
+## loading the same modifier resource get the SAME instance. Keying by
+## object identity would collapse two independent slots into one expiry
+## entry, consuming the duration twice as fast and then stranding the
+## survivor so it never expires at all.
+var _remaining: Array[float] = []
 
 func add(mod: Modifier) -> void:
 	_modifiers.append(mod)
-	if mod.duration > 0.0:
-		_remaining[mod] = mod.duration
+	_remaining.append(mod.duration if mod.duration > 0.0 else INF)
 
 func remove_by_source(source_id: StringName) -> int:
 	var removed := 0
 	for i in range(_modifiers.size() - 1, -1, -1):
 		if _modifiers[i].source_id == source_id:
-			_remaining.erase(_modifiers[i])
 			_modifiers.remove_at(i)
+			_remaining.remove_at(i)
 			removed += 1
 	return removed
 
@@ -602,15 +631,12 @@ func size() -> int:
 
 func tick(delta: float) -> void:
 	for i in range(_modifiers.size() - 1, -1, -1):
-		var mod := _modifiers[i]
-		if not _remaining.has(mod):
+		if is_inf(_remaining[i]):
 			continue
-		var left: float = float(_remaining[mod]) - delta
-		if left <= 0.0:
-			_remaining.erase(mod)
+		_remaining[i] -= delta
+		if _remaining[i] <= 0.0:
 			_modifiers.remove_at(i)
-		else:
-			_remaining[mod] = left
+			_remaining.remove_at(i)
 
 func apply(base_value: float) -> float:
 	var additive := 0.0
@@ -633,7 +659,7 @@ func apply(base_value: float) -> float:
 
 Run the Step 2 command.
 
-Expected: `21 passed, 0 failed` (5 harness + 6 EventBus + 10 here).
+Expected: `27 passed, 0 failed` (5 harness + 6 EventBus + 10 here).
 
 - [ ] **Step 6: Commit**
 
@@ -794,7 +820,7 @@ func transition_to(target: StringName) -> bool:
 
 Run the Step 2 command.
 
-Expected: `28 passed, 0 failed`.
+Expected: `34 passed, 0 failed`.
 
 - [ ] **Step 5: Commit**
 
@@ -925,7 +951,7 @@ func clear() -> void:
 
 Run the Step 2 command.
 
-Expected: `34 passed, 0 failed`.
+Expected: `40 passed, 0 failed`.
 
 - [ ] **Step 5: Register the autoload**
 
@@ -1447,7 +1473,7 @@ Expected: `generate_palette: save returned 0, 12 colors`
 
 Run the Step 2 command.
 
-Expected: `47 passed, 0 failed`.
+Expected: `53 passed, 0 failed`.
 
 - [ ] **Step 7: Commit**
 
@@ -1732,7 +1758,7 @@ touch assets/models/buildings/.gitkeep assets/models/props/.gitkeep assets/model
 "D:/Godot_v4.7.1/Godot_v4.7.1-stable_win64_console.exe" --headless --path "D:/Godot resource/winter-time" --script res://tests/framework/test_runner.gd
 ```
 
-Expected: `58 passed, 0 failed`.
+Expected: `64 passed, 0 failed`.
 
 - [ ] **Step 8: Commit**
 
@@ -2088,7 +2114,7 @@ The generators stay in `tools/` and stay in version control — regenerating an 
 
 Run the Step 2 command.
 
-Expected: `69 passed, 0 failed`.
+Expected: `75 passed, 0 failed`.
 
 - [ ] **Step 6: Register the autoload**
 
@@ -2122,7 +2148,7 @@ git add src/systems/world_clock.gd data/schedule/ tools/generate_schedules.gd te
 
 All must hold before Wave 1 starts:
 
-- [ ] `69 passed, 0 failed` from the headless runner, exit code 0
+- [ ] `75 passed, 0 failed` from the headless runner, exit code 0
 - [ ] The runner has been observed going **red** and returning exit code 1 (Task 1, Step 5)
 - [ ] `project.godot` lists exactly three autoloads: `EventBus`, `ServiceRegistry`, `WorldClock`
 - [ ] No hardcoded hex color outside `tools/` — the generators in `tools/` are where color values legitimately live, since they are the source that writes `data/palette/color_bible.tres`
