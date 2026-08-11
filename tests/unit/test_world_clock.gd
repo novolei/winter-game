@@ -196,6 +196,77 @@ func test_phase_duration_reports_the_active_phase() -> void:
 	clock.advance(11.0)
 	assert_almost_eq(clock.phase_duration(), 5.0, 0.0001, "night phase is 5 seconds")
 
+## Nothing had ever loaded the seven .tres files that had been sitting in
+## data/schedule since Wave 0, because there was no call that could: the only
+## loader took an Array a caller had already built. This is that call.
+func test_the_shipped_days_load_off_disk_in_order() -> void:
+	_bus = EventBusScript.new()
+	_clock = WorldClockScript.new()
+	_clock.set_event_bus(_bus)
+	assert_eq(_clock.load_schedules_from_directory(), 7, "seven days ship in res://data/schedule")
+	assert_eq(_clock.schedule_count(), 7, "and all seven should be held")
+	for day in range(1, 8):
+		var schedule = _clock.schedule_for_day(day)
+		assert_not_null(schedule, "day %d should be reachable by its number" % day)
+		if schedule != null:
+			assert_eq(schedule.day_number, day, "day %d is out of order" % day)
+
+func test_asking_for_a_day_outside_the_run_yields_nothing_rather_than_an_error() -> void:
+	_bus = EventBusScript.new()
+	_clock = WorldClockScript.new()
+	_clock.set_event_bus(_bus)
+	_clock.load_schedules_from_directory()
+	assert_true(_clock.schedule_for_day(0) == null, "there is no day 0")
+	assert_true(_clock.schedule_for_day(8) == null, "the run is seven days long")
+
+## THE REASON THE PREVIOUS WAVE LEFT THE CLOCK ALONE, as a test.
+##
+## start() on an empty clock used to emit clock.day_started for a day that does
+## not exist, and the first advance() then found a zero-length phase and fired
+## clock.run_finished -- which MusicDirector plays as an ending. The whole game
+## over, silently, before the first frame was drawn. Refusing is not politeness;
+## it is the difference between a bug and a diagnosis.
+func test_a_clock_with_nothing_scheduled_refuses_to_start() -> void:
+	_bus = EventBusScript.new()
+	_bus.subscribe(&"clock.day_started", _record_day)
+	_bus.subscribe(&"clock.run_finished", _record_finish)
+	_clock = WorldClockScript.new()
+	_clock.set_event_bus(_bus)
+	assert_false(_clock.start(), "an empty clock claimed to have started a run")
+	assert_false(_clock.is_running(), "an empty clock started anyway")
+	_clock.advance(1000.0)
+	assert_eq(_events.size(), 0, "an empty clock emitted events for a run that cannot exist")
+	assert_false(_clock.is_finished(), "an empty clock finished a run it never began")
+
+func test_a_loaded_clock_reports_that_it_started() -> void:
+	var clock = _build_clock()
+	assert_true(clock.start(), "a clock with days on it should report that it started")
+	assert_true(clock.is_running(), "and it should be running")
+
+## GDD section 4's seven days are the shape of the whole game, and the numbers
+## on the seven files add up to a fixed budget: every day is 900 seconds, the
+## daylight shortens every day after the second and the night lengthens to match.
+func test_the_shipped_run_is_seven_equal_days_of_shortening_daylight() -> void:
+	_bus = EventBusScript.new()
+	_clock = WorldClockScript.new()
+	_clock.set_event_bus(_bus)
+	_clock.load_schedules_from_directory()
+	var previous_daylight := INF
+	for day in range(1, 8):
+		var schedule = _clock.schedule_for_day(day)
+		if schedule == null:
+			continue
+		assert_almost_eq(
+			schedule.daylight_seconds + schedule.night_seconds, 900.0, 0.001,
+			"day %d is not 900 seconds long" % day
+		)
+		assert_true(
+			schedule.daylight_seconds <= previous_daylight,
+			"day %d has more daylight than the day before it" % day
+		)
+		previous_daylight = schedule.daylight_seconds
+	assert_almost_eq(_clock.total_run_seconds(), 6300.0, 0.001, "seven 900-second days")
+
 func test_shipped_schedule_matches_the_gdd() -> void:
 	## [daylight, night, forced_weather_event, beacon_unlocked], from GDD section 4.
 	## primary_lighting_preset and allowed_weather_events are deliberately left

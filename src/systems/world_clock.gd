@@ -10,6 +10,10 @@ const EVENT_DAY_STARTED := &"clock.day_started"
 const EVENT_NIGHT_STARTED := &"clock.night_started"
 const EVENT_RUN_FINISHED := &"clock.run_finished"
 
+## Where the seven days live. GDD section 4 is the whole shape of the game and
+## every number in it is in these files, not here.
+const DEFAULT_SCHEDULE_DIRECTORY := "res://data/schedule"
+
 var _schedules: Array = []
 var _day_index := 0
 var _phase_elapsed := 0.0
@@ -39,13 +43,80 @@ func _ready() -> void:
 func load_schedules(schedules: Array) -> void:
 	_schedules = schedules.duplicate()
 
-func start() -> void:
+## Loads every DaySchedule in a directory, in filename order so a run is
+## reproducible -- day_01.tres .. day_07.tres sort into the order they are
+## played. Returns how many were accepted.
+##
+## This is the call that did not exist. The seven .tres files had been on disk
+## since Wave 0 and the only loader took an Array somebody else had already
+## built, so nothing ever built one and the seven-day structure -- the entire
+## shape of the game per GDD section 4 -- had never run.
+func load_schedules_from_directory(directory_path := DEFAULT_SCHEDULE_DIRECTORY) -> int:
+	var loaded: Array = []
+	var dir := DirAccess.open(directory_path)
+	if dir == null:
+		return 0
+	var file_names := dir.get_files()
+	file_names.sort()
+	for entry in file_names:
+		var file_name := entry
+		# An exported build serves data/*.tres as *.tres.remap.
+		if file_name.ends_with(".remap"):
+			file_name = file_name.trim_suffix(".remap")
+		if not (file_name.ends_with(".tres") or file_name.ends_with(".res")):
+			continue
+		var resource := ResourceLoader.load(directory_path.path_join(file_name))
+		if resource is DaySchedule:
+			loaded.append(resource)
+	load_schedules(loaded)
+	return _schedules.size()
+
+## Begins the run. Returns whether it actually began one.
+##
+## IT REFUSES AN EMPTY CLOCK, and that guard is the reason this call could not
+## simply be added when the rest of the file was written. start() used to
+## announce day 1 of a run with no days in it, and the first advance() then
+## found a zero-length phase and fired EVENT_RUN_FINISHED -- which MusicDirector
+## plays as an ending. The whole game over, silently, before the first frame was
+## drawn, from one line in the wrong order. Load the schedules first; this is
+## what happens if you do not.
+func start() -> bool:
+	if _schedules.is_empty():
+		return false
 	_day_index = 0
 	_phase_elapsed = 0.0
 	_is_night = false
 	_finished = false
 	_running = true
 	_emit(EVENT_DAY_STARTED, current_day())
+	return true
+
+func is_running() -> bool:
+	return _running
+
+func schedule_count() -> int:
+	return _schedules.size()
+
+## The authored day, by its number rather than its index -- days are 1-based
+## everywhere the player and the GDD can see them. Null outside the run, so a
+## caller asking about day 8 gets nothing rather than a wrapped day 1.
+func schedule_for_day(day: int):
+	var index := day - 1
+	if index < 0 or index >= _schedules.size():
+		return null
+	return _schedules[index]
+
+## The day currently being played, or null before start()/after the end.
+func current_schedule():
+	return schedule_for_day(current_day())
+
+## How long the whole run lasts, in seconds. What a pacing decision is measured
+## against, and cheap enough that nothing needs to cache it.
+func total_run_seconds() -> float:
+	var total := 0.0
+	for schedule in _schedules:
+		total += schedule.daylight_seconds + schedule.night_seconds
+	return total
 
 func current_day() -> int:
 	return _day_index + 1
