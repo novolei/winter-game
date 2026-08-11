@@ -2218,10 +2218,10 @@ git add src/systems/world_clock.gd data/schedule/ tools/generate_schedules.gd te
 
 All must hold before Wave 1 starts:
 
-- [ ] `84 passed, 0 failed` from the headless runner, exit code 0
+- [ ] `98 passed, 0 failed` via `bash tools/run_tests.sh 98`, exit code 0
 - [ ] The runner has been observed going **red** and returning exit code 1 (Task 1, Step 5)
 - [ ] `project.godot` lists exactly three autoloads: `EventBus`, `ServiceRegistry`, `WorldClock`
-- [ ] No hardcoded hex color outside `tools/` — the generators in `tools/` are where color values legitimately live, since they are the source that writes `data/palette/color_bible.tres`
+- [ ] No hardcoded colour in `src/`, `data/`, `scenes/`, `assets/`. Tests may hardcode expected values — a test asserting "#8FB0D8 is in the palette" must hardcode the literal, since reading it from the resource under test is circular.
 - [ ] `src/core/` contains no reference to snow, weather, beacons, threats, or any other game noun
 - [ ] `AssetScanner`'s disk-fixture tests pass, proving the art gates inspect real files rather than silently scanning nothing
 - [ ] Every filename is English `snake_case`

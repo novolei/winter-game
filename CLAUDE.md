@@ -4,23 +4,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-WinterTime is a **Godot 4.7 project in the design phase**: the design is written, no code exists yet. There are no scenes, scripts, assets, or autoloads, and no main scene is set in `project.godot`.
+WinterTime is a Godot 4.7 winter survival game. **Wave 0 (framework foundation) is complete**: 98 passing tests, three autoloads (`EventBus`, `ServiceRegistry`, `WorldClock`), a game-agnostic core under `src/core/`, nine `Resource` definition classes, three static-analysis art gates, and a headless test harness. No scenes or assets exist yet, and no main scene is set — Wave 1 starts the world.
 
-**Read the design docs before writing any code** — they are the source of truth for architecture, naming, and art rules:
+### Read these first
 
-- [GDD](Docs/superpowers/specs/2026-08-11-winter-survival-gdd.md) — game design: pillars, 7-day structure, survival model, three endings
-- [Art Bible](Docs/superpowers/specs/2026-08-11-winter-survival-art-bible.md) — 12-color palette, 12 hard modeling rules, lighting presets, asset pipeline
-- [System Map](Docs/superpowers/specs/2026-08-11-winter-survival-system-map.md) — folder layout, core framework abstractions, and the 31-task build order
+**Before writing code**, in this order:
 
-Reference material (video transcript, target screenshots, palette captures) lives in `Refs/game ref/` and is untracked.
+1. [Docs/AGENT-BRIEFING.md](Docs/AGENT-BRIEFING.md) — **the operational file.** Environment, the commands, eight binding constraints, and six engine traps this project has already paid to discover. Reading it saves a debugging cycle per trap.
+2. [Docs/DEFERRED.md](Docs/DEFERRED.md) — every accepted-but-unfixed finding, with the wave that owns it. **Wave 1 opens with seven blockers**, all one defect class: the art gates cannot see the model formats the asset pipeline actually produces.
+3. The design docs, which are the source of truth for architecture, naming, and art rules:
+   - [GDD](Docs/superpowers/specs/2026-08-11-winter-survival-gdd.md) — pillars, 7-day structure, survival model, three endings
+   - [Art Bible](Docs/superpowers/specs/2026-08-11-winter-survival-art-bible.md) — 12-color palette, 12 hard modeling rules, lighting presets, asset pipeline
+   - [System Map](Docs/superpowers/specs/2026-08-11-winter-survival-system-map.md) — folder layout, core abstractions, 31-task build order
+
+[Docs/PROGRESS.md](Docs/PROGRESS.md) tracks completion and health across all seven waves. Reference material (video transcript, target screenshots, palette captures) lives in `Refs/game ref/` and is untracked.
+
+### Running the tests
+
+```bash
+bash tools/run_tests.sh 98
+```
+
+Not the raw Godot command. The runner cannot see engine-level errors, so a test aborted *after* its first assertion still reports PASS — the wrapper is what catches that, by failing any run whose console is dirty. See AGENT-BRIEFING §1.
 
 ### Rules that bind all code
 
 - **Filenames are English `snake_case`.** The source video's plan used Polish names (`zima`, `dolina`, `wrog`, …); these are deprecated — see System Map §0.
 - **Data-driven:** adding a weather event, item, stat, or threat must require **zero `.gd` changes** — only a new `.tres` under `data/`.
 - **Zero direct references between systems.** All cross-system communication goes through `EventBus`.
-- **Color values are never hardcoded** — read from `data/palette/color_bible.tres`.
-- **The test framework is task 0**, not an afterthought. Every task ends with a test.
+- **`src/core/` contains no game noun** — not even in comments. It must be copyable to an unrelated project unchanged.
+- **No hardcoded colour in `src/`, `data/`, `scenes/`, `assets/`** — read from `data/palette/color_bible.tres`. Tests may hardcode expected values; asserting "`#8FB0D8` is in the palette" by reading it from the palette would be circular.
+- **Every task ends with a test**, and the console must be pristine — a green summary with a stray `WARNING:` above it is a failure.
 
 ## Godot binary
 

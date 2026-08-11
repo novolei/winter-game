@@ -4,8 +4,16 @@ extends SceneTree
 ## Run: godot --headless --path <project> --script res://tests/framework/test_runner.gd
 ## Exits 0 when everything passes, 1 when anything fails.
 ##
-## NOTE: autoloads are NOT instantiated under --script. Tests must build
-## their subjects directly with preload(...).new().
+## The suite runs from _process(), not _initialize(). Autoloads ARE
+## instantiated under --script and /root is populated during _initialize(),
+## but a node added there does not receive _ready() until the tree ticks --
+## so a test that needs a system's _ready() to have run would otherwise see
+## an unwired object and quietly pass.
+##
+## Tests still build their subjects with preload(...).new(): not because the
+## autoload is missing, but because a test reaching for the live singleton
+## tests the singleton rather than the unit, and inherits state from every
+## test before it.
 
 const TEST_ROOTS: Array[String] = ["res://tests/unit", "res://tests/art"]
 const TestDiscovery := preload("res://tests/framework/test_discovery.gd")

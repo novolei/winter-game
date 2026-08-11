@@ -81,9 +81,24 @@ Every one of these has already caused a real defect in this project. They are no
 
 Each of these cost a real debugging cycle. Do not rediscover them.
 
-### Trap 1 — Autoloads do not exist under `--script`
+### Trap 1 — `_ready()` has not run yet during `_initialize()`
 
-Running with `--script` replaces the main loop; project autoloads are never instantiated. This is why every test builds its subject with `preload("res://path.gd").new()` instead of touching a global. **Do not "fix" a test by reaching for an autoload name** — it will be null.
+**This entry previously claimed autoloads do not exist under `--script`. That was wrong** — it was inferred from a probe that checked for a setting that had never been registered, which of course came back false. Verified on this build:
+
+```
+during _initialize()  ->  root children: [EventBus, ServiceRegistry, WorldClock]
+```
+
+Autoloads **are** instantiated under `--script`, and `root` is non-null during `_initialize()`. What is *not* true yet is `_ready()`:
+
+```
+during _initialize(), after add_child()  ->  _ready fired: false
+during _process()                        ->  _ready fired: true
+```
+
+A node you add during `_initialize()` does not receive `_ready()` until the tree ticks. This is why the suite runs from `_process()` rather than `_initialize()`: any test that needs a system's `_ready()` to have run — resolving `/root/EventBus`, for instance — would otherwise see an unwired object and quietly pass.
+
+**Practical guidance is unchanged, but for a different reason.** Keep building unit subjects with `preload("res://path.gd").new()`. Not because the autoload is absent, but because a test that reaches for the live singleton is testing the singleton rather than the unit, and inherits state from every test that ran before it. Reach for `/root/<Name>` only when the wiring itself is what you are testing — and then remove what you added and free it, or it leaks.
 
 ### Trap 2 — A new `class_name` is invisible until reimport
 
