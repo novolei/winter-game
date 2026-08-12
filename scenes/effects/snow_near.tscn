@@ -9,6 +9,13 @@
 ; has to come from somewhere -- it comes from `spread` and `randomness`, which
 ; vary each flake's own straight path. Not from turbulence: see the note in
 ; src/rendering/snowfall_layer.gd, which measured what that actually does.
+;
+; THIS IS THE TIGHTEST BOX OF THE THREE and therefore the one that noticed the
+; camera growing a second and third framing: 22 m across was measured to just
+; hold the ground the frame shows at `authored_frame`, so at the widest stop it
+; held barely six tenths of it and the near snow simply stopped at the edges of
+; the picture. Every metre here now scales with the frame the camera is actually
+; drawing, so "just holds it" holds at every framing instead of at one.
 
 [ext_resource type="Script" path="res://src/rendering/snowfall_layer.gd" id="1_layer"]
 
@@ -16,6 +23,7 @@
 script = ExtResource("1_layer")
 camera_space = false
 volume_size = Vector3(22, 15, 22)
+authored_frame = Vector2(16.8, 10.5)
 pullback_m = 9.0
 flakes_clear = 60
 flakes_blizzard = 520

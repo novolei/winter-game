@@ -10,6 +10,12 @@
 ; orthographic: the frame is a 17 m by 11 m slab lying along the view axis, and
 ; a box three times wider than the slab spends three quarters of its flakes
 ; outside the picture. Same density on screen, a third of the particles.
+;
+; That "17 m by 11 m" is the frame this box was measured against, and the camera
+; no longer has only one -- so it is stated below as `authored_frame` and every
+; metre here is scaled by whatever the camera is actually drawing. The box grows
+; in all three axes at once, which is what keeps 1200 flakes reading as the same
+; density on screen at any framing rather than thinning out as the frame widens.
 
 [ext_resource type="Script" path="res://src/rendering/snowfall_layer.gd" id="1_layer"]
 
@@ -17,6 +23,7 @@
 script = ExtResource("1_layer")
 camera_space = false
 volume_size = Vector3(36, 22, 36)
+authored_frame = Vector2(16.8, 10.5)
 pullback_m = 16.0
 flakes_clear = 90
 flakes_blizzard = 1200

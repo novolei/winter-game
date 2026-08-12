@@ -16,12 +16,11 @@ extends GPUParticles3D
 ## things that make one layer read as further away than another, and every
 ## figure here is a screen size first and a world size second.
 ##
-## The frame is 10.5 m tall (CameraRig.orthographic_size) over about a thousand
-## pixels, so a metre is roughly 95 px:
+## Over about a thousand pixels of frame height:
 ##
-##   distant  0.035-0.055 m  ->  3-5 px    specks, the texture of the air
-##   near     0.050-0.090 m  ->  5-9 px    the snow the player actually sees
-##   lens     0.100-0.180 m  ->  10-17 px  the one that crosses the picture
+##   distant  3-5 px    specks, the texture of the air
+##   near     5-9 px    the snow the player actually sees
+##   lens     10-17 px  the one that crosses the picture
 ##
 ## and that arithmetic is also why this draws a SOFT DOT rather than the
 ## hexagonal flake the document prefers. At 5 px a hexagon is a dot with worse
@@ -29,6 +28,33 @@ extends GPUParticles3D
 ## layer -- it would be six pixels of star crawling through a moving frame. The
 ## document is right that a hexagon is the more artistic choice, and wrong that
 ## this camera can show one.
+##
+## ---------------------------------------------------------------------------
+## THOSE ARE PIXELS, AND THE FRAME IS NOT A CONSTANT
+## ---------------------------------------------------------------------------
+## Every metre below was authored against ONE frame height, because at the time
+## that was the only framing there was. The camera now cycles through several on
+## Shift+wheel, EASES between them over a fifth of a second, and resolves the
+## player's chosen stop through a ModifierStack so a later system can push the
+## frame out during a whiteout or pull it in indoors.
+##
+## So the metres are not the authored quantity. `authored_frame` is the frame
+## they were measured against, and everything metric on this layer is divided by
+## it and multiplied by the frame the camera is ACTUALLY drawing -- every frame,
+## so it follows the tween rather than snapping when the stop changes.
+##
+## THIS FILE MUST NEVER LEARN THE STOPS. They live in CameraRig, they are a
+## player-facing list that will grow, and a copy of them here is the same defect
+## one wave later. What arrives is a frame size in metres; where it came from is
+## none of this layer's business.
+##
+## Scaling the WHOLE layer by one factor, rather than patching the two or three
+## numbers that were obviously wrong, is the deliberate choice: it is the only
+## rule under which every authored relationship -- flakes per screen area, pixels
+## per flake, the slant, how much of the frame a flake crosses before it dies --
+## survives a change of framing untouched. A volume that scaled while its fall
+## speed did not would put the snow in the right place and have it die halfway
+## down the picture.
 ##
 ## ---------------------------------------------------------------------------
 ## DENSITY IS `amount_ratio`, NEVER `amount`
@@ -62,6 +88,13 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 ## must not hold a reference to, since other systems are already inside it.
 const GROUP := &"snowfall_layer"
 
+## How much of a flake's life is spent fading up from nothing -- see
+## _fade_ramp(), which is where it is actually spent. Named rather than buried in
+## the ramp because it is also a DISTANCE: a flake falls while it fades, and the
+## birth band has to clear the top of the picture by at least that far or the
+## fade lands on screen. tests/unit/test_snowfall.gd measures exactly that.
+const FADE_IN_FRACTION := 0.08
+
 ## ON THE LENS RATHER THAN IN THE WORLD. Layers 1 and 2 are false: the emitter
 ## follows the camera and its particles must NOT, or the whole snowfall slides
 ## along with the player. Layer 3 is true and is the deliberate opposite -- it
@@ -72,7 +105,60 @@ const GROUP := &"snowfall_layer"
 ## The emission box, full size, centred on this node. In world metres for a
 ## world layer; in CAMERA metres for a lens layer, where x is across the frame
 ## and y is up it.
+##
+## FOR A CAMERA-SPACE LAYER x IS DERIVED, not read: the box has to span whatever
+## the camera is currently drawing, which is a thing the scene file cannot know.
+## The authored x is what that derivation comes to at `authored_frame`, and
+## tests/unit/test_snowfall.gd holds the two to each other so the scene file
+## stays a truthful description of the box rather than a dead number.
 @export var volume_size := Vector3(36.0, 22.0, 36.0)
+
+## THE UNIT EVERY METRE ON THIS LAYER IS EXPRESSED IN: the frame, in world
+## metres, that these numbers were authored against -- x across and y up.
+##
+## Not a framing stop. The stops are CameraRig's and this file must never learn
+## them; this is a denominator, and the only thing it does is turn the authored
+## metres into a ratio that holds at any frame the camera might present --
+## including one no stop names, which is where the frame sits for the whole of
+## every eased zoom.
+##
+## A layer nobody has framed uses this as the frame, so every number below is
+## used exactly as written: a unit-test subject, or a layer standing in a scene
+## with no orthographic camera, behaves the way its scene file reads.
+@export var authored_frame := Vector2(16.8, 10.5)
+
+## CAMERA-SPACE LAYERS ONLY -- how far above the top edge of the picture the
+## BOTTOM of the birth band sits, in authored metres.
+##
+## This is the whole reason a lens flake appears to drift in rather than blink
+## on, and it is not slack. It pays for two things:
+##
+##   * THE FADE. A flake spends its first FADE_IN_FRACTION of life fading up from
+##     nothing and is falling the entire time, so a band that merely touched the
+##     top edge would finish its fade on screen -- the same pop, one step softer.
+##     That is 1.62 m of it at the blizzard's fall speed.
+##   * ONE FRAME OF THE ZOOM. Godot steps a SceneTree tween AFTER the node
+##     _process pass, so the frame the camera reports has already moved on by the
+##     time anything reads it: measured at 60 fps as the top edge gaining 0.32 m
+##     on the snow for exactly one frame after a notch is taken. The remainder
+##     here absorbs that, with enough left over that the guarantee does not
+##     quietly become frame-rate dependent.
+##
+## What shipped had none of this: the band was placed in absolute camera metres,
+## so it stayed exactly where it was while the top edge of the frame moved away
+## from it, and at the widest framing the whole band was 4 m inside the picture.
+@export var lens_clearance_m := 2.4
+
+## CAMERA-SPACE LAYERS ONLY -- how far the birth box overhangs the picture, in
+## authored metres: `lead` on the side the drift blows FROM and `margin` on the
+## other. A flake that crosses the frame sideways has to have come from
+## somewhere, and the run-up is that somewhere.
+##
+## Which side is which is taken from `drift_blizzard`, not authored, so a layer
+## re-tuned to blow the other way keeps its run-up instead of silently emitting
+## its overhang downwind where nothing can use it.
+@export var lens_lead_m := 7.6
+@export var lens_margin_m := 1.6
 
 ## How far back up the view axis the volume sits, and the reason the snow is in
 ## frame at all. Read by Snowfall, which is what actually places the node; see
@@ -143,6 +229,15 @@ var _rate := 0.0
 var _wind := Vector3.ZERO
 var _process_material: ParticleProcessMaterial
 
+## What the camera is drawing, in world metres, or ZERO for "nobody has said".
+## Pushed by Snowfall every frame -- see Snowfall.drive().
+var _frame := Vector2.ZERO
+
+## The frame the emission geometry was last rebuilt for. Rebuilding costs
+## nothing but an assignment, and doing it only when the frame moves keeps the
+## per-frame work to the two properties the weather actually changes.
+var _applied_frame := Vector2(-1.0, -1.0)
+
 
 func _ready() -> void:
 	add_to_group(GROUP)
@@ -178,6 +273,105 @@ func wind() -> Vector3:
 	return _wind
 
 
+# --- the frame ---------------------------------------------------------------
+
+## THE FRAMING HOOK. What the camera is drawing right now, in world metres: x
+## across the picture and y up it. Snowfall pushes it every frame, from the
+## camera itself, so it follows the framing tween continuously instead of
+## snapping when the player's chosen stop changes.
+##
+## Vector2.ZERO means nobody has said, and then `authored_frame` stands in and
+## every number on this layer is used exactly as its scene file writes it.
+##
+## THE GEOMETRY MOVES HERE, NOT ON THE NEXT _process(). Node order decides which
+## of a layer and its director runs first, and the lens layer loses: it lives
+## under the camera, which is above Snowfall in the scene. Waiting for its own
+## next frame would therefore have it draw one frame of every zoom against the
+## previous frame's framing -- measured, at 60 fps, as the birth band's clearance
+## dipping by a third of a metre on the two frames after a notch was taken. The
+## reframe costs two property writes; it can happen the moment it is known.
+func set_frame_size(metres: Vector2) -> void:
+	_frame = metres
+	if _process_material != null and effective_frame() != _applied_frame:
+		_reframe()
+
+
+func frame_size() -> Vector2:
+	return _frame
+
+
+## The frame actually in force: what was pushed, or what this layer was authored
+## against when nothing has been.
+func effective_frame() -> Vector2:
+	return authored_frame if _frame.y <= 0.0 else _frame
+
+
+## The authored metres, as a multiple. Exactly 1.0 at the frame this layer was
+## tuned against, which is the case in every unit test that does not say
+## otherwise -- so the scene files stay readable as the thing they describe.
+func frame_scale() -> float:
+	if authored_frame.y <= 0.0:
+		return 1.0
+	return effective_frame().y / authored_frame.y
+
+
+## The half-extents of the box new flakes are born in, in this node's own space.
+##
+## Pure arithmetic on the frame, which is what makes the whole of this checkable
+## at any framing without a viewport, a camera or a rendered frame.
+func emission_extents() -> Vector3:
+	var scale := frame_scale()
+	var half := volume_size * 0.5 * scale
+	if not camera_space:
+		return half
+	# DEPTH IS INERT IN CAMERA SPACE. Under a parallel projection nothing about a
+	# flake changes with its distance from the lens, so the box's z is a place to
+	# put the snow rather than a size -- and scaling it would push the near face
+	# of the box back THROUGH the camera at the wider framings, where flakes are
+	# born behind the lens and never seen.
+	half.z = volume_size.z * 0.5
+	half.x = _lens_span() * 0.5
+	return half
+
+
+## Where that box sits, in this node's own space.
+##
+## Zero for a world layer: Snowfall places the whole node, over whatever the
+## camera is looking at. For a camera-space layer this is the entire fix -- see
+## _reframe() for why the box moves and the NODE does not.
+func emission_offset() -> Vector3:
+	if not camera_space:
+		return Vector3.ZERO
+	var scale := frame_scale()
+	var band := volume_size.y * scale
+	# THE POINT OF THE EXERCISE. The bottom of the band sits above the top edge of
+	# the picture by the clearance, so a flake is born out of shot and drifts in.
+	var bottom := effective_frame().y * 0.5 + lens_clearance_m * scale
+	return Vector3(_lens_centre(), bottom + band * 0.5, 0.0)
+
+
+## Across the frame, a camera-space box spans the whole picture plus its run-up.
+## Derived rather than authored because the picture is not a fixed width: it
+## grows with the framing AND with the window's aspect, and a box that covered it
+## at one and not the other leaves a bare strip down one side of the frame that
+## no still can show.
+func _lens_span() -> float:
+	return effective_frame().x + (lens_lead_m + lens_margin_m) * frame_scale()
+
+
+## ...and it is not centred on the picture. The long overhang goes on the side
+## the drift blows FROM, which is where a flake crossing the frame has to have
+## come from. Taken from the drift rather than authored: a layer re-tuned to blow
+## the other way keeps its run-up.
+func _lens_centre() -> float:
+	var across := drift_blizzard.x
+	if absf(across) < 0.0001:
+		# Nothing blowing, so neither side is upwind and the overhang splits.
+		return 0.0
+	var scale := frame_scale()
+	return -signf(across) * (lens_lead_m - lens_margin_m) * 0.5 * scale
+
+
 ## How many flakes are actually being kept in the air, as against how many the
 ## buffer could hold. This is the number a screenshot shows and the one to
 ## assert against.
@@ -204,6 +398,15 @@ func _build() -> void:
 	# re-allocated to change the weather.
 	amount = maxi(flakes_blizzard, 1)
 	lifetime = life_seconds
+	# ALREADY SNOWING ON FRAME ONE. A GPUParticles3D starts empty and fills over a
+	# whole lifetime, and now that a lens flake is born ABOVE the picture rather
+	# than inside it, the first one does not even enter the frame for a second or
+	# so -- which is a visibly thin sky for anything that looks early, including
+	# every screenshot harness in tools/. One lifetime of preprocessing is exactly
+	# the amount that reaches steady state, and it is the same intent as
+	# Snowfall.settle(): the first frame of a run is the weather the day asks for,
+	# not the start of it filling in.
+	preprocess = life_seconds
 	local_coords = camera_space
 	explosiveness = 0.0
 	one_shot = false
@@ -225,7 +428,6 @@ func _build() -> void:
 	_process_material.direction = Vector3(0.0, -1.0, 0.0)
 	_process_material.spread = spread_degrees
 	_process_material.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
-	_process_material.emission_box_extents = volume_size * 0.5
 	_process_material.color_ramp = _fade_ramp()
 	# TURBULENCE IS OFF, AND STAYS OFF. It does not add a curl to the fall, it
 	# MIXES the velocity toward a noise field that has no downward bias, so the
@@ -237,17 +439,41 @@ func _build() -> void:
 	# tests/unit/test_snowfall.gd holds this shut.
 	_process_material.turbulence_enabled = false
 	process_material = _process_material
-
-	# A GPUParticles3D is culled by this box and not by where its particles
-	# actually got to, so it has to cover the whole fall and the whole drift or
-	# the snow vanishes the moment the emitter's own origin leaves the frame.
-	var reach := _reach()
-	visibility_aabb = AABB(volume_size * -0.5 - reach, volume_size + reach * 2.0)
+	_reframe()
 
 	var quad := QuadMesh.new()
 	quad.size = Vector2.ONE
 	quad.material = _flake_material(bible)
 	draw_pass_1 = quad
+
+
+## The emission box, moved and resized to the frame the camera is drawing.
+##
+## THE NODE DOES NOT MOVE, AND THAT IS NOT AN ACCIDENT. A camera-space layer
+## simulates in LOCAL coordinates -- it has to, it rides the camera -- and a
+## local-space emitter carries every particle already in flight along with it
+## whenever it moves. Placing the birth band by setting `position` would drag the
+## entire lens snowfall up the screen for the length of every zoom: one pop at
+## one framing, traded for a smear during all of them.
+##
+## `emission_shape_offset` moves the birth REGION inside that local space
+## instead, and reaches only the flakes not yet born. Nothing already falling
+## notices, so a zoom changes what is emitted without disturbing what is emitted
+## already -- which is also why size and velocity, both sampled at birth, cross a
+## framing change without a seam.
+func _reframe() -> void:
+	if _process_material == null:
+		return
+	_applied_frame = effective_frame()
+	var extents := emission_extents()
+	var offset := emission_offset()
+	_process_material.emission_box_extents = extents
+	_process_material.emission_shape_offset = offset
+	# A GPUParticles3D is culled by this box and not by where its particles
+	# actually got to, so it has to cover the whole fall and the whole drift or
+	# the snow vanishes the moment the emitter's own origin leaves the frame.
+	var span := extents + _reach() * frame_scale()
+	visibility_aabb = AABB(offset - span, span * 2.0)
 
 
 ## The furthest a flake gets from the box it was born in, per axis: the fall and
@@ -317,7 +543,7 @@ func _flake_texture() -> GradientTexture2D:
 ## obvious tell that snow is particles.
 func _fade_ramp() -> GradientTexture1D:
 	var gradient := Gradient.new()
-	gradient.offsets = PackedFloat32Array([0.0, 0.08, 0.82, 1.0])
+	gradient.offsets = PackedFloat32Array([0.0, FADE_IN_FRACTION, 0.82, 1.0])
 	gradient.colors = PackedColorArray([
 		Color(1.0, 1.0, 1.0, 0.0),
 		Color(1.0, 1.0, 1.0, 1.0),
@@ -338,8 +564,17 @@ func _process(_delta: float) -> void:
 func _apply() -> void:
 	if _process_material == null:
 		return
+	# Where the frame is now. Cheap enough to ask every frame, which is what
+	# makes the snow follow an eased zoom rather than jump at the end of one.
+	if effective_frame() != _applied_frame:
+		_reframe()
+	var scale := frame_scale()
+
 	# The clear day is a FRACTION of the storm's buffer rather than a smaller
-	# buffer -- see the header.
+	# buffer -- see the header. Deliberately NOT scaled by the framing: the box
+	# grows in every axis with the frame, so a fixed count keeps the same number
+	# of flakes per screen area at every framing, which is the thing the style
+	# document's counts were actually about.
 	var floor_ratio := float(flakes_clear) / float(maxi(flakes_blizzard, 1))
 	amount_ratio = clampf(lerpf(floor_ratio, 1.0, _rate), 0.0, 1.0)
 	randomness = lerpf(randomness_clear, randomness_blizzard, _rate)
@@ -349,20 +584,25 @@ func _apply() -> void:
 	# settled it. `direction` is in this node's own space, which for a world layer
 	# is the world (Snowfall only ever translates it) and for a lens layer is the
 	# frame itself.
+	#
+	# The SPEED carries the framing and the direction does not: scaling both would
+	# be scaling the slant, and the slant is an angle.
 	var velocity := birth_velocity()
 	var speed := velocity.length()
 	if speed > 0.0001:
 		_process_material.direction = velocity / speed
-	_process_material.initial_velocity_min = speed * 0.7
-	_process_material.initial_velocity_max = speed
+	_process_material.initial_velocity_min = speed * 0.7 * scale
+	_process_material.initial_velocity_max = speed * scale
 
 	# Gravity is where a ParticleProcessMaterial keeps every constant
 	# acceleration, so the flake's gentle sag and whatever the wind system is
-	# gusting arrive here together.
-	_process_material.gravity = Vector3(0.0, -fall_accel, 0.0) + _wind
+	# gusting arrive here together -- and both scale, because a gale that changed
+	# the snow's slant when the player zoomed would be the same defect this whole
+	# section exists to remove.
+	_process_material.gravity = (Vector3(0.0, -fall_accel, 0.0) + _wind) * scale
 
 	# Born a little smaller when it is barely snowing. A clear sky with the same
 	# flakes as a blizzard, only fewer, reads as a broken emitter.
 	var size := lerpf(0.82, 1.0, _rate)
-	_process_material.scale_min = flake_size_min * size
-	_process_material.scale_max = flake_size_max * size
+	_process_material.scale_min = flake_size_min * size * scale
+	_process_material.scale_max = flake_size_max * size * scale

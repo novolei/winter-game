@@ -90,6 +90,8 @@ var _framed := false
 var _seen_preset: StringName = &""
 var _camera_position := Vector3.ZERO
 var _forward := Vector3(0.0, -1.0, 0.0)
+## What the camera is drawing, in world metres. See frame_size().
+var _frame := Vector2.ZERO
 
 
 func _ready() -> void:
@@ -164,6 +166,18 @@ func wind_velocity() -> Vector3:
 	return gale_wind * _wind_strength
 
 
+## THE FRAMING HOOK, and it is a push rather than a pull: every layer is told
+## what the camera is drawing on the same frame, and through the same call, as
+## it is told the weather. See _read_camera(), which is the one place it is
+## sampled, and drive(), which is the one place it is handed on.
+func set_frame_size(metres: Vector2) -> void:
+	_frame = metres
+
+
+func frame_metres() -> Vector2:
+	return _frame
+
+
 ## Injected by a test, or by whoever wires the scene. Resolved from the
 ## ServiceRegistry otherwise, the same way LightingDirector.set_event_bus() works.
 func set_lighting(lighting) -> void:
@@ -202,6 +216,51 @@ static func volume_centre(
 	return focus - direction * pullback_m
 
 
+## ---------------------------------------------------------------------------
+## WHAT THE CAMERA IS ACTUALLY DRAWING
+## ---------------------------------------------------------------------------
+## The frame, in world metres: x across the picture and y up it. Under a parallel
+## projection this is a real, finite rectangle, and it is the only thing the snow
+## needs in order to size itself -- see SnowfallLayer's header.
+##
+## READ OFF THE CAMERA, and deliberately so. CameraRig owns the framing: it holds
+## the player's chosen stop, resolves it through a ModifierStack so later systems
+## can argue with it, and EASES to the result over a fifth of a second. Every one
+## of those steps lands in exactly one place -- `Camera3D.size`, written by
+## CameraRig.apply_framed_size(), which is the rig's own single writer. Sampling
+## the camera therefore gets the resolved, tweened, actually-rendered frame for
+## free, on every frame, with nothing here holding a reference to the rig and no
+## copy of its stops anywhere in this system.
+##
+## It also picks up the one framing the rig does not know about:
+## tools/capture_frame.gd's `--ortho` writes the camera directly.
+##
+## A perspective camera has no frame height in metres -- it has a different one
+## at every depth -- so this says ZERO rather than inventing one, and the layers
+## fall back to the numbers their scene files were authored with.
+static func frame_size(camera: Camera3D, viewport_pixels: Vector2) -> Vector2:
+	if camera == null or camera.projection != Camera3D.PROJECTION_ORTHOGONAL:
+		return Vector2.ZERO
+	if viewport_pixels.x <= 0.0 or viewport_pixels.y <= 0.0:
+		return Vector2.ZERO
+	var aspect := viewport_pixels.x / viewport_pixels.y
+	# `size` is whichever extent keep_aspect nominates -- height by default. Read
+	# the wrong way round it would scale the snow by the aspect ratio.
+	if camera.keep_aspect == Camera3D.KEEP_WIDTH:
+		return Vector2(camera.size, camera.size / aspect)
+	return Vector2(camera.size * aspect, camera.size)
+
+
+## How far back up the view axis a layer's volume belongs, at the framing now in
+## force. The pullback is what lifts the box into the air; a box that grew with
+## the frame while its pullback stayed put would sink into the ground it is
+## supposed to be falling onto.
+func pullback_for(layer: SnowfallLayer) -> float:
+	if layer == null:
+		return 0.0
+	return layer.pullback_m * layer.frame_scale()
+
+
 # --- driving it -------------------------------------------------------------
 
 ## Applies the weather to one layer, and places it if it is a world layer. Public
@@ -212,12 +271,18 @@ func drive(layer: SnowfallLayer) -> void:
 		return
 	layer.set_snowfall_rate(_rate)
 	layer.set_wind(wind_velocity())
+	# ...and what it is drawing into, which is what sizes the volume and the
+	# flake. Here rather than read by the layer for the same reason the weather is
+	# here: one place samples the camera, so no layer can end up running this
+	# frame's snowfall against last frame's framing.
+	layer.set_frame_size(_frame)
 	# A lens layer is parented to the camera and rides it. Moving it would be
-	# taking it off the lens, which is the only thing it does.
+	# taking it off the lens, which is the only thing it does -- and it places its
+	# own emission box in camera space, from the frame it was just handed.
 	if layer.camera_space or not _framed:
 		return
 	layer.global_position = volume_centre(
-		_camera_position, _forward, ground_height, layer.pullback_m
+		_camera_position, _forward, ground_height, pullback_for(layer)
 	)
 
 
@@ -316,6 +381,10 @@ func _read_camera() -> bool:
 		return false
 	_camera_position = camera.global_position
 	_forward = -camera.global_basis.z
+	# Sampled every frame, which is the whole of "follows the tween": the rig
+	# eases the frame over 0.12-0.22 s and this reads wherever it currently is,
+	# rather than what stop it is heading for.
+	_frame = frame_size(camera, viewport.get_visible_rect().size)
 	return true
 
 

@@ -4,27 +4,51 @@
 ; right: 偶尔有一片雪从镜头前经过。这会让截图瞬间有电影感。
 ;
 ; PARENT THIS TO THE CAMERA. Everything below is authored in CAMERA space:
-; +x is across the frame, +y is up it, -z is in front of the lens. The transform
-; puts the box just above the top of the picture and about two metres in front
-; of the glass, so a flake is born out of shot, falls down through the frame and
-; dies below it -- which is why the count can be as low as the document's 30-60
-; and still read as continuous.
+; +x is across the frame, +y is up it, -z is in front of the lens. A flake is
+; born out of shot above the top edge, falls down through the frame and dies
+; below it -- which is why the count can be as low as the document's 30-60 and
+; still read as continuous.
 ;
-; The frame is 10.5 m tall and about 17 m wide at 16:10, so the box is a little
-; wider than the picture on purpose: a flake that drifts in from the side has to
-; come from somewhere.
+; THE TRANSFORM CARRIES ONLY THE DEPTH. Where the birth box sits across and up
+; the picture is DERIVED, every frame, from the frame the camera is actually
+; drawing -- see snowfall_layer.gd's emission_offset(). It has to be: the camera
+; cycles through three framings on Shift+wheel and eases between them, so a box
+; pinned in absolute camera metres slides into the middle of the picture as the
+; frame widens, and flakes pop into existence on screen instead of drifting in.
+; The node itself must not move, either, because this layer simulates in local
+; space and a moving emitter drags every flake already in the air with it.
+;
+; `authored_frame` is what the metres below were measured against and is the unit
+; they are expressed in -- NOT a framing stop. The stops belong to CameraRig.
+;
+; volume_size.x is derived rather than read, for the same reason: 26 is what the
+; derivation comes to at `authored_frame` (16.8 m of picture, 7.6 m of run-up on
+; the upwind side, 1.6 m of margin on the other), and a test holds the two to
+; each other so this file stays a truthful description of the box.
+;
+; life_seconds was 4.5 while the band was born inside the picture, and it follows
+; the band out of it: a flake now starts 2.4 m above the top edge instead of 0.75
+; m below it, so it has 3.15 m further to fall before it has crossed the frame.
+; At 4.5 s the slowest clear-day flake gave out two thirds of the way down; 7.5 s
+; is what carries it past the bottom edge. It does NOT change how many flakes are
+; on screen -- the buffer is a fixed 48 and a longer life is a slower birth rate,
+; not more snow.
 
 [ext_resource type="Script" path="res://src/rendering/snowfall_layer.gd" id="1_layer"]
 
 [node name="SnowLens" type="GPUParticles3D"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 6, -2.2)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -2.2)
 script = ExtResource("1_layer")
 camera_space = true
 volume_size = Vector3(26, 3, 3)
+authored_frame = Vector2(16.8, 10.5)
+lens_clearance_m = 2.4
+lens_lead_m = 7.6
+lens_margin_m = 1.6
 pullback_m = 0.0
 flakes_clear = 6
 flakes_blizzard = 48
-life_seconds = 4.5
+life_seconds = 7.5
 flake_size_min = 0.1
 flake_size_max = 0.18
 fall_speed_clear = 1.9

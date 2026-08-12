@@ -76,6 +76,49 @@ func _frame_height_m() -> float:
 	return height
 
 
+## EVERY framing the camera can be at, read off the rig. Not a list of numbers:
+## the whole defect these tests were written against was a snowfall that knew
+## about one framing, and a test that knew about three would be the same mistake
+## one size larger. A stop added to CameraRig arrives here on its own.
+func _framing_stops() -> Array:
+	var rig: CameraRig = CameraRigScript.new()
+	var stops: Array = Array(rig.framing_stops)
+	rig.free()
+	return stops
+
+
+## The stops, plus the places BETWEEN them -- which is where the frame actually
+## spends the length of every zoom. CameraRig eases from one stop to the next
+## over 0.12-0.22 s, so a snowfall that were correct at three sizes and wrong at
+## every size in between would trade one pop for a smear of them, and no
+## screenshot at rest could tell the two apart.
+func _framing_samples() -> Array:
+	var stops := _framing_stops()
+	stops.sort()
+	var samples: Array = []
+	for index in range(stops.size()):
+		samples.append(float(stops[index]))
+		if index + 1 < stops.size():
+			# Two along each leg, so "correct at the ends" cannot pass for
+			# "correct throughout".
+			var low := float(stops[index])
+			var high := float(stops[index + 1])
+			samples.append(lerpf(low, high, 0.33))
+			samples.append(lerpf(low, high, 0.67))
+	return samples
+
+
+## The aspect the capture harness shoots and the widest the game is likely to be
+## played at -- the same 16:10 test_a_flake_is_still_in_frame_when_it_dies has
+## always used. Hardcoded deliberately: reading it off the layer under test
+## would make every assertion below circular.
+const FRAME_ASPECT := 1.6
+
+
+func _frame(height: float) -> Vector2:
+	return Vector2(height * FRAME_ASPECT, height)
+
+
 func _surface(layer: SnowfallLayer) -> StandardMaterial3D:
 	var mesh: Mesh = layer.draw_pass_1
 	if mesh == null:
@@ -214,23 +257,32 @@ func test_the_storm_drives_the_snow_sideways() -> void:
 ## the same arithmetic in both axes -- speed times lifetime against the size of
 ## the frame -- and getting it wrong is invisible in a still, because the flakes
 ## that left are not in the shot to be counted.
+##
+## Checked at every framing rather than at one. With the emission volume and the
+## fall both derived from the frame this is invariant by construction -- which is
+## the point, and is exactly the property that has to be pinned rather than
+## assumed.
 func test_a_flake_is_still_in_frame_when_it_dies() -> void:
-	var frame_height := _frame_height_m()
-	# The frame is as wide as it is tall times the aspect; 16:10 is what the
-	# capture harness shoots and the widest the game is likely to be played at.
-	var frame_width := frame_height * 1.6
-	for path in [DISTANT_SCENE, NEAR_SCENE, LENS_SCENE]:
-		var layer := _layer(path)
-		layer.set_snowfall_rate(1.0)
-		layer._apply()
-		var travel: Vector3 = layer.birth_velocity() * layer.life_seconds
-		assert_true(
-			absf(travel.x) < frame_width + layer.volume_size.x,
-			"%s blows its flakes %f m sideways in one life, out of a %f m frame that "
-				% [path, travel.x, frame_width]
-				+ "is fed from a %f m box" % layer.volume_size.x
-		)
-		layer.free()
+	for height in _framing_samples():
+		# The frame is as wide as it is tall times the aspect; 16:10 is what the
+		# capture harness shoots and the widest the game is likely to be played at.
+		var frame: Vector2 = _frame(height)
+		for path in [DISTANT_SCENE, NEAR_SCENE, LENS_SCENE]:
+			var layer := _layer(path)
+			layer.set_frame_size(frame)
+			layer.set_snowfall_rate(1.0)
+			layer._apply()
+			var material := layer.process_material as ParticleProcessMaterial
+			var across: float = (
+				material.direction.x * material.initial_velocity_max * layer.life_seconds
+			)
+			var fed_from: float = material.emission_box_extents.x * 2.0
+			assert_true(
+				absf(across) < frame.x + fed_from,
+				"%s blows its flakes %.1f m sideways in one life, out of a %.1f m frame "
+					% [path, across, frame.x] + "that is fed from a %.1f m box" % fed_from
+			)
+			layer.free()
 
 
 ## THE WIND HOOK, checked as a hook. src/systems/wind_system.gd is Wave 3 and
@@ -331,27 +383,35 @@ func test_the_flake_acquires_no_specular_or_roughness() -> void:
 ## so a metre is roughly a hundred pixels and the document's numbers -- written
 ## for a perspective camera where distant snow shrinks -- have to be read as
 ## screen sizes here. Under two pixels is not a flake, it is noise.
+##
+## At EVERY framing, not only the tightest. The camera now offers three and eases
+## between them, and a flake that keeps its metres while the frame widens is a
+## flake losing its pixels -- the distant layer's specks go under two of them and
+## become noise rather than air.
 func test_every_flake_is_big_enough_to_read_at_gameplay_framing() -> void:
-	var pixels_per_metre := 1000.0 / _frame_height_m()
-	for path in [DISTANT_SCENE, NEAR_SCENE, LENS_SCENE]:
-		var layer := _layer(path)
-		var pixels: float = layer.flake_size_max * pixels_per_metre
-		assert_true(
-			pixels >= 2.5,
-			"%s draws its largest flake %f m across, which is %f px at this framing"
-				% [path, layer.flake_size_max, pixels]
-		)
-		layer.free()
-
-	# And the one the document says matters. A lens flake has to be seen crossing
-	# the frame, not inferred.
-	var lens := _layer(LENS_SCENE)
-	assert_true(
-		lens.flake_size_max * pixels_per_metre >= 9.0,
-		"the lens flake is %f px; it is meant to be the one you notice"
-			% (lens.flake_size_max * pixels_per_metre)
-	)
-	lens.free()
+	for height in _framing_samples():
+		var pixels_per_metre: float = 1000.0 / height
+		for path in [DISTANT_SCENE, NEAR_SCENE, LENS_SCENE]:
+			var layer := _layer(path)
+			layer.set_frame_size(_frame(height))
+			layer.set_snowfall_rate(1.0)
+			layer._apply()
+			var drawn: float = (layer.process_material as ParticleProcessMaterial).scale_max
+			var pixels: float = drawn * pixels_per_metre
+			assert_true(
+				pixels >= 2.5,
+				"%s draws its largest flake %.3f m across at a %.1f m frame, which is "
+					% [path, drawn, height] + "%.1f px" % pixels
+			)
+			if path == LENS_SCENE:
+				# And the one the document says matters. A lens flake has to be seen
+				# crossing the frame, not inferred.
+				assert_true(
+					pixels >= 9.0,
+					"the lens flake is %.1f px at a %.1f m frame; it is meant to be the "
+						% [pixels, height] + "one you notice"
+				)
+			layer.free()
 
 
 ## TURBULENCE STOPS THE SNOW FALLING, and this test exists because it took a
@@ -646,3 +706,317 @@ func test_a_level_camera_does_not_send_the_snow_to_infinity() -> void:
 		centre.length() < 1000.0,
 		"a level camera put the snow at %s" % centre
 	)
+
+
+# --- the frame the camera is actually drawing -------------------------------
+#
+# The snowfall was tuned against an orthographic camera at one size, because at
+# the time that was the only framing there was. The camera now cycles through
+# three on Shift+wheel and EASES between them, and a later wave will modulate the
+# frame on top of the player's choice through CameraRig's ModifierStack.
+#
+# So none of the tests below names a size. They ask CameraRig which framings
+# exist, and they ask at the places BETWEEN them too, because the frame spends
+# the length of every zoom there: a snowfall that were right at three sizes and
+# wrong at every size in between would trade one visible pop for a smear of them.
+
+
+## SYMPTOM 1, AND THE WORST OF THE THREE: a flake has to drift INTO the picture.
+## A birth band that has slipped inside the frame is snow appearing out of
+## nothing in the middle of the shot, which reads as a bug to anyone watching
+## rather than as weather.
+##
+## The margin is not a taste. A flake spends the first FADE_IN_FRACTION of its
+## life fading up from nothing and it is falling the whole time, so the band has
+## to clear the top edge by at least that far or the fade finishes on screen --
+## which is the same pop, one step softer.
+func test_the_lens_birth_band_never_starts_inside_the_picture() -> void:
+	var lens := _layer(LENS_SCENE)
+	# The blizzard, which is the fast case and therefore the demanding one: a
+	# flake that falls harder has less of its fade left when it arrives.
+	lens.set_snowfall_rate(1.0)
+	for height in _framing_samples():
+		lens.set_frame_size(_frame(height))
+		lens._apply()
+		var material := lens.process_material as ParticleProcessMaterial
+		var bottom: float = (
+			lens.position.y + material.emission_shape_offset.y - material.emission_box_extents.y
+		)
+		var top_edge: float = height * 0.5
+		var fade_fall: float = (
+			absf(lens.birth_velocity().y)
+			* lens.frame_scale()
+			* lens.life_seconds
+			* SnowfallLayerScript.FADE_IN_FRACTION
+		)
+		assert_true(
+			bottom >= top_edge + fade_fall,
+			("a %.1f m frame reaches %.2f m and the lens snow is born from %.2f m, which "
+				+ "is %.2f m of clearance against the %.2f m a flake falls while it is "
+				+ "still fading up: it appears on screen")
+				% [height, top_edge, bottom, bottom - top_edge, fade_fall]
+		)
+	lens.free()
+
+
+## SYMPTOM 2. The emission box has to be at least as wide as the picture, or one
+## side of the frame has no lens snow crossing it at all -- invisible in a still
+## and obvious the moment anything moves.
+##
+## It also has to overhang, and the overhang belongs on the side the drift blows
+## FROM: a flake that crosses the frame sideways has to have come from somewhere
+## off the edge of it.
+func test_the_lens_snow_reaches_both_edges_of_the_picture() -> void:
+	var lens := _layer(LENS_SCENE)
+	lens.set_snowfall_rate(1.0)
+	for height in _framing_samples():
+		var frame: Vector2 = _frame(height)
+		lens.set_frame_size(frame)
+		lens._apply()
+		var material := lens.process_material as ParticleProcessMaterial
+		var centre: float = lens.position.x + material.emission_shape_offset.x
+		var half: float = material.emission_box_extents.x
+		var edge: float = frame.x * 0.5
+		var bare: float = maxf(0.0, (centre - half) - (-edge)) + maxf(0.0, edge - (centre + half))
+		assert_true(
+			centre - half <= -edge and centre + half >= edge,
+			("a %.1f m frame is %.1f m wide and the lens snow is born between %.1f and "
+				+ "%.1f: %.1f m of the picture never sees a lens flake")
+				% [height, frame.x, centre - half, centre + half, bare]
+		)
+		# And the run-up, on the upwind side. Which side that is comes off the
+		# drift rather than out of the scene file, so a layer re-authored to blow
+		# the other way does not quietly lose it.
+		var upwind: float = -signf(lens.drift_blizzard.x)
+		if upwind < 0.0:
+			assert_true(
+				centre - half < -edge,
+				("the lens box starts exactly at the left edge of a %.1f m frame, so a "
+					+ "flake drifting in from the left has nowhere to come from") % height
+			)
+		elif upwind > 0.0:
+			assert_true(
+				centre + half > edge,
+				"the lens box ends exactly at the right edge of a %.1f m frame" % height
+			)
+
+	# THE TRIPWIRE. A camera-space layer DERIVES its width, so the authored
+	# volume_size.x is never read -- which would make it a dead number nobody
+	# could trust, and the next person to edit it would change nothing and not
+	# find out. At the frame the layer was authored against, the derivation has to
+	# come to exactly what the scene file says it does.
+	lens.set_frame_size(lens.authored_frame)
+	lens._apply()
+	var authored_span: float = (
+		(lens.process_material as ParticleProcessMaterial).emission_box_extents.x * 2.0
+	)
+	assert_almost_eq(
+		authored_span, lens.volume_size.x, 0.001,
+		("the lens box works out to %.2f m at its own authored frame while the scene "
+			+ "file says %.2f: the picture, the run-up and the margin no longer add up "
+			+ "to the box the file describes")
+			% [authored_span, lens.volume_size.x]
+	)
+	lens.free()
+
+
+## SYMPTOM 3. Under a parallel projection a flake is the same size on screen
+## whether it is two metres from the lens or ninety, so SIZE is the only thing
+## separating the three layers -- and snowfall_layer.gd's header states those
+## sizes in PIXELS, which is the number that actually matters. A flake that keeps
+## its metres when the frame widens loses its pixels, and the lens layer stops
+## reading as the one in front of the lens.
+func test_a_flake_keeps_its_authored_screen_size_at_every_framing() -> void:
+	var pixels := 1000.0
+	for path in [DISTANT_SCENE, NEAR_SCENE, LENS_SCENE]:
+		var layer := _layer(path)
+		layer.set_snowfall_rate(1.0)
+		var authored := -1.0
+		for height in _framing_samples():
+			layer.set_frame_size(_frame(height))
+			layer._apply()
+			var material := layer.process_material as ParticleProcessMaterial
+			var on_screen: float = material.scale_max * pixels / height
+			if authored < 0.0:
+				authored = on_screen
+			assert_almost_eq(
+				on_screen, authored, 0.01,
+				("%s draws its largest flake %.1f px at a %.1f m frame against %.1f px at "
+					+ "the tightest: the layer no longer reads at the size it was authored")
+					% [path, on_screen, height, authored]
+			)
+		layer.free()
+
+
+## THE TRANSITION, which is the case no screenshot at rest can show. CameraRig
+## does not jump between stops, it eases over 0.12-0.22 s on a cubic or quintic
+## curve, so the frame spends every zoom at a size that is not any stop at all.
+##
+## A snowfall that sampled the framing once, when the stop changed, would be
+## correct in all three screenshots and wrong for the whole of every zoom. What
+## this pins is exactly that difference: the geometry has to be STRICTLY between
+## the two ends when the frame is, not merely equal to one of them.
+func test_the_snow_tracks_the_frame_between_the_stops_and_not_only_at_them() -> void:
+	var stops := _framing_stops()
+	stops.sort()
+	assert_true(
+		stops.size() >= 2,
+		"the rig offers %d framing(s); there is no zoom to track" % stops.size()
+	)
+	for path in [DISTANT_SCENE, NEAR_SCENE, LENS_SCENE]:
+		var layer := _layer(path)
+		layer.set_snowfall_rate(1.0)
+		for index in range(stops.size() - 1):
+			var low: float = float(stops[index])
+			var high: float = float(stops[index + 1])
+			var at_low: float = _emission_reach(layer, low)
+			var at_high: float = _emission_reach(layer, high)
+			var midway: float = _emission_reach(layer, lerpf(low, high, 0.5))
+			assert_true(
+				at_high > at_low,
+				("%s emits over %.2f m at a %.1f m frame and %.2f m at a %.1f m one: the "
+					+ "volume does not follow the frame at all")
+					% [path, at_low, low, at_high, high]
+			)
+			assert_true(
+				midway > at_low and midway < at_high,
+				("%s emits over %.2f m halfway between a %.1f and a %.1f m frame against "
+					+ "%.2f and %.2f at the ends: the framing is being sampled at the stops "
+					+ "rather than followed through the tween")
+					% [path, midway, low, high, at_low, at_high]
+			)
+		layer.free()
+
+
+## Half the vertical extent of wherever a layer is currently emitting, as one
+## number, so a tween can be watched through it.
+func _emission_reach(layer: SnowfallLayer, height: float) -> float:
+	layer.set_frame_size(_frame(height))
+	layer._apply()
+	return (layer.process_material as ParticleProcessMaterial).emission_box_extents.y
+
+
+## THE TRAP UNDERNEATH THE FIX. The lens layer simulates in LOCAL space -- it has
+## to, it rides the camera -- and a local-space emitter carries every particle
+## already in flight along with it when it moves. Placing the birth band by
+## moving the node would therefore drag the whole lens snowfall up the screen for
+## the length of every zoom: one pop at one framing, traded for a smear during
+## all of them.
+##
+## The band moves through the process material's own emission offset instead,
+## which reaches only the flakes not yet born.
+func test_the_lens_emitter_never_moves_so_flakes_in_flight_are_not_dragged() -> void:
+	var lens := _layer(LENS_SCENE)
+	var anchored: Vector3 = lens.position
+	var offsets: Array[float] = []
+	for height in _framing_samples():
+		lens.set_frame_size(_frame(height))
+		lens._apply()
+		assert_eq(
+			lens.position, anchored,
+			"the lens emitter moved to %s for a %.1f m frame; every flake in the air went "
+				% [lens.position, height] + "with it"
+		)
+		offsets.append((lens.process_material as ParticleProcessMaterial).emission_shape_offset.y)
+	assert_true(
+		offsets[offsets.size() - 1] > offsets[0],
+		"the birth band sat at %.2f m at every framing: it is not tracking the frame"
+			% offsets[0]
+	)
+	lens.free()
+
+
+## Every layer, not only the one on the lens. Layers 1 and 2 are world-space and
+## were authored against the same single framing, so their emission volumes carry
+## the same dependency: a box sized to hold the frame's footprint at one framing
+## holds a shrinking fraction of it as the frame grows.
+##
+## Stated as a SHARE of the frame rather than as metres, which is the property
+## that has to hold and the one that makes every authored number below it correct
+## at a framing nobody has invented yet.
+func test_every_layer_scales_its_emission_volume_with_the_frame() -> void:
+	for path in [DISTANT_SCENE, NEAR_SCENE, LENS_SCENE]:
+		var layer := _layer(path)
+		var authored := -1.0
+		for height in _framing_samples():
+			layer.set_frame_size(_frame(height))
+			layer._apply()
+			var material := layer.process_material as ParticleProcessMaterial
+			var share: float = material.emission_box_extents.y / height
+			if authored < 0.0:
+				authored = share
+			assert_almost_eq(
+				share, authored, 0.0001,
+				("%s emits over %.3f frame-heights at a %.1f m frame against %.3f at the "
+					+ "tightest: the volume is authored against one framing")
+					% [path, share, height, authored]
+			)
+		layer.free()
+
+
+## Where the frame comes from. Not from a copy of CameraRig's stops -- this file
+## must never learn them -- but from the size the camera is drawing right now,
+## which is where the rig's framing tween lands every frame.
+func test_the_snowfall_reads_the_frame_the_camera_is_drawing() -> void:
+	var camera := Camera3D.new()
+	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	camera.keep_aspect = Camera3D.KEEP_HEIGHT
+	camera.size = 13.5
+	var frame: Vector2 = SnowfallScript.frame_size(camera, Vector2(1600.0, 1000.0))
+	assert_almost_eq(frame.y, 13.5, 0.001, "the frame is %.2f m tall, not 13.5" % frame.y)
+	assert_almost_eq(
+		frame.x, 21.6, 0.001, "a 16:10 viewport makes a 13.5 m frame %.2f m wide" % frame.x
+	)
+
+	# KEEP_WIDTH is the other half of the same property, and reading it the wrong
+	# way round scales the snow by the aspect ratio rather than by the frame.
+	camera.keep_aspect = Camera3D.KEEP_WIDTH
+	var wide: Vector2 = SnowfallScript.frame_size(camera, Vector2(1600.0, 1000.0))
+	assert_almost_eq(wide.x, 13.5, 0.001, "under KEEP_WIDTH the size is the WIDTH: %.2f" % wide.x)
+	assert_almost_eq(wide.y, 8.4375, 0.001, "the frame is %.2f m tall" % wide.y)
+
+	# A perspective camera has no frame height in metres -- it has a different one
+	# at every depth -- so there is nothing to scale by, and saying so is better
+	# than inventing one.
+	camera.projection = Camera3D.PROJECTION_PERSPECTIVE
+	assert_eq(
+		SnowfallScript.frame_size(camera, Vector2(1600.0, 1000.0)), Vector2.ZERO,
+		"a perspective camera was given a frame height in metres"
+	)
+	assert_eq(
+		SnowfallScript.frame_size(null, Vector2(1600.0, 1000.0)), Vector2.ZERO,
+		"no camera at all still produced a frame"
+	)
+	camera.free()
+
+
+## The director is what carries the frame to the layers, on the same frame and
+## through the same call that carries the weather -- so a layer cannot end up
+## driven with this frame's snowfall and last frame's framing.
+##
+## The pullback goes with it. It is how far back up the view axis the volume
+## sits, and a volume that grew with the frame while its pullback did not would
+## sink into the ground it is meant to be falling onto.
+func test_the_director_hands_every_layer_the_frame_and_scales_the_pullback() -> void:
+	var director := _director()
+	var layer := _layer(NEAR_SCENE)
+	var wide: Vector2 = _frame(17.0)
+	director.set_frame_size(wide)
+	director.drive(layer)
+	assert_eq(
+		layer.frame_size(), wide,
+		"the director drove the layer without telling it what it is drawing into: %s"
+			% layer.frame_size()
+	)
+	assert_true(
+		layer.frame_scale() > 1.0,
+		"a 17 m frame against a layer authored at %.1f m scaled by %.2f"
+			% [layer.authored_frame.y, layer.frame_scale()]
+	)
+	assert_almost_eq(
+		director.pullback_for(layer), layer.pullback_m * layer.frame_scale(), 0.001,
+		"the volume grew with the frame and kept its authored %.1f m pullback"
+			% layer.pullback_m
+	)
+	layer.free()
+	director.free()
