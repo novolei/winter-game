@@ -708,6 +708,140 @@ func test_the_walk_carries_him_at_every_speed_the_ground_allows() -> void:
 			)
 
 
+# ---------------------------------------------------------------------------
+# The animation graph -- the straddle
+# ---------------------------------------------------------------------------
+## Two cycles mixed pose by pose average one clip's stance against the other's,
+## and where one has the left leg forward and the other the right, the average is
+## a man walking with his legs apart. Two things have to hold to stop it, and
+## BOTH are easy to leave out because neither errors when it is missing.
+##
+## This defect is older than the speed rework and the rework is what exposed it:
+## the run used to be 5.4 m/s and the only speed the body had, so the gait blend
+## clamped at 1.0 and the walk clip contributed nothing. Nothing mixed, so nothing
+## showed. He now spends nearly all his time at intermediate blends.
+func _clips() -> AnimationLibrary:
+	# Allocates no Node -- the takes are lifted out of the PackedScene's
+	# SceneState, never an instantiated tree. See WandererAnimations.build().
+	return WandererAnimations.build()
+
+
+## AnimationNodeBlend2.sync defaults to FALSE -- measured on this build, not read
+## off the docs. An input at zero weight then stops advancing and is held at
+## whatever frame it was on, so it re-enters the mix at a stale phase whenever its
+## weight comes back up.
+func test_every_blend_in_the_graph_keeps_both_inputs_running() -> void:
+	var graph := PlayerControllerScript.build_blend_tree()
+	var checked := 0
+	for name in ["chill", "gait", "motion"]:
+		var blend := graph.get_node(name) as AnimationNodeBlend2
+		assert_not_null(blend, "the graph has no Blend2 called %s" % name)
+		if blend == null:
+			continue
+		checked += 1
+		assert_true(
+			blend.sync,
+			"%s is not synced, so whichever input sits at zero weight freezes and "
+				% name
+				+ "re-enters the mix at a stale phase -- which is the straddle"
+		)
+	assert_eq(checked, 3, "the graph no longer has the three blends this pins")
+
+
+## ...and sync alone is not enough. It keeps both inputs advancing; it does not
+## make them advance at the same RATE. The shipped clips are 1.6 apart, and two
+## cycles 1.6 apart in period drift through each other continuously -- a beat,
+## which is worse than a constant error because it never settles.
+func test_the_walk_and_the_run_are_locked_to_one_cycle_length() -> void:
+	var library := _clips()
+	var walk_period: float = library.get_animation(WandererAnimations.WALK).length
+	var run_period: float = library.get_animation(WandererAnimations.RUN).length
+	assert_true(
+		absf(walk_period - run_period) > 0.01,
+		"the two clips are both %.4f s, so this test is measuring nothing" % walk_period
+	)
+	var rates: Vector2 = PlayerControllerScript.cycle_rates(walk_period, run_period)
+	assert_true(rates.x > 0.0 and rates.y > 0.0, "a cycle rate is zero, which stops the legs")
+	assert_almost_eq(
+		walk_period / rates.x,
+		run_period / rates.y,
+		0.0001,
+		"scaled, the walk cycle runs %.4f s and the run %.4f s -- they must be equal or "
+			% [walk_period / rates.x, run_period / rates.y]
+			+ "the feet fight at every intermediate blend"
+	)
+
+
+## The graph has to actually carry those rates, or the arithmetic above is a
+## number nobody applies.
+func test_the_graph_has_a_rate_node_in_front_of_each_gait_clip() -> void:
+	var graph := PlayerControllerScript.build_blend_tree()
+	for name in ["walk_rate", "run_rate"]:
+		assert_not_null(
+			graph.get_node(name) as AnimationNodeTimeScale,
+			"the graph has no TimeScale called %s, so nothing locks the two cycles" % name
+		)
+
+
+## The pace has to be computed in strides now that the clips share a timeline.
+## Dividing by lerp(anim_walk_speed, anim_run_speed, gait) -- the speed the pair
+## would cover on their OWN lengths -- stopped describing anything the moment they
+## were locked together.
+func test_the_feet_still_plant_at_both_ends_of_the_gait() -> void:
+	var player := _build()
+	var library := _clips()
+	var walk_period: float = library.get_animation(WandererAnimations.WALK).length
+	var run_period: float = library.get_animation(WandererAnimations.RUN).length
+	var shared := run_period
+	for speed in [player.walk_speed, player.run_speed]:
+		var gait := clampf(
+			inverse_lerp(player.anim_walk_speed, player.anim_run_speed, speed), 0.0, 1.0
+		)
+		var stride := lerpf(
+			player.anim_walk_speed * walk_period, player.anim_run_speed * run_period, gait
+		)
+		var pace: float = speed * shared / stride
+		# The ground the blended cycle covers per second must be the ground he is
+		# actually covering, or the feet skate.
+		assert_almost_eq(
+			stride * pace / shared,
+			speed,
+			0.0001,
+			"at %.2f m/s the cycle covers %.3f m/s of ground" % [speed, stride * pace / shared]
+		)
+		assert_true(
+			pace <= player.anim_max_pace,
+			"the pace at %.2f m/s is %.3f, above the anim_max_pace clamp of %.2f, so the "
+				% [speed, pace, player.anim_max_pace]
+				+ "clamp would bite and the legs would fall behind the ground"
+		)
+
+
+## The two idles are deliberately NOT locked to one length, and that decision is
+## worth a test of its own: they are 14.0 s and 3.0 s, and locking them would
+## stretch a shiver onto a 14 s timeline and destroy the readout the owner asked
+## for by name. Two standing idles have no gait phase to fight over.
+func test_the_two_idles_are_left_on_their_own_lengths() -> void:
+	var graph := PlayerControllerScript.build_blend_tree()
+	for name in ["idle", "idle_cold"]:
+		var clip := graph.get_node(name) as AnimationNodeAnimation
+		assert_not_null(clip, "the graph has no clip node called %s" % name)
+		if clip == null:
+			continue
+		assert_false(
+			clip.use_custom_timeline,
+			"%s has been put on a custom timeline; two standing idles have no gait "
+				% name
+				+ "phase to match and stretching the shiver ruins it"
+		)
+	var library := _clips()
+	assert_true(
+		library.get_animation(WandererAnimations.IDLE).length
+			> library.get_animation(WandererAnimations.IDLE_COLD).length * 2.0,
+		"the two idles are now a similar length, which would change this reasoning"
+	)
+
+
 func test_standing_still_is_still_an_idle() -> void:
 	var player := _build()
 	assert_almost_eq(

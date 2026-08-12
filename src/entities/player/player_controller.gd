@@ -631,6 +631,13 @@ var _furrow_noise: FastNoiseLite
 var _furrow_anchor := Vector3.ZERO
 var _has_furrow_anchor := false
 var _furrow_travel := 0.0
+## The two gait cycles' own lengths, measured off the clips in _build_animation(),
+## and the shared length both are remapped onto. See _lock_gait_cycles(). The
+## defaults are the shipped clips' measured values so a body built without a
+## model still computes a sane pace.
+var _walk_period := 1.0667
+var _run_period := 0.6667
+var _cycle_period := 0.6667
 ## The auto-run: how long he has kept going, which way he has been going, and how
 ## far the walk has been promoted toward the run. See advance_gait().
 var _run_hold := 0.0
@@ -884,6 +891,31 @@ func _first_of_type(node: Node, type: StringName) -> Node:
 ## nothing while he is moving -- at full speed `motion` is 1 and neither idle
 ## contributes at all.
 ##
+## ---------------------------------------------------------------------------
+## THE TWO IDLES ARE **NOT** PUT ON A SHARED CYCLE, AND THAT IS THE POINT
+## ---------------------------------------------------------------------------
+## The same question was asked of them as of the walk and the run, because the
+## lengths are further apart than the gaits' are:
+##
+##     idle 14.0000 s     idle_cold 3.0000 s     ratio 4.6667
+##
+## The answer is different, and the reason is that a period is only worth locking
+## when it is a PHASE. Two gait cycles have one: each carries a left foot and a
+## right foot that have to agree about which is forward. Two standing idles do
+## not. Both keep the feet planted throughout, so their average is a standing
+## pose at any relative phase, and there is nothing to fight.
+##
+## Locking them would also destroy both takes. Stretching the shiver to 14 s
+## makes it a slow wobble, and the shiver is the readout the owner asked for by
+## name; compressing the neutral idle to 3 s makes a man who barely moves twitch.
+## The mismatch is a feature here: 14 against 3 shares no common multiple under 42
+## seconds, so the mixture never visibly repeats.
+##
+## What they DID need was `sync`, and badly. `chill` reaches exactly 1.0 whenever
+## no survival model is running -- which is its authored default -- and at 1.0 the
+## neutral idle's weight is zero, so it froze solid and re-entered stale the
+## moment anything moved `chill` off the endpoint.
+##
 ## The time scale sits *inside* the locomotion branch, not over the whole graph.
 ## It has to: pace goes to zero with the ground speed, which is what stops a
 ## standing character from sliding along with his legs cycling -- and a time
@@ -894,6 +926,166 @@ func _first_of_type(node: Node, type: StringName) -> Node:
 ## just no longer visible: at zero speed `motion` is zero, so the frozen legs
 ## contribute nothing, and when the player moves off again the cycle resumes
 ## from where it stopped rather than snapping to frame one.
+## A Blend2 that keeps BOTH its inputs running.
+##
+## ---------------------------------------------------------------------------
+## THE STRADDLE, AND WHY EVERY BLEND IN THIS TREE IS SYNCED
+## ---------------------------------------------------------------------------
+## `AnimationNodeBlend2` inherits `sync` from `AnimationNodeSync` and IT DEFAULTS
+## TO FALSE -- verified on this build rather than read off the docs. With `sync`
+## off, an input whose blend weight reaches 0 stops advancing and is held at
+## whatever frame it happened to be on. When its weight comes back up it re-enters
+## the mix at a stale, arbitrary phase, and two locomotion cycles mixed pose by
+## pose then average one clip's stance against the other's. Where one has the left
+## leg forward and the other the right, the average is a man walking with his legs
+## apart.
+##
+## THIS DEFECT IS OLDER THAN THE SPEED REWORK AND THAT REWORK IS WHAT EXPOSED IT.
+## The graph had these three unsynced Blend2 nodes before any of it. What changed
+## is where `gait` sits: the run used to be 5.4 m/s and it was the only speed the
+## body had, so `inverse_lerp(1.35, 4.6, 5.4)` clamped and the character was
+## PINNED at gait 1.0 -- a pure run, the walk contributing nothing, nothing mixed
+## and nothing to go wrong. He now walks at 1.35, jogs at 3.3, and spends nearly
+## all his time at intermediate values, which is exactly where the latent defect
+## draws.
+##
+## `sync` is set on all three deliberately, and each one earns it:
+##
+##   gait    two gait cycles. THE straddle. Non-negotiable.
+##   chill   two idles, and it is the shiver readout. `chill` reaches 1.0 whenever
+##           no survival model is running, which froze the neutral idle outright.
+##   motion  the idle branch used to freeze solid for as long as he was moving,
+##           then resume stale the moment he stopped -- a pop at the end of every
+##           journey. The locomotion branch is still frozen at a standstill, but
+##           by `pace` going to zero rather than by this, so the comment above
+##           about resuming where it stopped still holds.
+static func _synced_blend() -> AnimationNodeBlend2:
+	var blend := AnimationNodeBlend2.new()
+	blend.sync = true
+	return blend
+
+
+## The graph, as a pure function of nothing.
+##
+## Static, and it allocates no Node -- every AnimationNode is a Resource, so this
+## frees itself and a test may call it freely (briefing constraint 2). That is the
+## point of it being separate: the shape of this graph and the flags on it are
+## what regressed, and checking them used to mean standing a whole character up,
+## which loads a model, four textures and a skeleton and leaks RIDs on the way
+## out. Now the thing that broke is the thing under test, and nothing else runs.
+##
+## The two rate nodes carry constants set by _lock_gait_cycles() once the tree is
+## live; everything else here is fixed wiring.
+static func build_blend_tree() -> AnimationNodeBlendTree:
+	var idle := AnimationNodeAnimation.new()
+	idle.animation = IDLE_CLIP
+	var idle_cold := AnimationNodeAnimation.new()
+	idle_cold.animation = IDLE_COLD_CLIP
+	var walk := AnimationNodeAnimation.new()
+	walk.animation = WALK_CLIP
+	var run := AnimationNodeAnimation.new()
+	run.animation = RUN_CLIP
+
+	var graph := AnimationNodeBlendTree.new()
+	graph.add_node("idle", idle)
+	graph.add_node("idle_cold", idle_cold)
+	graph.add_node("chill", _synced_blend())
+	graph.add_node("walk", walk)
+	graph.add_node("run", run)
+	# One per clip, holding a constant that puts both cycles on the run's length.
+	graph.add_node("walk_rate", AnimationNodeTimeScale.new())
+	graph.add_node("run_rate", AnimationNodeTimeScale.new())
+	graph.add_node("gait", _synced_blend())
+	graph.add_node("pace", AnimationNodeTimeScale.new())
+	graph.add_node("motion", _synced_blend())
+	graph.connect_node("chill", 0, "idle")
+	graph.connect_node("chill", 1, "idle_cold")
+	graph.connect_node("walk_rate", 0, "walk")
+	graph.connect_node("run_rate", 0, "run")
+	graph.connect_node("gait", 0, "walk_rate")
+	graph.connect_node("gait", 1, "run_rate")
+	graph.connect_node("pace", 0, "gait")
+	graph.connect_node("motion", 0, "chill")
+	graph.connect_node("motion", 1, "pace")
+	graph.connect_node("output", 0, "motion")
+	return graph
+
+
+## What the two rate nodes have to hold for both cycles to be one length.
+##
+## Static and pure so the arithmetic can be checked without a tree: x is the
+## walk's rate, y is the run's. The run is the shared length -- see
+## _lock_gait_cycles() for why that end and not the other.
+static func cycle_rates(walk_period: float, run_period: float) -> Vector2:
+	var shared := maxf(run_period, 0.0001)
+	return Vector2(maxf(walk_period, 0.0001) / shared, run_period / shared)
+
+
+## Put the walk and the run on one shared cycle length.
+##
+## SYNC ALONE IS NOT ENOUGH, and this is the half that is easy to miss. `sync`
+## keeps both inputs advancing; it does not make them advance at the same RATE.
+## Measured off the shipped clips:
+##
+##     walk  1.0667 s     run  0.6667 s     ratio 1.6000
+##
+## Two cycles 1.6 times apart in period drift through each other continuously, so
+## even perfectly synced they are only in phase for an instant and the feet fight
+## everywhere else. That is a beat, and it is worse than a constant error because
+## it never settles.
+##
+## The fix is one `AnimationNodeTimeScale` in front of each clip, holding a
+## constant: the clip's own period over the shared one. The walk runs at 1.600 and
+## the run at 1.000, so both cycles are the RUN's length, and `pace` downstream
+## scales the locked pair together.
+##
+## The run was chosen as the shared length rather than the walk because it keeps
+## `pace` at or below 1 across the whole speed range, which leaves anim_max_pace
+## as the guard it was meant to be instead of a clamp that bites at the top of
+## the run.
+##
+## ---------------------------------------------------------------------------
+## `use_custom_timeline` WAS TRIED FIRST AND IT DOES NOT WORK HERE
+## ---------------------------------------------------------------------------
+## `AnimationNodeAnimation` gained `use_custom_timeline`, `timeline_length` and
+## `stretch_time_scale` for exactly this problem, and reading the names it is the
+## obvious answer -- declare both clips onto one timeline and let the engine remap
+## them. Measured on 4.7.1, setting all three STOPS THE SKELETON: sampling the
+## thigh's swing through the graph gives a range of 0.000 rad at gait 0.5 and 1.0,
+## and 0.361 rather than 0.548 at gait 0. A frozen character, not a retimed one.
+##
+## It is written down because the property names are inviting and the failure is
+## silent -- no error, no warning, just a man standing still while every parameter
+## reads correct. Whatever those three properties mean on this build, it is not
+## what a blend tree of two locomotion clips needs. TimeScale is arithmetic on the
+## delta and it is verifiable, which is why it is what ships.
+##
+## Nothing is resampled either way -- this scales time, it does not rewrite keys --
+## so the poses are exactly the authored ones at both endpoints.
+##
+## PHASE IS DELIBERATELY LEFT ALONE, and it was measured before that was decided.
+## Cross-correlating the thigh swing of the two clips, resampled to a common 360
+## points with the mean removed:
+##
+##     LeftUpLeg    best shift 0.886 of a cycle, correlation 0.885 (0.726 unshifted)
+##     RightUpLeg   best shift 0.014 of a cycle, correlation 0.795 (0.789 unshifted)
+##
+## The two legs disagree about which shift is best, so there is no single offset
+## that improves both -- correcting the left leg's 0.886 would drag the right leg
+## off its own optimum for a gain of 0.006. They already start broadly in phase.
+## The residual is asymmetry authored into the takes: within one clip the left and
+## right thighs are 0.411 (walk) and 0.461 (run) of a cycle apart where a clean
+## cycle would be 0.500. Closing that is a re-export and an asset decision, not a
+## retime, so `start_offset` is left at zero and the numbers are in the report.
+## Applied once, after the tree is live: these are constants, and the only thing
+## that could change them is a re-exported clip of a different length.
+func _lock_gait_cycles() -> void:
+	_cycle_period = _run_period
+	var rates := cycle_rates(_walk_period, _run_period)
+	_animation.set(&"parameters/walk_rate/scale", rates.x)
+	_animation.set(&"parameters/run_rate/scale", rates.y)
+
+
 func _build_animation() -> void:
 	var player := _first_of_type(_model, &"AnimationPlayer") as AnimationPlayer
 	if player == null:
@@ -910,32 +1102,12 @@ func _build_animation() -> void:
 			push_warning("player_controller: the merged library is missing %s" % clip)
 			return
 
-	var idle := AnimationNodeAnimation.new()
-	idle.animation = IDLE_CLIP
-	var idle_cold := AnimationNodeAnimation.new()
-	idle_cold.animation = IDLE_COLD_CLIP
-	var walk := AnimationNodeAnimation.new()
-	walk.animation = WALK_CLIP
-	var run := AnimationNodeAnimation.new()
-	run.animation = RUN_CLIP
+	# Measured off the clips rather than typed in, so a re-export at a different
+	# length retimes itself. See _lock_gait_cycles().
+	_walk_period = maxf(player.get_animation(WALK_CLIP).length, 0.0001)
+	_run_period = maxf(player.get_animation(RUN_CLIP).length, 0.0001)
 
-	var graph := AnimationNodeBlendTree.new()
-	graph.add_node("idle", idle)
-	graph.add_node("idle_cold", idle_cold)
-	graph.add_node("chill", AnimationNodeBlend2.new())
-	graph.add_node("walk", walk)
-	graph.add_node("run", run)
-	graph.add_node("gait", AnimationNodeBlend2.new())
-	graph.add_node("pace", AnimationNodeTimeScale.new())
-	graph.add_node("motion", AnimationNodeBlend2.new())
-	graph.connect_node("chill", 0, "idle")
-	graph.connect_node("chill", 1, "idle_cold")
-	graph.connect_node("gait", 0, "walk")
-	graph.connect_node("gait", 1, "run")
-	graph.connect_node("pace", 0, "gait")
-	graph.connect_node("motion", 0, "chill")
-	graph.connect_node("motion", 1, "pace")
-	graph.connect_node("output", 0, "motion")
+	var graph := build_blend_tree()
 
 	_animation = AnimationTree.new()
 	_animation.name = "Gait"
@@ -949,6 +1121,9 @@ func _build_animation() -> void:
 	# character stands in his bind pose with no error printed anywhere.
 	_animation.root_node = _animation.get_path_to(_model)
 	_animation.active = true
+	# After the tree is live: these are AnimationTree parameters, not resource
+	# properties, so there is nothing to set them on until it exists.
+	_lock_gait_cycles()
 
 
 ## How much of him the walk carries, against the idle. 0 standing, 1 walking.
@@ -989,18 +1164,37 @@ func motion_blend(speed: float, wade: float, grade: float) -> float:
 ## per second the snow took away is the one this reads. The auto-run needs no
 ## separate animation wiring for the same reason.
 ##
-## `reference` is the ground the blended clip covers at that blend, so the pace
-## scale is exactly 1 anywhere in [anim_walk_speed, anim_run_speed] -- which is
-## why keeping run_speed inside that band is what plants the feet.
+## THE PACE IS COMPUTED IN STRIDES, NOT IN SPEEDS, and it has to be now that
+## _lock_gait_cycles() puts both clips on one timeline. The old form divided the
+## ground speed by `lerp(anim_walk_speed, anim_run_speed, gait)`, which is the
+## speed the pair would cover if each played at ITS OWN length -- and neither does
+## any more, so that number no longer describes anything.
+##
+## What survives the remap is the distance each cycle covers, which is a property
+## of the clip and not of how fast it is played:
+##
+##     stride = lerp(anim_walk_speed * walk_period, anim_run_speed * run_period, gait)
+##
+## 1.44 m for the walk cycle, 3.07 m for the run -- and those agree with the
+## measurements in the anim_walk_speed comment, which is the check that the
+## exports and the clips still describe the same takes. One shared cycle covers
+## `stride` metres in `_cycle_period / pace` seconds, so matching that to the
+## ground speed gives the line below.
+##
+## It still lands on exactly 1 at a pure run and 0.625 at a pure walk -- both
+## clips playing at their authored rate, which is the whole point -- and it stays
+## under anim_max_pace across the entire speed range, so that clamp is a guard
+## again rather than something that bites at the top of the run.
 func _drive_animation(wade: float, grade: float) -> void:
 	if _animation == null:
 		return
 	var speed := Vector2(velocity.x, velocity.z).length()
 	var gait := clampf(inverse_lerp(anim_walk_speed, anim_run_speed, speed), 0.0, 1.0)
-	var reference := lerpf(anim_walk_speed, anim_run_speed, gait)
+	var stride := lerpf(anim_walk_speed * _walk_period, anim_run_speed * _run_period, gait)
+	var pace := speed * _cycle_period / maxf(stride, 0.0001)
 	_animation.set(&"parameters/motion/blend_amount", motion_blend(speed, wade, grade))
 	_animation.set(&"parameters/gait/blend_amount", gait)
-	_animation.set(&"parameters/pace/scale", clampf(speed / reference, 0.0, anim_max_pace))
+	_animation.set(&"parameters/pace/scale", clampf(pace, 0.0, anim_max_pace))
 	_animation.set(&"parameters/chill/blend_amount", clampf(chill, 0.0, 1.0))
 
 
