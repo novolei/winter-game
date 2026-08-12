@@ -301,12 +301,24 @@ def restore(arm, held):
 
 
 def height_of(arm, name):
-    """World z of a posed bone's head, or of the whole rig's tallest bone."""
+    """World z of a posed bone's head."""
     bpy.context.view_layer.update()
     return (arm.matrix_world @ arm.pose.bones[name].head).z
 
 
-def solve_pitch(arm, axes, chain, measure, target, low=-90.0, high=120.0, coarse=10.0, steps=14):
+def tip_height_of(arm, name):
+    """World z of a posed bone's TIP.
+
+    The tail is measured at its tip rather than its last joint, because on the
+    chihuahua the last joint is barely two centimetres from the one before it and
+    a target set on the joint moves the tail by almost nothing.
+    """
+    bpy.context.view_layer.update()
+    return (arm.matrix_world @ arm.pose.bones[name].tail).z
+
+
+def solve_pitch(arm, axes, chain, measure, target, low=-90.0, high=120.0, coarse=10.0, steps=14,
+                must_reach=True):
     """Bisect the total pitch spread across `chain` until `measure` hits `target`.
 
     ---------------------------------------------------------------------
@@ -354,13 +366,21 @@ def solve_pitch(arm, axes, chain, measure, target, low=-90.0, high=120.0, coarse
     crossings = [(scan[i], scan[i + 1]) for i in range(len(scan) - 1)
                  if (scan[i][1] > 0.0) != (scan[i + 1][1] > 0.0)]
     if not crossings:
-        # The rig physically will not reach it. Take the nearest angle and say
-        # so with the whole scan, rather than returning a pose quietly off by an
-        # unknown amount.
+        # The rig will not reach it. Take the nearest angle and print the whole
+        # scan rather than returning a pose quietly off by an unknown amount.
+        #
+        # `must_reach=False` says the target is a DIRECTION, not a position: the
+        # tails are asked to go below their own root and the honest answer for
+        # some rigs is "as far as this one goes". The chihuahua carries its tail
+        # curled over its back at rest and 30 degrees per joint will not undo
+        # that -- MEASURED, its tip reaches 0.2154 m against a root at 0.2304 m,
+        # so it lies flat rather than hanging. Calling that a WARNING every run
+        # would train everyone to ignore the word.
         nearest = min(scan, key=lambda sample: abs(sample[1]))
         apply(nearest[0])
-        print("build_dog: WARNING %s cannot reach %.4f m; nearest %.4f m at %+.1f deg. Scan: %s"
-              % (chain[0], target, target + nearest[1], nearest[0],
+        print("build_dog: %s %s cannot reach %.4f m; nearest %.4f m at %+.1f deg. Scan: %s"
+              % ("WARNING" if must_reach else "LIMIT", chain[0], target,
+                 target + nearest[1], nearest[0],
                  " ".join("%+.0f:%.4f" % (d, target + e) for d, e in scan)))
         return nearest[0]
 
@@ -539,15 +559,19 @@ def author_lie(arm, axes):
         rotate(arm, "backKnee_%s" % side, axes.side, -42.0 * near)
         rotate(arm, "backAnkle_%s" % side, axes.side, 26.0 * near)
 
-    # The tail, laid out behind and limp.
+    # The tail, laid out behind and limp. Solved to hang below its own root for
+    # the reason `author_growl` gives: the chihuahua carries its tail curled over
+    # its back at rest and the other two do not, so a fixed angle is three
+    # different tails.
     #
-    # NEGATIVE, and that is the sign that caught this file twice. A positive
+    # NEGATIVE runs it downward, and that sign caught this file twice. A positive
     # rotation about `side` tilts a bone's own direction DOWNWARD -- but the tail
     # points backwards, so its direction is -forward and the same positive
     # rotation lifts it. The first pass put a cheerful tail in the air on a dog
-    # that had just collapsed, and an identical one on the growl.
-    for index, name in enumerate(tail_chain(arm)):
-        rotate(arm, name, axes.side, -14.0 if index == 0 else -3.0)
+    # that had just collapsed.
+    limp = tail_chain(arm)
+    solve_pitch(arm, axes, limp, lambda: tip_height_of(arm, limp[-1]),
+                height_of(arm, limp[0]) * 0.70, low=-150.0, high=30.0, must_reach=False)
 
     # And now onto the flank. Not the full ninety: a dog on its side settles
     # with the shoulder and hip taking the weight and the spine slightly open.
@@ -637,11 +661,20 @@ def author_growl(arm, axes):
                 height_of(arm, "Head_M") + 0.015 * standing)
     rotate(arm, "Jaw_M", axes.side, 9.0)
 
-    # Tail low and stiff -- a growling dog does not wag. Negative for the reason
-    # given in `author_lie`: the tail points backwards, so a positive pitch lifts
-    # it, and the first pass of this pose had the tail straight up in the air.
-    for index, name in enumerate(tail_chain(arm)):
-        rotate(arm, name, axes.side, -32.0 if index == 0 else -5.0)
+    # Tail low and stiff -- a growling dog does not wag -- and SOLVED, not dialled.
+    #
+    # A fixed -32 degrees put the golden retriever's and the great dane's tails
+    # down and left the CHIHUAHUA's curled up over its back, because that is where
+    # its rest pose carries it and the breeds do not share a rest tail at all. A
+    # target of "the tip below the root" is the thing actually being asked for and
+    # it lands on all three.
+    #
+    # Negative angles run the tail DOWNWARD, which is the opposite of every other
+    # bone here: a positive pitch about `side` tilts a bone's own direction down,
+    # and the tail's direction is -forward.
+    tail = tail_chain(arm)
+    solve_pitch(arm, axes, tail, lambda: tip_height_of(arm, tail[-1]),
+                height_of(arm, tail[0]) * 0.55, low=-150.0, high=30.0, must_reach=False)
 
     settle_on_ground(arm, axes)
     print("build_dog: growl -- standing withers %.4f m, crouched %.4f m, skull %.4f m, muzzle %.4f m"

@@ -334,6 +334,25 @@ largest patches by area — `#000000` is unused UV space and is excluded.
 
 ## 5. The dogs — the deliverable, and the blocker
 
+> **UNBLOCKED, and the rest of this section is now history rather than status.**
+> The owner did what §5.2 recommended: he opened the package in Unity and
+> re-exported the seventeen dog clips as `Model@Clip.fbx`. All three dogs are in
+> the project as of commit `9b028dd` —
+> `assets/models/characters/dogs/{chihuahua,golden_retriever,great_dane}.glb`,
+> built by `tools/blender/build_dog.py`, **23 takes, all 23 measured to move**
+> (`tools/measure_dog_takes.gd`). The two takes §5.3 said could never be filled —
+> lying down and growling — are **authored on all three rigs** by that same
+> script. `src/entities/wildlife/dog_animations.gd` is the shared vocabulary, and
+> the chihuahua's missing `stand` resolves to its `idle` by an explicit rule.
+>
+> Three findings below are corrected by the re-export and are left in place
+> because they are true of the *package*: the `.anim` hash problem (§5.2) is what
+> made the Unity round trip necessary; the two scale families (§5.1) collapsed
+> into one on the way through, which `data/scale/dog_*.tres` now asserts; and the
+> Great Dane's 55-bone rig is still a different rig, which costs nothing because
+> each breed's takes are played on the skeleton they were authored on. See
+> `.superpowers/sdd/wave3/task-w3-dogs-report.md`.
+
 The scripted find (an injured dog in the snow, healed, named, becomes a companion) is the
 priority. Three things were asked; here are the three answers, and the first is bad news.
 
@@ -435,7 +454,7 @@ Two ways out, both worth the Director's attention:
 | **Chicken** (`Hen`) | indifferent | **ADOPT** | 894 | **100.0** | 18/18 (rig) + 12/12 (anims) | clean once `Hen-brown_COL_2k.png` is placed | **trivial** — 6 colours |
 | **Wolf** | hostile · W5 | **ADOPT, blocker first** | 2,008 | **100.0** | 5/5 + Howl 1/1 | **DIRTY — unfixable by placement** | **trivial** — 48.3% is already `#1D1D1D` |
 | **Rabbit** | indifferent | **ADOPT model, animation blocked** | 630 | 1.0 | **0 usable** — all 7 are Unity `.anim` | clean | moderate — 645 colours, but it is a small silhouette |
-| **Dog ×3** | bonded | **ADOPT model, animation blocked** | 872 / 928 / 988 | 1.0 / 100.0 / 100.0 | **0 usable** — all 17 are Unity `.anim` | clean | moderate — 326 colours |
+| **Dog ×3** | bonded | **ADOPTED — in, via a Unity re-export** | 872 / 928 / 988 | n/a — rebuilt as `.glb` | **23/23 move**, including a `lie` and a `growl` authored here | clean | done — map dropped, one flat `structure_tones[2]` |
 | **Bear** | hostile · W5 | **REJECT — keep the one we have** | 3,898 | 100.0 | 7/7 | dirty (2 missing textures) | trivial |
 
 ### 6.2 The bear: measured against the one already in the repository
