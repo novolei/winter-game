@@ -432,3 +432,15 @@ So:
 - Building a tell? **Make it move one way only** for the whole warning, and prefer a small monotonic change over a large noisy one. Amplitude is not the property that matters.
 
 The corollary is that **the same quantity can be excellent at one job and useless at the other**, which is why wind is the game's best cue and its worst tell.
+
+### Trap 14 — a freshly seeded `RandomNumberGenerator` has a biased 4th draw
+
+Measured on this project across six seeds: the **4th** `randf()` from a newly seeded `RandomNumberGenerator` comes back systematically low — **0.09 to 0.24**, where a uniform draw should average 0.5.
+
+Nothing errors. The stream is fine after that; it is the early sequence that is not yet mixed.
+
+The failure this causes is the worst kind, because it looks like design. A system that seeds an RNG and then takes a handful of draws — how many crows on this wire, does the aurora happen tonight at p=0.20, which weather comes next, where does the noise offset start — will find one of those decisions quietly biased, and it will present as "the aurora seems rare" or "there are usually two birds" rather than as a bug. Every number involved looks plausible.
+
+**So: do not rely on the first several draws of a freshly seeded generator.** Either discard a few after seeding, or seed once at startup and keep drawing from the same long-lived stream rather than re-seeding per decision.
+
+**And when a probability is load-bearing, measure the distribution rather than trusting it.** The aurora's rarity was settled by simulating 2,000 runs and counting; that is the standard to hold, and it is the only method that would have caught this.
