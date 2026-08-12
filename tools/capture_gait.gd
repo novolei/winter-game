@@ -41,6 +41,7 @@ const COLUMNS := 6
 var _out := "user://gait"
 var _broken := false
 var _probe := false
+var _probe_idle_only := false
 var _player: PlayerController = null
 var _tree: AnimationTree = null
 var _camera: Camera3D = null
@@ -51,7 +52,9 @@ func _ready() -> void:
 	_build_world()
 	# One frame for the tree to come up before anything is driven or captured.
 	await RenderingServer.frame_post_draw
-	if _probe:
+	if _probe_idle_only:
+		await _probe_idle()
+	elif _probe:
 		await _probe_periods()
 	else:
 		await _capture_everything()
@@ -86,6 +89,63 @@ func _probe_periods() -> void:
 			trace.append(Basis(skeleton.get_bone_pose_rotation(thigh)).get_euler().x)
 		print("  gait %.1f  period %.4f s   swing range %.3f rad" % [
 			gait, _period_of(trace, 0.01), _range_of(trace),
+		])
+
+
+## How much shiver is actually in the pose at each chill value.
+##
+## A shiver is FAST and SMALL; the neutral idle is slow and larger. Measuring the
+## pose's total angular speed separates them: tremor shows up as speed, sway does
+## not. Reported against the excursion so the two are comparable.
+##
+## This exists because `chill` blending is linear, so a floor of 0.45 puts 55% of
+## a still pose into the take the owner asked for by name, and the question of
+## whether that still reads as his shiver is not answerable from the constant.
+func _probe_idle() -> void:
+	var skeleton := _first_skeleton(_player)
+	var bones := range(skeleton.get_bone_count())
+	_tree.set(&"parameters/motion/blend_amount", 0.0)
+	print("chill   tremor(rad/s)   excursion(rad)   share of full shiver")
+	var full := 0.0
+	var rows := []
+	for chill in [0.0, 0.2, 0.45, 0.6, 0.7, 0.85, 1.0]:
+		_tree.set(&"parameters/chill/blend_amount", chill)
+		for i in range(30):
+			_tree.advance(1.0 / 60.0)
+			await RenderingServer.frame_post_draw
+		var previous: Array[Quaternion] = []
+		var mean_pose: Array[Quaternion] = []
+		var speeds: Array[float] = []
+		var excursion := 0.0
+		for i in range(240):
+			_tree.advance(1.0 / 60.0)
+			await RenderingServer.frame_post_draw
+			var pose: Array[Quaternion] = []
+			for b in bones:
+				pose.append(skeleton.get_bone_pose_rotation(b))
+			if not previous.is_empty():
+				var total := 0.0
+				for b in range(pose.size()):
+					total += previous[b].angle_to(pose[b])
+				speeds.append(total * 60.0)
+			if mean_pose.is_empty():
+				mean_pose = pose.duplicate()
+			else:
+				var away := 0.0
+				for b in range(pose.size()):
+					away += mean_pose[b].angle_to(pose[b])
+				excursion = maxf(excursion, away)
+			previous = pose
+		var rms := 0.0
+		for s in speeds:
+			rms += s * s
+		rms = sqrt(rms / maxf(float(speeds.size()), 1.0))
+		if chill == 1.0:
+			full = rms
+		rows.append([chill, rms, excursion])
+	for row in rows:
+		print("  %.2f      %8.4f        %8.4f         %5.1f%%" % [
+			row[0], row[1], row[2], 100.0 * float(row[1]) / maxf(full, 0.0001),
 		])
 
 
@@ -137,6 +197,8 @@ func _read_arguments() -> void:
 			_broken = true
 		elif args[index] == "--probe":
 			_probe = true
+		elif args[index] == "--probe-idle":
+			_probe_idle_only = true
 
 
 func _build_world() -> void:
@@ -266,12 +328,36 @@ func _idle_sheet(chill_amount: float, label: String) -> void:
 	var sheet := Image.create_empty(CELL_W * COLUMNS, CELL_H, false, Image.FORMAT_RGBA8)
 	_tree.set(&"parameters/motion/blend_amount", 0.0)
 	_tree.set(&"parameters/chill/blend_amount", chill_amount)
+	# A SHORT window, not a whole idle cycle. A shiver is fast and small: sampled
+	# half a second apart the tremor aliases into noise and every cell looks like
+	# a different still pose. At 0.1 s apart, adjacent cells that jitter against
+	# each other ARE the shiver, and adjacent cells that look identical are its
+	# absence -- which is the thing being judged.
 	for column in range(COLUMNS):
-		_tree.advance(3.0 / float(COLUMNS))
+		_tree.advance(0.6 / float(COLUMNS))
 		var frame: Image = await _shot()
 		sheet.blit_rect(frame, Rect2i(0, 0, CELL_W, CELL_H), Vector2i(CELL_W * column, 0))
 	var path := "%s_%s.png" % [_out, label]
 	print("capture_gait: %s  (%s)" % [path, "BROKEN" if _broken else "fixed"])
+	sheet.save_png(path)
+
+
+## One sheet whose columns are CHILL values rather than moments in time, all
+## sampled at the same point in the idle. The floor is a judgement about a
+## silhouette -- the two idles differ in POSTURE, not just in tremor amplitude --
+## and a ladder is the only way to see where the cold posture arrives.
+func _chill_ladder(values: Array, label: String) -> void:
+	var sheet := Image.create_empty(CELL_W * values.size(), CELL_H, false, Image.FORMAT_RGBA8)
+	_tree.set(&"parameters/motion/blend_amount", 0.0)
+	for column in range(values.size()):
+		_tree.set(&"parameters/chill/blend_amount", float(values[column]))
+		# Settle at the new blend without advancing the clips, so every column is
+		# the same moment of the idle and only the blend differs.
+		_tree.advance(0.0)
+		var frame: Image = await _shot()
+		sheet.blit_rect(frame, Rect2i(0, 0, CELL_W, CELL_H), Vector2i(CELL_W * column, 0))
+	var path := "%s_%s.png" % [_out, label]
+	print("capture_gait: %s  columns %s" % [path, str(values)])
 	sheet.save_png(path)
 
 
@@ -282,6 +368,9 @@ func _capture_everything() -> void:
 	await _sheet(cycle, "mid", 2.4)
 	await _sheet(cycle, "run", _player.run_speed)
 	await _sheet(cycle * 3.0, "blend", 0.0, true)
-	await _idle_sheet(0.0, "idle_warm")
-	await _idle_sheet(0.5, "idle_mid")
-	await _idle_sheet(1.0, "idle_cold")
+	# The floor, the middle of the remap, the top, and a no-shiver reference.
+	await _idle_sheet(0.0, "idle_chill000")
+	await _idle_sheet(0.45, "idle_chill045")
+	await _idle_sheet(0.70, "idle_chill070")
+	await _idle_sheet(1.0, "idle_chill100")
+	await _chill_ladder([0.45, 0.55, 0.60, 0.65, 0.70, 0.80], "ladder")

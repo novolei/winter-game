@@ -366,11 +366,18 @@ func test_a_healthy_man_is_not_read_as_freezing() -> void:
 		reading < player.IDLE_CHILL_FLOOR + 0.05,
 		"a healthy man reads as %f cold, above the floor %f" % [reading, player.IDLE_CHILL_FLOOR]
 	)
+	# The second bound is a check on the CONSTANT rather than on the arithmetic:
+	# whatever the floor is set to, it has to leave the readout somewhere to go.
+	# It used to read `reading < 0.6`, which was the 0.45 floor plus a margin
+	# written as an absolute -- so it failed the moment the floor was deliberately
+	# raised to 0.65 on the evidence in IDLE_CHILL_FLOOR's comment, without any
+	# property having actually broken. Stated as headroom it survives a retune and
+	# still fails on an absurd one.
 	assert_true(
-		reading < 0.6,
-		"a healthy man reads as %f cold; fraction_of() passed straight through gives "
-			% reading
-			+ "exactly this kind of number, and with no HUD it would look like art direction"
+		1.0 - reading >= 0.2,
+		"a healthy man reads as %f cold, leaving only %.2f of range above him; the floor "
+			% [reading, 1.0 - reading]
+			+ "has eaten the readout, and with no HUD there is nothing else to show him freezing"
 	)
 
 ## With nothing driving him the authored default stands. BreathFog and the cold

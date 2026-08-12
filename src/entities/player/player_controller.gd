@@ -1075,8 +1075,34 @@ static func cycle_rates(walk_period: float, run_period: float) -> Vector2:
 ## off its own optimum for a gain of 0.006. They already start broadly in phase.
 ## The residual is asymmetry authored into the takes: within one clip the left and
 ## right thighs are 0.411 (walk) and 0.461 (run) of a cycle apart where a clean
-## cycle would be 0.500. Closing that is a re-export and an asset decision, not a
-## retime, so `start_offset` is left at zero and the numbers are in the report.
+## cycle would be 0.500.
+##
+## ---------------------------------------------------------------------------
+## THE RESIDUAL IS ACCEPTED. DO NOT CHASE IT. This is a ruling, not an oversight.
+## ---------------------------------------------------------------------------
+## Closing it needs the clips RE-EXPORTED, not retimed -- no `start_offset` can do
+## it, for the reason above -- and that was ruled on rather than left open:
+##
+##   THE COST OF LEAVING IT is a cos(pi * 0.19) amplitude loss on the thigh swing,
+##   about 17%, AND ONLY AT INTERMEDIATE BLENDS. Measured, not estimated: the
+##   mid-blend swing range is 0.538 rad against ~0.66 for a perfectly in-phase
+##   blend, a ratio of 0.81. At gait 0 and gait 1 there is no loss at all, because
+##   only one clip is contributing.
+##
+##   WHY THAT TRADE GOES THE RIGHT WAY:
+##     1. Auto-run means the player sits at gait 0 or gait 1 nearly all the time,
+##        where the measured strides are clean 0.67 s. The residual lives in the
+##        promotion between them.
+##     2. A 17% reduction in thigh swing during a promotion that lasts under a
+##        second is not something anyone will see. The straddle was, and that is
+##        what got fixed.
+##     3. This library was merged from several sources into one file. Re-exporting
+##        to chase 17% risks the other eighteen takes for a defect nobody has
+##        reported.
+##
+## `start_offset` is therefore left at zero deliberately. Whoever finds the 0.19
+## later is looking at a measured, understood, declined trade -- not a number
+## somebody missed.
 ## Applied once, after the tree is live: these are constants, and the only thing
 ## that could change them is a re-exported clip of a different length.
 func _lock_gait_cycles() -> void:
@@ -1239,7 +1265,50 @@ func set_chill(amount: float) -> void:
 ## Raise this and a healthy man looks hypothermic; drop it to zero and the
 ## default idle goes stiff again. It is deliberately not 0.0 and deliberately
 ## not high.
-const IDLE_CHILL_FLOOR := 0.45
+##
+## ---------------------------------------------------------------------------
+## 0.45 WAS TOO LOW, AND THE REASON IS A SILHOUETTE RATHER THAN AN AMPLITUDE
+## ---------------------------------------------------------------------------
+## The two idles do not differ only in how much the man trembles. They differ in
+## POSTURE, and that is what makes a linear blend between them behave unlike a
+## volume knob:
+##
+##     idle_cold_shiver   arms hugged high across the chest, shoulders drawn up,
+##                        head tucked down, the whole body compressed
+##     idle_neutral       arms hanging down and slightly away from the body
+##
+## Photographed as a ladder of blend values at one moment of the idle
+## (tools/capture_gait.gd --out ... , the `ladder` sheet):
+##
+##     0.45   arms hang at the sides. A man standing, mildly slumped. NOT cold.
+##     0.55   hands a little higher and closer in. Still ambiguous.
+##     0.60   forearms starting to angle in across the front.
+##     0.65   hands clearly in front of the body, forearms crossing the belly,
+##            shoulders beginning to draw up. THE SILHOUETTE HAS CHANGED CHARACTER.
+##     0.70   head down, hands in, unambiguous.
+##     0.80   further in and up, visibly huddled.
+##
+## So at the old 0.45 a warm man was not getting a gentle version of the take the
+## owner asked for by name -- he was getting the NEUTRAL take's silhouette with
+## some tremor added, which is the stiff idle the floor exists to avoid. Measured
+## the same way, tremor at 0.45 is 47.5% of the full shiver's angular speed, but
+## the number is the less important half: 47.5% of a tremor still reads as a
+## tremor, while 55% of the wrong arm position reads as the wrong arm position.
+##
+## 0.65 is where the silhouette first reads as the shiver, so that is where the
+## floor sits. It keeps 0.35 of range above it, and that range is visibly used --
+## tremor climbs from 66% to 100% across it and the arms travel from the belly to
+## a full chest hug -- so the readout still worsens legibly as he freezes, which
+## is the whole reason this is a remap and not a swap.
+##
+## ONE COUPLING TO KNOW ABOUT: drive_readouts() feeds body_chill() to the breath
+## fog as well as to the idle blend, so raising this floor also thickens a warm
+## man's breath. That is left coupled on purpose -- the sentence justifying the
+## floor ("a man standing outdoors in this weather is never perfectly still") is
+## just as true of his breathing, and splitting them would mean a second constant
+## saying the same thing twice. If the breath ever needs to be colder or warmer
+## than the body, that is the moment to separate them, and not before.
+const IDLE_CHILL_FLOOR := 0.65
 
 
 func body_chill() -> float:
