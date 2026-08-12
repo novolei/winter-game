@@ -417,3 +417,18 @@ The reason it is expensive is not the bug, it is the shape of the bug. Nothing e
 **So: set `VELOCITY` and let the engine move the particle.** If you find yourself writing `TRANSFORM[3].xyz += VELOCITY * DELTA`, stop.
 
 The general rule this belongs to: **when a system's output is off by a clean factor — twice, half, exactly squared — suspect a duplicated operation before you reach for a constant.** Engine trap 7 in this same file is the same shape from the other direction: a colour written into both `ALBEDO` and the light pass reaches the screen squared, and it too looks like art direction that is simply a bit dark.
+
+### A cue and a tell need opposite properties
+
+Two different jobs, measured on this project, and confusing them produces a system that is technically correct and useless.
+
+**A cue says "the world is like this now."** Its credibility comes from **lag**. The wind system's best cue is the tyre swing, and it wins because it is the only object with memory: through one squall the wind rose 0.254 → 0.405 while the tyre still sat at its 0.98° minimum, and the tyre was still out at 7.17° while the wind fell back. **A viewer believes there is air because something is late.** Anything that tracks the value exactly reads as the value being applied to an object, not as an object in a world.
+
+**A tell says "something is coming."** Its credibility comes from **monotonicity**. Measured across a blizzard's warning: the snowfall rate ran 0.120 → 0.361 without a single step backwards, and it is the best all-hours tell in the game for that reason alone. The **wind** has by far the largest amplitude over the same window and is the **worst** tell — 0.18, 0.40, 0.21, 0.65, 0.28, 0.72 — because a gust and a rising storm draw the same picture. A player cannot act on a signal that keeps taking itself back.
+
+So:
+
+- Building a cue? **Give it mass, damping, a period — let it arrive late.** Do not smooth it toward the value.
+- Building a tell? **Make it move one way only** for the whole warning, and prefer a small monotonic change over a large noisy one. Amplitude is not the property that matters.
+
+The corollary is that **the same quantity can be excellent at one job and useless at the other**, which is why wind is the game's best cue and its worst tell.
