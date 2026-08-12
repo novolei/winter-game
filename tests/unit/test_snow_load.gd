@@ -42,6 +42,37 @@ const FRAME_PIXELS := 800.0
 const DEEP := 0.5
 const THIN := 0.1
 
+## ---------------------------------------------------------------------------
+## WHAT "YOU CAN SEE SNOW ON HIM" IS, AS A NUMBER
+## ---------------------------------------------------------------------------
+## Two landmarks on the settled load, both DERIVED from a rendered frame rather
+## than chosen. `tools/measure_crust_coverage.gd` counts the pixels the crust
+## actually paints -- REAL differenced against BARE -- at the framing the game is
+## played at (1280x800, the rig's own orthographic 10.5), walker at (20, -20) on
+## open ground, pattern pinned so every row is the same marks:
+##
+##     settle 0.00  ->     0 px
+##     settle 0.005 ->   240 px    <- THE FLOOR
+##     settle 0.01  ->   274 px
+##     settle 0.03  ->   343 px
+##     settle 0.10  ->   472 px    <- twice the floor
+##     settle 0.20  ->   585 px
+##     settle 0.30  ->   688 px    <- more than half a fully caked man
+##     settle 0.50  ->   918 px
+##     settle 1.00  ->  1255 px
+##
+## THE FLOOR IS REAL AND IT IS NOT A DEFECT: `crease_bias` saturates the noise
+## field on the most upward-facing folds, so the first flake to land on him puts
+## 240 px of white in his creases and no rate anywhere can make that arrive later.
+## It is the least this effect can ever show, which is what makes it the right
+## thing to measure the rest against.
+##
+##   LEGIBLE  0.10 -- twice the floor. Below it you are looking at the frosting
+##            the first flake gave him and nothing more.
+##   OBVIOUS  0.30 -- 688 px, over half the 1255 a caked man carries.
+const LEGIBLE_SETTLE := 0.10
+const OBVIOUS_SETTLE := 0.30
+
 
 func _fresh() -> Node3D:
 	var legs: Node3D = SnowLoadScript.new()
@@ -65,6 +96,17 @@ func _free(legs: Node3D) -> void:
 func _walk(legs: Node3D, depth: float, steps: int) -> void:
 	for index in range(steps):
 		legs.step(Vector3(float(index), 0.0, 0.0), depth, Vector2(1.0, 0.0))
+
+
+## How long a man standing perfectly still takes to reach a given settled load,
+## in seconds. Ticked a second at a time because the answer is quoted in seconds
+## and because the rule is framerate-correct, so the step size cannot change it.
+func _seconds_to_settle(legs: Node3D, target: float, give_up_after: int) -> float:
+	var seconds := 0.0
+	while legs.settled() < target and seconds < float(give_up_after):
+		legs._process(1.0)
+		seconds += 1.0
+	return seconds
 
 
 # --- the model ----------------------------------------------------------------
@@ -946,6 +988,15 @@ func test_one_wearers_pattern_stays_put_while_the_load_comes_and_goes() -> void:
 	legs._process(2.0)
 	_walk(legs, THIN, 6)
 	legs._process(0.5)
+	# HE MUST STILL BE CARRYING SOMETHING, or this test has stopped testing
+	# anything: a wearer who shakes completely clean is entitled to a new pattern
+	# (see the test below), so a cycle that ended clean would make the assertion
+	# beneath this one a claim about the wrong state.
+	assert_true(
+		legs.total_load() > legs.shed_floor,
+		"this test needs a body still carrying a load at the end of the cycle, not %f"
+			% legs.total_load()
+	)
 	assert_eq(
 		legs.noise_offset(), born,
 		"the pattern moved during one crossing, so the snow crawls over him "
@@ -959,6 +1010,110 @@ func test_one_wearers_pattern_stays_put_while_the_load_comes_and_goes() -> void:
 	_free(legs)
 
 
+## AND A NEW CROSSING GETS A NEW ONE. The owner's second correction, and he
+## explicitly offered to accept the fixed pattern if it were a performance
+## decision:
+##
+## > 玩家从移动到下一次静止的时候，身上的积雪位置可不可以发生随机的变化…如果这是
+## > 为了游戏性能考量而设计成前后积雪位置保持不变的话，我可以接受这个设定。
+##
+## IT IS NOT A PERFORMANCE DECISION. The offset is one vec2 uniform and rolling
+## it again costs a uniform write. The pattern was frozen because the test above
+## requires it to be -- patches that jump position while snow is on him are a far
+## louder artefact than a repeat -- and that constraint stays. It simply reached
+## further than it had to: it froze the pattern for the whole life of the wearer
+## rather than for the life of a load.
+##
+## So the roll is on the LOAD REACHING ZERO, and never on him merely stopping.
+## The threshold matters more than it looks: both decay rules are exponential, so
+## the load approaches zero and never arrives, and a re-roll waiting for a true
+## zero fires never and the feature silently does nothing. Clean is `shed_floor`
+## -- the number this file already uses for it -- and this test pins that rather
+## than letting a second, private definition grow beside it.
+func test_a_wearer_who_shakes_completely_clean_gets_a_new_pattern() -> void:
+	var legs := _fresh()
+	# A body with a surface on it, so the offset can be followed all the way to the
+	# material the shader actually reads. `crust_material()` on its own hands back a
+	# material the node is not wearing, and a re-roll that never reached the GPU
+	# would pass a test written against that.
+	var body := Node3D.new()
+	var skin := MeshInstance3D.new()
+	skin.mesh = BoxMesh.new()
+	body.add_child(skin)
+	legs.set_subject(body)
+	legs._process(0.016)
+	var crust := skin.material_overlay as ShaderMaterial
+	assert_not_null(crust, "the walker was never dressed, so this test cannot see the GPU's copy")
+	var born: Vector2 = legs.noise_offset()
+	# Into the drift, and the pattern is his crossing's from here until it is over.
+	_walk(legs, DEEP, 5)
+	legs._process(0.016)
+	assert_eq(legs.noise_offset(), born, "the pattern moved while he was loading up")
+	# A SHORT WALK THAT KEEPS SOME OF THE LOAD KEEPS THE PATTERN. This is the half
+	# that stops the fix becoming the artefact: the snow still on him has not moved,
+	# so neither may its marks.
+	_walk(legs, THIN, 4)
+	legs._process(0.016)
+	assert_true(
+		legs.total_load() > legs.shed_floor,
+		"this test needs him still carrying something after four strides, not %f"
+			% legs.total_load()
+	)
+	assert_eq(
+		legs.noise_offset(), born,
+		"the pattern moved while he was still carrying %f of a load, so his patches "
+			% legs.total_load()
+			+ "jump position in front of the player -- which is worse than a repeat"
+	)
+	# And now all the way clean.
+	_walk(legs, THIN, 12)
+	legs._process(0.016)
+	assert_true(
+		legs.total_load() < legs.shed_floor,
+		"sixteen strides out of a drift left %f on him, so this test never reached "
+			% legs.total_load()
+			+ "the state it is about"
+	)
+	var next: Vector2 = legs.noise_offset()
+	assert_true(
+		next != born,
+		"he shook completely clean and the next crossing starts from the same offset "
+			+ "%s, so the snow lands in exactly the same places every time" % str(born)
+	)
+	# And it reaches the material, which is the only place an offset can do work --
+	# a node that holds a new number while the GPU still draws the old one is the
+	# same defect with a passing accessor.
+	assert_eq(
+		crust.get_shader_parameter(&"noise_offset"), next,
+		"the new pattern never reached the crust the shader is actually reading"
+	)
+	# The second crossing then holds ITS pattern for as long as it lasts.
+	_walk(legs, DEEP, 5)
+	legs._process(0.016)
+	assert_eq(legs.noise_offset(), next, "the second crossing's pattern moved under it")
+	body.free()
+	_free(legs)
+
+
+## A PINNED PATTERN STAYS PINNED. `set_noise_offset()` is what makes two captures
+## of two builds comparable -- they are judged on the same marks or they are not
+## judged at all -- and a re-roll firing in the middle of a measurement would
+## quietly turn a comparison back into two unrelated samples.
+func test_a_pinned_pattern_survives_him_shaking_clean() -> void:
+	var legs := _fresh()
+	legs.set_noise_offset(Vector2(3.1, 5.7))
+	_walk(legs, DEEP, 5)
+	legs._process(0.016)
+	_walk(legs, THIN, 16)
+	legs._process(0.016)
+	assert_true(legs.total_load() < legs.shed_floor, "he never got clean")
+	assert_eq(
+		legs.noise_offset(), Vector2(3.1, 5.7),
+		"a pinned pattern was re-rolled, so a capture cannot be compared with another"
+	)
+	_free(legs)
+
+
 # --- the snow that falls ON him -------------------------------------------------
 
 ## It builds while he STANDS STILL, which is the whole shape of the mechanic: the
@@ -969,8 +1124,15 @@ func test_the_sky_settles_snow_on_him_while_he_stands_still() -> void:
 	assert_almost_eq(legs.settled(), 0.0, 0.0001, "he started the storm already covered")
 	for _tick in range(60):
 		legs._process(1.0)
+	# A THIRD OF A LOAD IN A MINUTE OF BLIZZARD, AND THIS BOUND MOVED DOWN ON
+	# PURPOSE. It used to require 0.7 here, which was the old settling rate stated
+	# as a test -- and that rate was the thing the owner reported as wrong. What
+	# this test is for is that the sky reaches him at all and that the rate does
+	# something; how FAST it reaches him is
+	# `test_settling_is_slow_enough_to_be_a_process_he_can_watch`, which states it
+	# in seconds against the two weathers rather than in a number here.
 	assert_true(
-		legs.settled() > 0.7,
+		legs.settled() > 0.3,
 		"a minute of standing in a whiteout settled %f on him" % legs.settled()
 	)
 	# And it saturates rather than running past a full body.
@@ -991,6 +1153,90 @@ func test_the_sky_settles_snow_on_him_while_he_stands_still() -> void:
 	)
 	_free(legs)
 	_free(slower)
+
+
+## AND IT IS SLOW ENOUGH TO BE A PROCESS HE CAN WATCH -- the owner's correction:
+##
+## > 玩家身上的积雪速度太过于快了，需要将玩家静止时身上的积雪速度减缓至少一半，
+## > 现在静止一下子身上的积雪就很明显了，我希望可以是一个真实随静止时间慢慢变化
+## > 的过程
+##
+## THE CLAIM IS A TIME, NOT A CONSTANT, so this test is written in seconds of
+## standing still at the two weathers the game actually ships -- and it reads
+## both rates off `Snowfall`'s own table rather than restating them, because a
+## copy would go on passing the day somebody retunes the sky and the requirement
+## would quietly stop being tested.
+##
+## The requirement, in the landmarks derived at the top of this file: a minute of
+## day-one weather leaves him under LEGIBLE, several minutes take him past
+## OBVIOUS, and a blizzard does both far sooner because the settling rate scales
+## with the snowfall rate. That scaling is the reason there is no second model
+## for "it is snowing harder", and the last assertion here is what holds it.
+func test_settling_is_slow_enough_to_be_a_process_he_can_watch() -> void:
+	# `.new()` and nothing else: Snowfall builds its layers in `_ready()`, which
+	# this never calls, so what is read here is the export's own table.
+	var sky := Snowfall.new()
+	var day_one := float(sky.storm_by_preset[&"pale_day"])
+	var blizzard := float(sky.storm_by_preset[&"whiteout"])
+	sky.free()
+	assert_true(day_one > 0.0 and day_one < blizzard, "the sky's own two rates are not a range")
+
+	var minute := _fresh()
+	minute.set_snowfall_rate(day_one)
+	for _tick in range(60):
+		minute._process(1.0)
+	# It is a SLOW process and not a stopped one. Both halves matter: an effect
+	# that never arrives is as wrong as one that arrives at once.
+	assert_true(
+		minute.settled() > 0.0,
+		"a minute of day-one snow settled nothing at all on him"
+	)
+	assert_true(
+		minute.settled() < LEGIBLE_SETTLE,
+		"a minute of standing still on day one left %f on him, past the %f that is "
+			% [minute.settled(), LEGIBLE_SETTLE]
+			+ "twice the frosting the first flake gives him -- at a minute it is meant "
+			+ "to be barely perceptible, not already legible"
+	)
+	_free(minute)
+
+	var day := _fresh()
+	day.set_snowfall_rate(day_one)
+	var day_to_obvious := _seconds_to_settle(day, OBVIOUS_SETTLE, 1800)
+	assert_true(
+		day_to_obvious > 180.0,
+		"day-one snow became obvious after %.0f s of standing still; the owner asked "
+			% day_to_obvious
+			+ "for several minutes of watching it happen"
+	)
+	assert_true(
+		day_to_obvious < 900.0,
+		"day-one snow took %.0f s to become obvious, which is not a process anybody "
+			% day_to_obvious
+			+ "stands still long enough to see"
+	)
+	_free(day)
+
+	var storm := _fresh()
+	storm.set_snowfall_rate(blizzard)
+	var storm_to_obvious := _seconds_to_settle(storm, OBVIOUS_SETTLE, 900)
+	assert_true(
+		storm_to_obvious < 90.0,
+		"a blizzard took %.0f s to put an obvious load on him: standing still in a "
+			% storm_to_obvious
+			+ "whiteout has to be visibly different from standing still on day one"
+	)
+	# ONE MODEL, NOT TWO. The time to any given load is inversely proportional to
+	# the snowfall rate, so the two weathers differ by exactly the ratio of their
+	# rates and by nothing that was tuned separately.
+	assert_almost_eq(
+		day_to_obvious / storm_to_obvious, blizzard / day_one, 0.5,
+		"day one took %.0f s and a blizzard %.0f s, a ratio of %.2f against the sky's "
+			% [day_to_obvious, storm_to_obvious, day_to_obvious / storm_to_obvious]
+			+ "own %.2f -- the settling has stopped scaling with the snowfall"
+			% (blizzard / day_one)
+	)
+	_free(storm)
 
 
 ## THE OWNER'S STATED REQUIREMENT, and it is not a special case anywhere -- the
@@ -1342,7 +1588,11 @@ func test_the_two_loads_are_the_larger_of_the_two_and_never_their_sum() -> void:
 	var packed: float = legs.carried()
 	assert_true(packed > 0.4 and packed < 0.95, "this test needs a part-packed leg, not %f" % packed)
 	legs.set_snowfall_rate(1.0)
-	for _tick in range(40):
+	# A hundred seconds of blizzard, where forty used to do. The soak is a
+	# PRECONDITION of this test and not its subject -- what is asserted below is
+	# unchanged -- and settling is now three times slower by design, so the storm
+	# has to be longer to leave the part-settled body the assertion needs.
+	for _tick in range(100):
 		legs._process(1.0)
 	var settled: float = legs.settled()
 	assert_true(settled > 0.4 and settled < 0.95, "this test needs a part-settled body, not %f" % settled)

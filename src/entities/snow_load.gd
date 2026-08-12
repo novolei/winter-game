@@ -246,13 +246,47 @@ const CHILL_SOURCE := &"snow_load"
 ## depositing snow at a rate, and a man who stands still for a minute in a
 ## whiteout is a man wearing a minute of it.
 ##
-## At 1/40 a whiteout covers him in about two minutes of standing still and gets
-## him visibly white in forty seconds. `Snowfall`'s own rate is 1.0 only in the
-## `whiteout` preset and 0.12 in `pale_day`, so an ordinary snowy afternoon takes
-## the better part of a quarter of an hour -- which is the right shape for
-## something meant to be a slow cost the player has to notice rather than a
-## timer he has to beat.
-@export var settle_per_second := 1.0 / 40.0
+## ---------------------------------------------------------------------------
+## THIS IS THE NUMBER THAT DECIDES WHETHER STANDING STILL IS A PROCESS OR A
+## SWITCH, AND IT WAS THREE TIMES TOO FAST
+## ---------------------------------------------------------------------------
+## Reported by the owner playing it: "玩家身上的积雪速度太过于快了 … 现在静止一下
+## 子身上的积雪就很明显了，我希望可以是一个真实随静止时间慢慢变化的过程". Snow
+## appearing on a man the moment he stops is not weather, it is a state change
+## with a fade on it. What he asked for is something he can watch happen.
+##
+## SO IT IS TUNED IN SECONDS OF STANDING STILL, NOT IN THIS CONSTANT. The
+## landmarks are measured off rendered frames with
+## `tools/measure_crust_coverage.gd` at the framing the game is played at, which
+## counts the pixels the crust actually paints:
+##
+##     settle 0.005 ->  240 px   THE FLOOR -- see below
+##     settle 0.10  ->  472 px   twice the floor: the first state worth calling snow
+##     settle 0.30  ->  688 px   over half a caked man: unmistakable
+##     settle 1.00  -> 1255 px   caked
+##
+## The floor is worth knowing because no rate can move it: `crease_bias`
+## saturates the noise field on the most upward-facing folds, so the first flake
+## to land puts 240 px of white in his creases whatever this number says. What
+## this number controls is everything after that.
+##
+## At 1/120, and with `Snowfall`'s own 0.12 for `pale_day` and 1.0 for
+## `whiteout`, the day-one time constant comes out at exactly 1000 seconds:
+##
+##                     day 1 (0.12)      whiteout (1.0)
+##     one minute      0.058, 395 px     0.394, ~800 px
+##     legible (0.10)  105 s             13 s
+##     obvious (0.30)  357 s             43 s
+##
+## -- a minute of standing about on day one is barely perceptible and it takes
+## the better part of six minutes to become obvious, while a blizzard does both
+## in seconds. The 8.3x between them is the snowfall rate and nothing else: there
+## is no second model for heavy weather, which is why `test_snow_load.gd` pins
+## the RATIO of the two times as well as the times.
+##
+## The previous 1/40 put him at 0.165 after a minute of day one and made it
+## obvious in 119 seconds, which is what was reported.
+@export var settle_per_second := 1.0 / 120.0
 
 ## What a footfall shakes off the settled half, as a fraction of what is there.
 ##
@@ -634,15 +668,37 @@ var _load := 0.0
 ##   * IT IS NOT A FUNCTION OF WHERE HE IS. Seeding from world position would
 ##     make the marks crawl across him as he walks, which is worse than a fixed
 ##     pattern because motion is what the eye catches.
-##   * IT IS NOT A FUNCTION OF TIME. Written once and never rewritten -- the
-##     per-frame block in `_process()` deliberately does not touch it -- so
-##     within one accumulation cycle his snow appears and disappears in the same
-##     places, and the threshold reads as patches going out one at a time rather
-##     than as static.
+##   * IT IS NOT A FUNCTION OF TIME. Not rewritten per frame -- the per-frame
+##     block in `_process()` deliberately does not touch it -- so within one
+##     accumulation cycle his snow appears and disappears in the same places, and
+##     the threshold reads as patches going out one at a time rather than as
+##     static.
+##
+## ONE ROLL PER LOAD, THOUGH, AND NOT ONE PER WEARER. The third property above
+## was first written as "once, at construction", which froze the pattern for the
+## whole life of the character rather than for the life of a load -- so a walker
+## who crossed a drift, cleaned himself off and crossed another came out wearing
+## the same marks in the same places. The owner asked for that not to be true,
+## and offered to accept it if it were a performance decision. It is not one: the
+## offset is a single vec2 uniform. See `_watch_for_a_clean_slate()` for the rule
+## and for what "clean" had to be defined as.
 ##
 ## Godot randomises the global seed at startup, so two playthroughs differ; a
-## replay that needs the same pattern twice calls `set_noise_offset()`.
+## replay or a capture that needs the same pattern twice calls
+## `set_noise_offset()`, and a pinned pattern is never re-rolled.
 var _noise_offset := Vector2(randf(), randf()) * NOISE_OFFSET_CELLS
+## Whether he was clear of snow at the last look. The re-roll happens on the EDGE
+## -- the moment the load reaches zero -- rather than on every frame he stands
+## clean, which is what makes it one new pattern per crossing instead of a new
+## one every frame he happens to be carrying nothing.
+##
+## True at birth, because a new wearer is clean and already carries a fresh
+## offset: his first crossing must not re-roll a pattern nobody has seen yet.
+var _clean := true
+## Whether somebody has pinned this wearer's pattern by hand. See
+## `set_noise_offset()`: a capture that pinned an offset so it could be compared
+## against another capture must not have it re-rolled out from under it.
+var _pattern_pinned := false
 ## How far up his legs the snow reached at the DEEPEST point of this crossing, in
 ## world metres above his soles. See the header: this is the whole of what the
 ## crust's upper edge says, and it is remembered until the legs are clean.
@@ -875,11 +931,23 @@ func crust_top_fraction() -> float:
 ## step bursts and the fourth does not; the numbers beside the frames can. `line`
 ## is the crust's own height in centimetres, which is what makes a deep crossing
 ## and a shallow one comparable across two sequences rather than only by eye.
+## `pattern` is where in the noise field this crossing's snow is being drawn
+## from, and it is here for the same reason trap 9 gives: when a value is
+## generated in code, print what the engine actually got. A re-roll that fired on
+## the wrong edge, or never fired at all, looks identical in a still -- two
+## frames of a boot with snow on it -- and is one number apart in the log.
+##
+## `wind` is beside it because the two clocked forces on the settled half now
+## fight each other and the loser is invisible: a settled load that stops rising
+## has either saturated or is being stripped as fast as it lands, and only this
+## number tells the two apart. Measured standing still in a whiteout, it is the
+## difference between "he cakes up" and "he plateaus at a fifth of a load".
 func report() -> String:
-	return "snowload[load=%.2f settle=%.2f shed=%.2f steps=%d wade=%.0fcm line=%.0fcm fall=%.2f%s]" % [
+	return "snowload[load=%.2f settle=%.2f shed=%.2f steps=%d wade=%.0fcm line=%.0fcm fall=%.2f wind=%.2f pattern=(%.2f,%.2f)%s]" % [
 		_load, _settle, _last_shed, _steps_since_drift,
 		_wade_line_m * 100.0, crust_top_fraction() * _subject_height() * 100.0,
-		_snowfall_rate, " thawing" if is_thawing() else "",
+		_snowfall_rate, _wind.length(), _noise_offset.x, _noise_offset.y,
+		" thawing" if is_thawing() else "",
 	]
 
 
@@ -920,10 +988,74 @@ func noise_offset() -> Vector2:
 ## judged at all -- and for a replay or a loaded save that wants the walker it
 ## had. Everything already dressed is rewritten, so this works after the fact and
 ## not only before.
+##
+## AND IT PINS, which is the whole of the word: a wearer whose pattern was set by
+## hand never re-rolls it when he shakes clean. Without that, a measurement that
+## happened to walk the load down to nothing between two of its own renders would
+## silently start comparing two different patterns and report the difference as
+## the difference between two builds.
 func set_noise_offset(offset: Vector2) -> void:
+	_pattern_pinned = true
+	_write_noise_offset(offset)
+
+
+func _write_noise_offset(offset: Vector2) -> void:
 	_noise_offset = offset
 	for crust in _crusts:
 		crust.set_shader_parameter(&"noise_offset", _noise_offset)
+
+
+## Is he carrying anything at all?
+##
+## `shed_floor` IS the answer and not a second number beside it. This file
+## already calls that "clean" twice -- it is the point below which a shed stops
+## throwing particles, and the point at which the chill modifier comes off the
+## survival stack -- and a third definition that could drift from those two would
+## be a defect looking for somewhere to happen.
+func is_clean() -> bool:
+	return total_load() < shed_floor
+
+
+## A NEW CROSSING GETS A NEW PATTERN, and the trigger is the load reaching zero
+## rather than him stopping.
+##
+## The owner asked for the snow to land somewhere else next time, and said he
+## would accept a fixed pattern if it were a performance decision. IT IS NOT ONE.
+## The offset is one vec2 uniform and rolling it again costs a uniform write. The
+## pattern is frozen because it MUST be frozen while a load persists -- patches
+## that jump position while snow is on him are a far louder artefact than a
+## repeat, and that is what the stability constraint exists to prevent. The
+## constraint was simply written wider than it needed to be: it froze the pattern
+## for the life of the wearer instead of for the life of a load.
+##
+## So, three behaviours, and only the second of them is new:
+##
+##   * While he is carrying anything, nothing moves.
+##   * The moment he is completely clear, the next accumulation starts somewhere
+##     else in the field.
+##   * A short walk that leaves some of the load on him keeps the pattern, which
+##     is what the physics says: the snow still on him has not moved.
+##
+## "ZERO" HAS TO BE A THRESHOLD, AND THAT IS THE PART THAT DECIDES WHETHER ANY OF
+## THIS WORKS. Both decay rules are exponential, so the load approaches zero and
+## never arrives -- a re-roll waiting for a true zero never fires and the whole
+## feature silently does nothing, which is the defect class this project has been
+## bitten by most. Clean is `shed_floor`, 0.02, the number this file already uses
+## for it. At the shipped retentions that is eleven footfalls out of a full
+## crossing (0.70^11 = 0.0198) and five for the settled half (0.45^5 = 0.0185):
+## a few seconds of walking, reached in play rather than in principle.
+##
+## AND THE SWAP CANNOT BE SEEN HAPPENING, which is what makes the edge safe to
+## put here rather than at the start of the next crossing. At a load of 0.02 the
+## vertex stage scales the waded coverage by `smoothstep(0.0, 0.16, 0.02)` =
+## 0.042, so under 2% of the boot is carrying anything; the settled half at 0.02
+## covers 1.6% of what faces the sky. The pattern moves while there is nothing
+## drawn to move.
+func _watch_for_a_clean_slate() -> void:
+	var clear := is_clean()
+	if clear and not _clean and not _pattern_pinned:
+		_write_noise_offset(Vector2(randf(), randf()) * NOISE_OFFSET_CELLS)
+	_clean = clear
 
 
 ## Injection point for a test, and for whoever wires a second walker without a
@@ -1156,8 +1288,13 @@ func step(spot: Vector3, depth: float, heading: Vector2) -> void:
 		# already fading to nothing on its own -- so the crossing is over, and the
 		# next drift gets to leave its own mark rather than inheriting this one's.
 		_wade_line_m = 0.0
-		return
-	_throw(spot, shed, heading, 0.06, _leg_top_m())
+	else:
+		_throw(spot, shed, heading, 0.06, _leg_top_m())
+	# Written as an else rather than an early return so that this line is reached
+	# on both branches: the step that takes him under the floor is the commonest
+	# way a load ends, and a re-roll that the commonest case skipped would be a
+	# feature that fires only in the rare one.
+	_watch_for_a_clean_slate()
 
 
 ## How far up his legs the snow he is standing in actually reaches, in metres.
@@ -1350,6 +1487,10 @@ func _process(delta: float) -> void:
 	if _subject != null and is_instance_valid(_subject):
 		_dress(_subject)
 	_advance_settled(delta)
+	# After the clocked half and before the uniforms, so a load that melted or was
+	# stripped away this frame re-rolls in the same frame the crust is written --
+	# a footfall is not the only way a wearer gets clean.
+	_watch_for_a_clean_slate()
 	_charge_for_the_load()
 	var feet := 0.0
 	if _subject != null and is_instance_valid(_subject):
