@@ -444,3 +444,15 @@ The failure this causes is the worst kind, because it looks like design. A syste
 **So: do not rely on the first several draws of a freshly seeded generator.** Either discard a few after seeding, or seed once at startup and keep drawing from the same long-lived stream rather than re-seeding per decision.
 
 **And when a probability is load-bearing, measure the distribution rather than trusting it.** The aurora's rarity was settled by simulating 2,000 runs and counting; that is the standard to hold, and it is the only method that would have caught this.
+
+### Trap 15 — three ways an imported animation lies about itself
+
+All three were measured on this project while adopting animals out of Unity packages. Each imports without an error and each is invisible until someone looks.
+
+**1. A trailing space in a take's name silently drops it.** The animal pack ships `Dove_Run to Idle ` — note the space before the quote. The take arrives, is named, and is then unreachable by the name anyone would write. **Handle take names defensively**: trim on read, and warn when a name needed trimming rather than fixing it in silence, so the asset gets corrected instead of the code carrying the workaround forever.
+
+**2. `animation/trimming` is per-pack and its correct value is not the same for two packs.** With it OFF where it is needed, a take imports carrying the whole preceding timeline as dead air — measured `idle_right` at **8.958 s against a true 3.958 s**. The animation plays; five seconds of nothing plays first. The crow pack wanted it off and the animal pack wants it on, so **there is no project-wide default to copy** — check the durations against the inventory after importing.
+
+**3. `Mesh.get_aabb()` does not report life size.** The four Blender-authored characters here measure at roughly **1/100** of their real dimensions through it — the bear at 0.029 m, the wanderer at 0.016 m — while their scene transforms are correct. A scale gate written naively against `get_aabb()` fires on every one of them, **and the obvious fix — loosening the band until they pass — would then admit the 15 mm wolf that motivated the gate.**
+
+That third one is the shape worth remembering beyond this case: **when a new check fires on things you know are correct, the reflex to widen it is usually wrong.** The check is measuring something other than what you meant. Find out what, or the fix will pass exactly the defect you built it for.
