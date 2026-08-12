@@ -229,6 +229,94 @@ func test_the_snow_never_takes_the_ploughed_field_away() -> void:
 	)
 
 
+## The depth every mark on the ground is cut at -- prints, furrows, the road --
+## is authored here and read by the shader, so it has to arrive there. There was
+## no cover on this at all, and it is the one uniform whose value the two tests
+## below reason about.
+func test_the_depth_the_ground_cuts_a_mark_at_reaches_the_material() -> void:
+	var material := _material()
+	assert_not_null(material)
+	if material == null:
+		return
+	assert_almost_eq(
+		float(material.get_shader_parameter("track_depth")), _renderer.track_depth, 0.000001,
+		"the ground draws its marks at a different depth from the one authored"
+	)
+
+
+## ...and surviving in the MASK is not the same as surviving on the SCREEN.
+##
+## The test above proves the buried furrow still has a value. This one proves it
+## still has a SHADOW, which is the only thing that actually puts it in the
+## picture -- the marks are drawn by the reconstructed normal, so what has to
+## clear the cel band is a slope, not a number.
+##
+## The arithmetic is the shader's own, in four steps:
+##
+##   1. the deepest burial the shader will ever apply is `static_burial_share`
+##      at a cover of 1, so the furrow's baked 0.85 arrives as 0.85^(that);
+##   2. `track_height()` scales it by `track_depth`, and `track_gradient()`
+##      reads the result by central difference over 2 * `track_normal_epsilon`
+##      -- 12 cm, which is WIDER than the furrow's own 11 cm half-width, so the
+##      whole drop lands inside one difference and nothing is left over to make
+##      the flank steeper than this;
+##   3. that gradient tilts the surface normal by atan(gradient) from vertical;
+##   4. the flank facing away from the sun has N.L = sin(sun_angle - tilt), so
+##      it is unlit exactly when the tilt passes the sun's own elevation.
+##
+## The MARGIN is the number this asserts, because a flank that arrives at the
+## band with nothing to spare is a flank whose shadow is a line rather than a
+## face -- and the band has `band_softness` of feathering either side of it, so
+## "just past the threshold" is not yet a shadow anybody can see.
+##
+## Measured at 1600x1000 under `pale_day`, sweeping `track_depth` and counting
+## the ground pixels that land in the shade band:
+##
+##     track_depth   margin   prints   ploughed field   road
+##     0.06825       -0.1 deg  1.34 %   0.32 %           7.64 %
+##     0.095          5.4      1.53     0.60             7.11
+##     0.115         12.0      1.84     0.83             7.41
+##     0.1365        16.1      1.91     1.12             7.05
+##
+## The road barely moves at any of them, which is the shader's own point about a
+## wide mark: it has no gradient anywhere except at its two edges and is carried
+## by `static_tint_boost` rather than by its depth. And past 0.115 the prints
+## stop gaining (1.84 -> 1.91) while the trail visibly stops reading as a chain
+## of pockets and becomes one dark ribbon. So the useful range ends there.
+func test_a_buried_ploughed_furrow_still_casts_a_shadow_to_be_seen_by() -> void:
+	var farmstead := Farmstead.new()
+	var strength: float = farmstead.furrow_strength
+	var half_width: float = farmstead.furrow_radius
+	farmstead.free()
+
+	var epsilon: float = _renderer.track_normal_epsilon
+	assert_true(
+		half_width <= 2.0 * epsilon,
+		"the furrow is %.3f m wide against a %.3f m normal epsilon, so the drop no longer "
+			% [half_width, 2.0 * epsilon]
+			+ "lands inside one central difference and this test's arithmetic is wrong"
+	)
+
+	# At a cover of 1 the shader's `static_burial` is `static_burial_share`, not 1
+	# -- TerrainRenderer.apply_snow_cover() multiplies them. Asking _buried() for
+	# a burial of 1 would test a winter this world cannot have.
+	var buried := _buried(strength, _renderer.static_burial_share, _renderer.static_burial_power)
+	var gradient: float = buried * _renderer.track_depth / (2.0 * epsilon)
+	var tilt := rad_to_deg(atan(gradient))
+	var preset: LightingPreset = load("res://data/lighting/pale_day.tres")
+	var margin := tilt - preset.sun_angle_degrees
+
+	assert_true(
+		margin > 8.0,
+		"a ploughed furrow under the deepest snow this weather can lay tilts its flank "
+			+ "%.1f deg against a sun %.1f deg up -- %.1f deg of margin. " % [
+				tilt, preset.sun_angle_degrees, margin
+			]
+			+ "Art Bible rule 11 spends the frame's whole detail budget on these lines, and at "
+			+ "this depth they arrive at the cel band rather than past it"
+	)
+
+
 ## Continuous in the burial as well as in space, which is the same requirement
 ## the whole task carries: the accumulation walks, so the road must fill in as it
 ## walks rather than at some threshold along the way.

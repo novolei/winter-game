@@ -81,8 +81,40 @@ const SHADER_PATH := "res://assets/shaders/snow_ground.gdshader"
 ## is the knob for "visible tracks versus subtle dents"; it trades against
 ## track_tint, which is the same argument in colour.
 ##
-## 0.065 was the approved read; this is that plus the 5% asked for afterwards.
-@export var track_depth := 0.06825
+## 0.065 was the approved read and 0.06825 was that plus the 5% asked for
+## afterwards. Both were too shallow, and the reason is arithmetic rather than
+## taste:
+##
+##   A mark is drawn by the reconstructed normal, so what has to clear the cel
+##   band is a SLOPE. The steepest slope a mark can present is its value times
+##   this depth over the 12 cm the normal's central difference spans. At 0.06825
+##   a ploughed furrow, buried as deep as the accumulation will ever bury it,
+##   tilts its flank 21.5 degrees against a sun 21.5 degrees up -- **exactly
+##   zero margin**. It arrives at the shadow band and never enters it, so the
+##   frame's most important line (Art Bible rule 11) is carried by tone alone.
+##   tests/unit/test_terrain_shading.gd asserts the margin now.
+##
+## SWEPT, at 1600x1000 under `pale_day`, counting ground pixels in the shade band
+## and the mean darkness of the marked ones ("ink"):
+##
+##   depth     print ink   print shade   field shade   road shade
+##   0.06825    7.33        0.15 %        0.32 %        7.64 %
+##   0.095      8.96        1.32          0.60          7.11
+##   0.115      8.98        1.31          0.83          7.41
+##   0.1365    10.35        2.23          1.12          7.05
+##   0.16      11.03        2.53          1.56          6.97
+##   0.19      11.26        3.14          2.23          9.89
+##
+## 0.16 is where the marks' own darkness SATURATES -- the step to 0.19 buys 2%
+## more of it -- and it is the deepest value at which the road is measurably
+## unmoved. That last column is the reason the owner's "make the footprints
+## deeper" could be answered globally instead of per-mark: a road is a WIDE mark
+## with no gradient except at its two edges, so depth does almost nothing to it
+## until 0.19, where it starts to read as a trench rather than as packed snow.
+##
+## The print's SHAPE is untouched by this. The outline is TrackMask's, it was
+## approved as it stands, and this scales the height the same outline is read at.
+@export var track_depth := 0.16
 @export var track_tint := 0.5
 
 ## Snow pushed out around a print. See track_height() in the shader.
@@ -167,6 +199,14 @@ func _ready() -> void:
 	_material.set_shader_parameter("static_burial", 0.0)
 	_material.set_shader_parameter("static_burial_power", static_burial_power)
 	_material.set_shader_parameter("static_tint_boost", static_tint_boost)
+	# ...and the shape of a mark, which until now was pushed ONLY from _process
+	# and only once the snow, the tracks and the material had all resolved. The
+	# shader carries its own defaults for these, and `track_depth`'s is 0.05
+	# against the 0.16 authored here -- so a frame drawn before the services
+	# resolve cut every mark in the world less than half as deep, silently, and
+	# no test could see it because no test looked at the material before the
+	# first tick. Found by writing that test.
+	_stamp_marks()
 	_material.set_shader_parameter("field_extent", SnowField.EXTENT_M)
 	_material.set_shader_parameter("track_extent", TrackMask.EXTENT_M)
 	_material.set_shader_parameter("static_extent", TrackMask.STATIC_EXTENT_M)
@@ -177,6 +217,21 @@ func _ready() -> void:
 	# plane leaves the frustum.
 	extra_cull_margin = ground_size
 	cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+
+
+## How a mark in the snow is SHAPED -- how deep, how tinted, the rim around it,
+## and the two scales the per-pixel normal is rebuilt at. None of it moves at
+## runtime; it is pushed from _ready() so the first frame is right and re-pushed
+## from _process() so a tuner dragging one of these in the inspector sees it.
+func _stamp_marks() -> void:
+	if _material == null:
+		return
+	_material.set_shader_parameter("track_depth", track_depth)
+	_material.set_shader_parameter("track_tint", track_tint)
+	_material.set_shader_parameter("track_rim", track_rim)
+	_material.set_shader_parameter("track_rim_extent", track_rim_extent)
+	_material.set_shader_parameter("ground_normal_epsilon", ground_normal_epsilon)
+	_material.set_shader_parameter("track_normal_epsilon", track_normal_epsilon)
 
 
 ## The world's snow, from bare to as covered as this weather gets, on both the
@@ -270,12 +325,7 @@ func _process(_delta: float) -> void:
 	_material.set_shader_parameter("max_depth", _snow.max_depth_m)
 	_material.set_shader_parameter("scour_hollow", _snow.scour_hollow)
 	_material.set_shader_parameter("scour_crest", _snow.scour_crest)
-	_material.set_shader_parameter("track_depth", track_depth)
-	_material.set_shader_parameter("track_tint", track_tint)
-	_material.set_shader_parameter("track_rim", track_rim)
-	_material.set_shader_parameter("track_rim_extent", track_rim_extent)
-	_material.set_shader_parameter("ground_normal_epsilon", ground_normal_epsilon)
-	_material.set_shader_parameter("track_normal_epsilon", track_normal_epsilon)
+	_stamp_marks()
 	# The plane is centred on the window; the window is described by its corner.
 	global_position = Vector3(
 		field_origin.x + SnowField.EXTENT_M * 0.5,

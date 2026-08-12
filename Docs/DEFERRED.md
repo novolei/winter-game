@@ -85,6 +85,12 @@ These share one defect class: **the gate's failure mode is to pass.** Close them
 | W3-3 | A `DaySchedule` with a zero-length phase ends the run instead of skipping the phase; `phase_duration()` cannot distinguish "no schedule left" from "this phase is 0 seconds". |
 | W3-4 | A weather event's *tell* has a duration but no sound, visual, or lighting hook — and the mandatory tell is a design pillar. Not expressible in data yet. |
 
+## Wave 4 — with the procedural terrain
+
+| # | Finding |
+|---|---|
+| W4-1 | **The snow field has no middle.** Measured on the shipped `SnowField` by the footprint agent (`c332434`) and re-raised by the contrast investigation (`task-w2-contrast-report.md`): the world is **35% bare** and **41% past the wading gate**, and there is **no 12 m square anywhere in it whose mean depth falls between 0.02 m and 0.32 m**. The middle of the depth range effectively does not exist. Every behaviour that was tuned against depth is therefore close to binary in practice — print size and core (`print_thin_scale`, `print_core_thin`/`_deep`), the scuff, the furrow gate (`furrow_depth_start_m` 0.42), and the trudge speed all interpolate across a band the world does not contain, so they read as two states with a step between them rather than as a range. This is a terrain-**generation** problem, not a consumer problem: nothing downstream can be tuned out of it, and each of those four systems will look wrong in a different way until the distribution has a middle. Belongs with Wave 4's procedural work; the four consumers should be re-tuned *after* it, not before. |
+
 ## Wave 5 — threats
 
 | # | Finding |
