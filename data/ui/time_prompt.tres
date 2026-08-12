@@ -4,3 +4,16 @@
 
 [resource]
 script = ExtResource("1_68agh")
+day_label = "白天"
+night_label = "夜晚"
+hours_between = 4.0
+hours_per_day = 24.0
+hold_seconds = 4.0
+arc_degrees = 60.0
+arc_width_design_px = 192.0
+icon_design_px = 20.0
+gap_design_px = 8.0
+label_design_px = 17.0
+label_tracking_em = 0.08
+day_glyph = &"day_sun"
+night_glyph = &"night_moon"

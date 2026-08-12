@@ -16,6 +16,21 @@ extends Resource
 ## instrument face -- section 5.4 makes the same split for 「第 四 日」.
 ##
 ## ---------------------------------------------------------------------------
+## EVERY DEFAULT BELOW IS DELIBERATELY EMPTY
+## ---------------------------------------------------------------------------
+## ResourceSaver.save() only writes a property that DIFFERS from its script
+## default, so a generator that authored the same numbers the definition already
+## declared produced a `.tres` holding nothing but its own script path. It loaded
+## and behaved correctly, which is the problem: the data file is supposed to be
+## the authority, and an empty one is indistinguishable from a generator that
+## failed.
+##
+## So the definition declares the SHAPE and the generator declares the CONTENT,
+## and every authored value ends up in the file where it can be read. A prompt
+## whose data failed to load is inert rather than quietly running on numbers
+## nobody can see (see TimePrompt: no data, no prompt).
+##
+## ---------------------------------------------------------------------------
 ## AND WHY THE CADENCE IS
 ## ---------------------------------------------------------------------------
 ## `hours_between` is a pacing decision, not an implementation detail. Constraint
@@ -26,37 +41,37 @@ extends Resource
 ## time a day was retuned.
 
 ## 白天 / 夜晚. What the prompt calls each phase of WorldClock.
-@export var day_label: String = "白天"
-@export var night_label: String = "夜晚"
+@export var day_label: String = ""
+@export var night_label: String = ""
 
 ## How often it appears, in hours of world time.
-@export var hours_between: float = 4.0
+@export var hours_between: float = 0.0
 
 ## How many hours are in one day-night cycle. The divisor that turns a schedule's
 ## seconds into hours; 24 because a day is a day.
-@export var hours_per_day: float = 24.0
+@export var hours_per_day: float = 0.0
 
 ## Section 1.2's 持, in seconds. The 呵 and the 散 come from the tokens, so
 ## section 5.6's cold snap reaches this element like every other one.
-@export var hold_seconds: float = 4.0
+@export var hold_seconds: float = 0.0
 
 ## The span of the arc, in degrees. Shallow: the reference shows a sixth of a
 ## circle, which is an arc you read as a path rather than as a dial.
-@export var arc_degrees: float = 60.0
+@export var arc_degrees: float = 0.0
 
 ## The chord the arc spans and how far the icons stand from it, in design pixels
 ## against section 2.3's 1080 reference. Everything else in the element is
 ## derived from these, so it scales as one object.
-@export var arc_width_design_px: float = 192.0
-@export var icon_design_px: float = 20.0
-@export var gap_design_px: float = 8.0
+@export var arc_width_design_px: float = 0.0
+@export var icon_design_px: float = 0.0
+@export var gap_design_px: float = 0.0
 
 ## Section 2.2's Body, for the phase word, with its CJK tracking.
-@export var label_design_px: float = 17.0
-@export var label_tracking_em: float = 0.08
+@export var label_design_px: float = 0.0
+@export var label_tracking_em: float = 0.0
 
 ## The two faces, named without their extension: `assets/ui/icons/<glyph>.png`.
 ## White on transparent and tinted at runtime, so a file that arrives carrying
 ## its own colour is a defect rather than something to compensate for in code.
-@export var day_glyph: StringName = &"day_sun"
-@export var night_glyph: StringName = &"night_moon"
+@export var day_glyph: StringName = &""
+@export var night_glyph: StringName = &""
