@@ -375,3 +375,20 @@ Measured here on the neutral and cold idles: at a 0.45 blend the tremor was at 4
 ```
 
 Check for a posture difference *before* choosing any blend constant, and say in your report which kind of difference you found.
+
+### Before comparing two captures, prove they are the same shot
+
+A "before and after" is worthless if the two frames are not of the same thing, and a frame can stop being the same thing because of a change nowhere near the camera.
+
+This project lost a round to it. A footprint agent reported the ground had lost contrast since an earlier commit, the Director confirmed it by eye, and a third agent was dispatched to find the regression. Bisecting with two clean worktrees at matched framings, it measured **no regression at all** — bare drift 0.00% vs 0.00% in the shade band, baked field 10.55 vs 10.64, walked trail 10.50 vs 10.48, HEAD equal or ahead everywhere.
+
+**What had actually changed was the walker's speed.** A commit halved his pace in deep snow, so a capture of fixed duration covered 28.5 m instead of 54.7 m, and the following camera came to rest over different ground. Same script, same seconds, different shot. The confound ran both directions: free camera made HEAD look 37% worse, pinned camera made it 10% better.
+
+So, when a capture is evidence:
+
+- **Pin the camera** to a fixed transform, not to a follow target, whenever the comparison is about the ground rather than about the walk.
+- **Pin by distance travelled or by world position, not by elapsed time**, if a walker has to move — anything that changes speed silently changes what a fixed duration frames.
+- **Bisect with clean worktrees** rather than trusting a capture taken on a tree that has moved since.
+- **Sample the same pixels and print the numbers.** Two frames that "look" different are a hypothesis, not a finding.
+
+The regression was imaginary. The defect the bisect *did* find was real, older than every commit under suspicion, and invisible to the eye: `track_depth` was set such that the steepest flank the shader could produce tilted 21.5 degrees against a sun 21.5 degrees up — **exactly zero margin**, so a mark reached the cel threshold and never crossed it. Every line in the snow was carried by tone with no shadow beneath it. Measurement found in one pass what looking had failed to find in three.
