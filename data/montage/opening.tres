@@ -1,0 +1,40 @@
+[gd_resource type="Resource" script_class="Montage" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/montage.gd" id="1_om4w0"]
+[ext_resource type="Script" path="res://src/definitions/montage_shot.gd" id="2_emu74"]
+
+[sub_resource type="Resource" id="Resource_lgg7j"]
+script = ExtResource("2_emu74")
+duration = 7.5
+camera_from = Transform3D(0.76193935, -0.23056895, 0.605216, 0, 0.9344824, 0.35600942, -0.64764845, -0.27125758, 0.71201885, 47, 22, 28)
+camera_to = Transform3D(0.76250917, -0.22434753, 0.6068344, 0, 0.937953, 0.34676254, -0.6469774, -0.2644096, 0.71519774, 41, 18, 21)
+fov_from = 46.0
+fov_to = 44.0
+text = "雪已经下了七天。"
+text_transform = Transform3D(0.7880108, 0, -0.6156615, 0, 1, 0, 0.6156615, 0, 0.7880108, 25, 9, 6)
+lighting_preset = &"nightfall"
+
+[sub_resource type="Resource" id="Resource_0via1"]
+script = ExtResource("2_emu74")
+duration = 7.5
+camera_from = Transform3D(0.78086877, -0.14248404, 0.60822874, 0, 0.97364104, 0.22808577, -0.624695, -0.17810506, 0.7602859, 29, 8, 8)
+camera_to = Transform3D(0.792624, -0.109704055, 0.5997601, 0, 0.9836798, 0.17992803, -0.60971075, -0.14261527, 0.7796882, 23, 5, 1)
+fov_from = 42.0
+text = "他们说会有直升机。"
+text_transform = Transform3D(0.8290376, 0, -0.5591929, 0, 1, 0, 0.5591929, 0, 0.8290376, 18, 3.4, -4)
+lighting_preset = &"nightfall"
+
+[sub_resource type="Resource" id="Resource_1rwcy"]
+script = ExtResource("2_emu74")
+camera_from = Transform3D(0.8106792, -0.05252568, 0.5831297, 0, 0.99596775, 0.08971226, -0.5854905, -0.07272787, 0.80741036, 19.5, 3, -3)
+camera_to = Transform3D(0.82090515, -0.010189452, 0.5709737, 0, 0.99984086, 0.017842907, -0.5710646, -0.014647335, 0.8207745, 16.2, 2.1, -7.4)
+fov_from = 38.0
+fov_to = 34.0
+text = "他们要看得见你。"
+text_transform = Transform3D(0.8660254, 0, -0.5, 0, 1, 0, 0.5, 0, 0.8660254, 14.6, 2, -8.6)
+lighting_preset = &"nightfall"
+
+[resource]
+script = ExtResource("1_om4w0")
+id = &"opening"
+shots = Array[ExtResource("2_emu74")]([SubResource("Resource_lgg7j"), SubResource("Resource_0via1"), SubResource("Resource_1rwcy")])
