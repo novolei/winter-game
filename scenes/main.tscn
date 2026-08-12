@@ -29,6 +29,8 @@
 [ext_resource type="PackedScene" path="res://scenes/effects/snowfall.tscn" id="27_snowfall"]
 [ext_resource type="PackedScene" path="res://scenes/effects/snow_lens.tscn" id="28_snow_lens"]
 [ext_resource type="PackedScene" path="res://scenes/effects/snow_load.tscn" id="30_snow_load"]
+[ext_resource type="Script" path="res://src/entities/wildlife/perch_points.gd" id="33_perches"]
+[ext_resource type="Script" path="res://src/entities/wildlife/crow_flock.gd" id="34_crows"]
 [ext_resource type="PackedScene" path="res://scenes/effects/wind.tscn" id="31_wind"]
 
 ; The two rooms of the farmhouse ground floor, in the model's own coordinates.
@@ -163,6 +165,14 @@ transform = Transform3D(0.88294759, 0, -0.46947156, 0, 1, 0, 0.46947156, 0, 0.88
 [node name="PowerPole" parent="Farmstead" instance=ExtResource("14_power_pole") unique_id=1902244604]
 transform = Transform3D(0.92718385, 0, 0.37460659, 0, 1, 0, -0.37460659, 0, 0.92718385, 6.8, 0, 13.055)
 
+; Where a crow may sit on this pole, in the pole's own metres, so that settling
+; it onto the snow and yawing it carry the perches with it. Four along the
+; crossarm at y = 7.95, clear of the insulators at x = -0.86, 0 and +0.86, and
+; one on the head. See src/entities/wildlife/perch_points.gd.
+[node name="Perches" type="Node3D" parent="Farmstead/PowerPole"]
+script = ExtResource("33_perches")
+points = Array[Vector3]([Vector3(-0.62, 7.95, 0), Vector3(-0.28, 7.95, 0), Vector3(0.28, 7.95, 0), Vector3(0.62, 7.95, 0), Vector3(0, 8.5, 0)])
+
 [node name="TreeA" parent="Farmstead" instance=ExtResource("17_tree_a") unique_id=1902244605]
 transform = Transform3D(0.96592583, 0, 0.25881905, 0, 1, 0, -0.25881905, 0, 0.96592583, 28.35, 0, -16.725)
 
@@ -198,9 +208,37 @@ transform = Transform3D(0.65605903, 0, 0.75470958, 0, 1, 0, -0.75470958, 0, 0.65
 
 [node name="WireArriving" parent="Farmstead/Wires" instance=ExtResource("15_power_wire") unique_id=1902244611]
 
+; The span that arrives at the farm. Farmstead._string_wires() places it at its
+; FAR end and aims it at the eave, so the fractions near 1 are the part of it
+; that is in the picture; the rest climbs off the top of the frame.
+[node name="Perches" type="Node3D" parent="Farmstead/Wires/WireArriving"]
+script = ExtResource("33_perches")
+kind = 1
+spacing_m = 3.0
+from_fraction = 0.74
+to_fraction = 0.97
+
 [node name="WireDrop" parent="Farmstead/Wires" instance=ExtResource("15_power_wire") unique_id=1902244612]
 
+; The service drop, house eave to pole. The whole of it is in shot, so the birds
+; spread across the middle three quarters.
+[node name="Perches" type="Node3D" parent="Farmstead/Wires/WireDrop"]
+script = ExtResource("33_perches")
+kind = 1
+spacing_m = 2.2
+from_fraction = 0.12
+to_fraction = 0.88
+
 [node name="WireLeaving" parent="Farmstead/Wires" instance=ExtResource("15_power_wire") unique_id=1902244613]
+
+; The span that leaves, placed at the pole and aimed off the bottom left, so the
+; low fractions are the near end. Only the first third of it is in shot.
+[node name="Perches" type="Node3D" parent="Farmstead/Wires/WireLeaving"]
+script = ExtResource("33_perches")
+kind = 1
+spacing_m = 2.4
+from_fraction = 0.03
+to_fraction = 0.32
 
 ; --------------------------------------------------------------------------
 ; The snow in the air. Style document sections 21-23.
@@ -216,6 +254,15 @@ transform = Transform3D(0.65605903, 0, 0.75470958, 0, 1, 0, -0.75470958, 0, 0.65
 ; group SnowfallLayer publishes itself in, so nothing here wires the two
 ; together and neither node holds a reference to the other.
 ; --------------------------------------------------------------------------
+
+; The crows. Daylight only, on whatever the props in the `perches` group are
+; offering, and away in a burst when the player comes near -- see
+; src/entities/wildlife/crow_flock.gd. It holds no positions of its own: the
+; pole is settled onto procedural snow and the wires are stretched between
+; whatever the pole and the house settled at, so there is nothing to write down
+; here that would still be true on the first frame.
+[node name="Crows" type="Node3D" parent="."]
+script = ExtResource("34_crows")
 
 [node name="Snowfall" parent="." instance=ExtResource("27_snowfall")]
 
