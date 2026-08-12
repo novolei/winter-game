@@ -14,11 +14,11 @@ extends TestCase
 ## the drift and progressively less after. A linear drain would give the same
 ## total and the wrong picture: four identical bursts and then nothing.
 
-const LegSnowScript := preload("res://src/entities/leg_snow.gd")
+const SnowLoadScript := preload("res://src/entities/snow_load.gd")
 const SnowFieldScript := preload("res://src/systems/snow_field.gd")
 const CameraRigScript := preload("res://src/rendering/camera_rig.gd")
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
-const SHADER_PATH := "res://assets/shaders/leg_snow.gdshader"
+const SHADER_PATH := "res://assets/shaders/snow_load.gdshader"
 
 ## LightingDirector's `glow_hdr_threshold`, copied rather than read, for the
 ## reason tests/unit/test_snowfall.gd gives at greater length: building a
@@ -44,7 +44,7 @@ const THIN := 0.1
 
 
 func _fresh() -> Node3D:
-	var legs: Node3D = LegSnowScript.new()
+	var legs: Node3D = SnowLoadScript.new()
 	# _ready() by hand: nothing has been added to a tree (briefing trap 1).
 	legs._ready()
 	# A real field rather than a number, because the gate must be ITS number.
@@ -171,7 +171,7 @@ func test_the_depth_that_loads_a_leg_is_the_field_s_own_deep_depth() -> void:
 ## behaviour here and it is worth pinning, because the alternative -- a fallback
 ## constant -- would be the fourth threshold this design exists to avoid.
 func test_with_no_field_nothing_ever_loads() -> void:
-	var legs: Node3D = LegSnowScript.new()
+	var legs: Node3D = SnowLoadScript.new()
 	legs._ready()
 	legs.step(Vector3.ZERO, 5.0, Vector2.RIGHT)
 	assert_almost_eq(legs.carried(), 0.0, 0.0001, "a leg took on snow from a field that does not exist")
@@ -195,12 +195,12 @@ func test_walking_back_into_a_drift_reloads_the_legs() -> void:
 
 ## The pure arithmetic, pinned on its own. Both directions are the same rule.
 func test_the_two_directions_are_the_same_fraction_rule() -> void:
-	assert_almost_eq(LegSnowScript.loaded_after(0.0, 0.5), 0.5, 0.0001)
-	assert_almost_eq(LegSnowScript.loaded_after(0.5, 0.5), 0.75, 0.0001)
-	assert_almost_eq(LegSnowScript.loaded_after(1.0, 0.5), 1.0, 0.0001, "loading must saturate at a full leg")
-	assert_almost_eq(LegSnowScript.shed_by_a_step(1.0, 0.7), 0.3, 0.0001)
-	assert_almost_eq(LegSnowScript.shed_by_a_step(0.5, 0.7), 0.15, 0.0001)
-	assert_almost_eq(LegSnowScript.shed_by_a_step(0.0, 0.7), 0.0, 0.0001, "a clean leg cannot shed")
+	assert_almost_eq(SnowLoadScript.loaded_after(0.0, 0.5), 0.5, 0.0001)
+	assert_almost_eq(SnowLoadScript.loaded_after(0.5, 0.5), 0.75, 0.0001)
+	assert_almost_eq(SnowLoadScript.loaded_after(1.0, 0.5), 1.0, 0.0001, "loading must saturate at a full leg")
+	assert_almost_eq(SnowLoadScript.shed_by_a_step(1.0, 0.7), 0.3, 0.0001)
+	assert_almost_eq(SnowLoadScript.shed_by_a_step(0.5, 0.7), 0.15, 0.0001)
+	assert_almost_eq(SnowLoadScript.shed_by_a_step(0.0, 0.7), 0.0, 0.0001, "a clean leg cannot shed")
 
 
 # --- the two populations -------------------------------------------------------
@@ -210,15 +210,15 @@ func test_the_two_directions_are_the_same_fraction_rule() -> void:
 ## the mist and barely move a grain.
 func test_the_wind_reaches_the_mist_and_hardly_touches_a_grain() -> void:
 	var legs := _fresh()
-	var powder: float = LegSnowScript.wind_response(legs.mist_damping)
-	var lump: float = LegSnowScript.wind_response(legs.grain_damping)
+	var powder: float = SnowLoadScript.wind_response(legs.mist_damping)
+	var lump: float = SnowLoadScript.wind_response(legs.grain_damping)
 	assert_true(
 		powder > lump * 3.0,
 		"mist takes %f of the wind and a grain %f: they are not separated by drag" % [powder, lump]
 	)
 	assert_true(lump < 0.25, "a grain takes %f of the wind; it is meant to be ballistic" % lump)
 	assert_true(powder < 1.0, "no particle may outrun the air it is in")
-	assert_almost_eq(LegSnowScript.wind_response(0.0), 0.0, 0.0001, "a dragless particle cannot be blown")
+	assert_almost_eq(SnowLoadScript.wind_response(0.0), 0.0, 0.0001, "a dragless particle cannot be blown")
 	_free(legs)
 
 
@@ -245,12 +245,12 @@ func test_the_shed_is_mostly_grains_and_only_a_little_mist() -> void:
 ## expect well under one, and rounding would give either one every step or none
 ## ever.
 func test_a_fraction_of_a_particle_is_a_chance_of_one_not_a_fraction_of_one() -> void:
-	assert_eq(LegSnowScript.burst_count(0.4, 0.2), 1, "a low roll must produce the particle")
-	assert_eq(LegSnowScript.burst_count(0.4, 0.9), 0, "a high roll must produce none")
-	assert_eq(LegSnowScript.burst_count(2.4, 0.9), 2, "the whole part must always be emitted")
-	assert_eq(LegSnowScript.burst_count(2.4, 0.2), 3)
-	assert_eq(LegSnowScript.burst_count(0.0, 0.0), 0, "nothing shed, nothing thrown")
-	assert_eq(LegSnowScript.burst_count(-1.0, 0.0), 0)
+	assert_eq(SnowLoadScript.burst_count(0.4, 0.2), 1, "a low roll must produce the particle")
+	assert_eq(SnowLoadScript.burst_count(0.4, 0.9), 0, "a high roll must produce none")
+	assert_eq(SnowLoadScript.burst_count(2.4, 0.9), 2, "the whole part must always be emitted")
+	assert_eq(SnowLoadScript.burst_count(2.4, 0.2), 3)
+	assert_eq(SnowLoadScript.burst_count(0.0, 0.0), 0, "nothing shed, nothing thrown")
+	assert_eq(SnowLoadScript.burst_count(-1.0, 0.0), 0)
 
 
 ## The mist floats and the grains fall, and the emitters have to say so.
@@ -709,3 +709,438 @@ func test_the_spray_leaves_from_the_band_the_crust_is_on() -> void:
 	)
 	_free(legs)
 	_free(shallow)
+
+
+# --- how much of him it covers --------------------------------------------------
+
+## THE ONE THE THIRD PASS EXISTS FOR, and it is a number rather than an opinion.
+##
+## Two rounds of tuning by eye landed the crust at 2.9% of the band it occupies at
+## the load the game actually shows, against a target of a third to a half. It
+## read as a scatter of sparkles on a boot rim. This pins the two knobs that were
+## wrong, and the SHAPE of the fix -- a unit test cannot count pixels, so it holds
+## the mechanism that the measurement in `tools/measure_crust_coverage.gd` then
+## checks the result of.
+func test_the_crust_covers_a_real_fraction_of_the_band_rather_than_speckling_it() -> void:
+	var legs := _fresh()
+	# THIS NUMBER WAS SOLVED, NOT CHOSEN. It is the coverage at the SOLE; the
+	# thinning above it takes the band average down, and the crease bias and the
+	# noise's own clamping move it again, so the only way to know what it produces
+	# is to render it and count. `tools/measure_crust_coverage.gd` did, on the
+	# shipped walker at the shipped framing:
+	#
+	#     load 1.00   35.0% of the band     load 0.70   43.9%     load 0.49  33.5%
+	#
+	# against a target of a third to a half. The bound here is wide because it is
+	# guarding the ORDER OF MAGNITUDE that went wrong -- the shipped effect was at
+	# 2.9% -- and the exact value belongs to the measurement, which is where anyone
+	# retuning this should go.
+	assert_true(
+		legs.crust_coverage >= 0.30,
+		"the crust covers only %f of the cloth where it is thickest, so the band "
+			% legs.crust_coverage
+			+ "average cannot reach the third-to-a-half the reference shows"
+	)
+	# And it is not solved by painting him white. Bare cloth showing BETWEEN the
+	# clumps is what makes it read as snow rather than as a costume.
+	assert_true(legs.crust_coverage <= 0.70, "the crust covers %f of the cloth, which is a white leg" % legs.crust_coverage)
+	var crust: ShaderMaterial = legs.crust_material()
+	assert_almost_eq(
+		crust.get_shader_parameter(&"crust_coverage"), legs.crust_coverage, 0.0001,
+		"the shader was not given the coverage the node holds"
+	)
+	var text := FileAccess.get_file_as_string(SHADER_PATH)
+	# THE THINNING IS MEASURED AGAINST THE BAND, NOT AGAINST THE FIGURE, and that
+	# is half of why the old version collapsed: a 30 cm ramp on a 43 cm band put
+	# five sixths of the crust on the falling half of it, and shortening the band
+	# by shedding shortened the solid part to nothing.
+	assert_true(
+		text.contains("float climb = clamp(height / max(full, 0.0001), 0.0, 1.0);"),
+		"%s does not measure the thinning against the crossing, so a leg that has "
+			% SHADER_PATH
+			+ "shed some of its crust gets sparser as well as shorter -- which is what "
+			+ "took 36.4%% of the band down to 19.0%% one step out of a drift"
+	)
+	# And what is left of it is CLIPPED at the retreating edge rather than
+	# rescaled, or the two would be the same thing again.
+	assert_true(
+		text.contains("float reaches = 1.0 - smoothstep(edge - 0.006, edge + 0.006, height);"),
+		"%s does not clip the crust at the edge the load has retreated to" % SHADER_PATH
+	)
+	# And the load moves the EDGE rather than the density. Snow does not become
+	# more porous as it comes off a leg; the area it occupies shrinks.
+	assert_false(
+		text.contains("* load;") and text.contains("smoothstep(edge - patch_scatter"),
+		"%s still scales its coverage by the load on top of retreating the edge, "
+			% SHADER_PATH
+			+ "which is what took 30.9% of the band down to 2.9% one step out of a drift"
+	)
+	_free(legs)
+
+
+## CLUMPS, NOT GRIT. Raising the coverage of a fine speckle gives forty per cent
+## of noise rather than forty per cent of snow -- the eye reads a camouflage
+## print. The clumps have to be big enough to have a shape, and ragged enough at
+## the edge to be snow rather than a polka dot.
+func test_the_clumps_are_coarse_enough_to_have_a_shape() -> void:
+	var legs := _fresh()
+	assert_true(
+		legs.patch_scale < 20.0,
+		"the patch noise runs at %f over the character's UVs, which at this framing "
+			% legs.patch_scale
+			+ "is speckle: it reads as a print on the cloth rather than as snow on it"
+	)
+	assert_true(legs.patch_scale > 4.0, "at %f the clumps are bigger than the boot" % legs.patch_scale)
+	assert_true(legs.patch_warp > 0.0, "the clump outlines are unwarped, so they are round blobs")
+	var text := FileAccess.get_file_as_string(SHADER_PATH)
+	assert_true(
+		text.contains("vec2 q = p + warp * patch_warp;"),
+		"%s does not warp its noise lookup, so a clump has the round shoulder a "
+			% SHADER_PATH
+			+ "plain fBm threshold produces rather than fingers and inlets"
+	)
+	# Most of the weight in the base octave: spread evenly the field has no scale
+	# of its own and produces grit at every coverage.
+	assert_true(
+		text.contains("snow_noise(q) * 0.72"),
+		"%s spreads its octave weights, so the noise has no clump size of its own" % SHADER_PATH
+	)
+	_free(legs)
+
+
+# --- the snow that falls ON him -------------------------------------------------
+
+## It builds while he STANDS STILL, which is the whole shape of the mechanic: the
+## man who shelters keeps it off and the man who waits in the open wears it.
+func test_the_sky_settles_snow_on_him_while_he_stands_still() -> void:
+	var legs := _fresh()
+	legs.set_snowfall_rate(1.0)
+	assert_almost_eq(legs.settled(), 0.0, 0.0001, "he started the storm already covered")
+	for _tick in range(60):
+		legs._process(1.0)
+	assert_true(
+		legs.settled() > 0.7,
+		"a minute of standing in a whiteout settled %f on him" % legs.settled()
+	)
+	# And it saturates rather than running past a full body.
+	for _tick in range(600):
+		legs._process(1.0)
+	assert_true(legs.settled() <= 1.0, "the settled load ran past a full body: %f" % legs.settled())
+	# Half the rate must take longer to reach the same place, or the rate is not
+	# doing anything.
+	var slower := _fresh()
+	slower.set_snowfall_rate(0.25)
+	for _tick in range(60):
+		slower._process(1.0)
+	assert_true(
+		slower.settled() < legs.settled() * 0.75,
+		"a quarter-rate snowfall settled %f against a whiteout's %f: the rate is not "
+			% [slower.settled(), legs.settled()]
+			+ "reaching the model"
+	)
+	_free(legs)
+	_free(slower)
+
+
+## THE OWNER'S STATED REQUIREMENT, and it is not a special case anywhere -- the
+## settling rate is proportional to the snowfall rate, so at zero it is zero.
+## What is left is the waded crust, which is untouched by the weather.
+func test_with_no_snowfall_only_wading_marks_him() -> void:
+	var legs := _fresh()
+	legs.set_snowfall_rate(0.0)
+	for _tick in range(600):
+		legs._process(1.0)
+	assert_almost_eq(
+		legs.settled(), 0.0, 0.0001,
+		"ten minutes of clear weather put %f of snow on his shoulders" % legs.settled()
+	)
+	# And the boots still mark, because that half was never about the weather.
+	_walk(legs, DEEP, 4)
+	assert_true(legs.carried() > 0.7, "wading a drift on a clear day left the boots at %f" % legs.carried())
+	assert_almost_eq(legs.settled(), 0.0, 0.0001, "wading settled snow on his shoulders")
+	_free(legs)
+
+
+## Moving shakes it off, which is the other half of "standing still is what lets
+## it build" -- and it comes off FASTER than the waded crust does, because it is
+## loose rather than packed and refrozen.
+func test_a_footfall_shakes_the_settled_snow_loose() -> void:
+	var legs := _fresh()
+	# The drift FIRST and the storm second, because a walk shakes the settled snow
+	# off as it goes -- which is the very thing being tested, and would otherwise
+	# quietly leave nothing on his shoulders to shake.
+	_walk(legs, DEEP, 6)
+	legs.set_snowfall_rate(1.0)
+	for _tick in range(300):
+		legs._process(1.0)
+	var caked: float = legs.settled()
+	assert_true(caked > 0.9, "the storm never covered him: %f" % caked)
+	var packed: float = legs.carried()
+	legs.step(Vector3.ZERO, THIN, Vector2.RIGHT)
+	assert_true(legs.settled() < caked, "a footfall shook nothing off his shoulders")
+	assert_true(
+		(caked - legs.settled()) / caked > (packed - legs.carried()) / packed,
+		"one step took %f of the settled snow and %f of the packed crust: loose snow "
+			% [(caked - legs.settled()) / caked, (packed - legs.carried()) / packed]
+			+ "on a shoulder must come off more easily than a crust the leg has compacted"
+	)
+	# Four or five strides, which is what makes shaking off at the door a thing a
+	# player can actually do.
+	for _step in range(5):
+		legs.step(Vector3.ZERO, THIN, Vector2.RIGHT)
+	assert_true(legs.settled() < 0.1, "six strides left %f on his shoulders" % legs.settled())
+	_free(legs)
+
+
+## THE SETTLED HALF IS ON A CLOCK AND THE WADED HALF IS NOT, and both halves of
+## that have to be true at once. The opening claim of this file -- the crust
+## changes on footfalls and on nothing else -- must survive a system that grows
+## on a timer beside it.
+func test_time_settles_snow_and_still_never_touches_the_waded_crust() -> void:
+	var legs := _fresh()
+	_walk(legs, DEEP, 5)
+	var packed: float = legs.carried()
+	legs.set_snowfall_rate(1.0)
+	for _tick in range(120):
+		legs._process(1.0)
+	assert_true(legs.settled() > 0.5, "two minutes of whiteout settled only %f" % legs.settled())
+	assert_almost_eq(
+		legs.carried(), packed, 0.0001,
+		"two minutes of weather moved the waded crust from %f to %f: it is on a timer"
+			% [packed, legs.carried()]
+	)
+	_free(legs)
+
+
+## Warmth takes BOTH, and takes them fast enough to watch. The owner asked for
+## the snow to be gone shortly after he steps inside.
+func test_warmth_melts_everything_he_is_carrying() -> void:
+	var legs := _fresh()
+	legs.set_snowfall_rate(1.0)
+	for _tick in range(300):
+		legs._process(1.0)
+	_walk(legs, DEEP, 5)
+	assert_true(legs.total_load() > 0.9, "he did not arrive at the door carrying anything")
+	legs.set_indoors(true)
+	assert_true(legs.is_thawing(), "a man indoors is not thawing")
+	for _tick in range(80):
+		legs._process(0.1)
+	assert_true(
+		legs.total_load() < 0.05,
+		"eight seconds in a warm room left %f on him; it is meant to go quickly"
+			% legs.total_load()
+	)
+	# And the crossing is forgotten with it, so the next drift marks him afresh.
+	assert_almost_eq(legs.wade_line_m(), 0.0, 0.0001, "the melted crust kept its crossing's line")
+	# Back out into the cold and nothing melts any more.
+	legs.set_indoors(false)
+	assert_false(legs.is_thawing(), "he is still thawing after stepping back outside")
+	_free(legs)
+
+
+## A LIT FIRE IS A WARM PLACE, and this knows that without knowing what a stove
+## is: the fire announces itself on the bus with a position, and a Wave 5 beacon
+## that emits the same event melts snow off a walker for free.
+func test_a_lit_fire_thaws_him_and_a_dead_one_does_not() -> void:
+	var legs := _fresh()
+	var subject := Node3D.new()
+	legs.set_subject(subject)
+	assert_false(legs.is_thawing(), "he is thawing in an empty field")
+	legs._on_fire_lit({"position": Vector3(1.0, 0.0, 0.0)})
+	assert_true(legs.is_thawing(), "a fire a metre away is not warming him")
+	# Far enough away and it is a light rather than a heat source.
+	legs._on_fire_out({"position": Vector3(1.0, 0.0, 0.0)})
+	legs._on_fire_lit({"position": Vector3(40.0, 0.0, 0.0)})
+	assert_false(legs.is_thawing(), "a fire forty metres away is melting the snow off him")
+	# And a fire that goes out stops warming him.
+	legs._on_fire_lit({"position": Vector3(2.0, 0.0, 0.0)})
+	assert_true(legs.is_thawing())
+	legs._on_fire_out({"position": Vector3(2.0, 0.0, 0.0)})
+	assert_false(legs.is_thawing(), "a fire that went out is still warm")
+	# A payload this cannot read is ignored rather than fatal: it arrives off a bus
+	# and must never take the publisher down with it.
+	legs._on_fire_lit(null)
+	legs._on_fire_lit({"position": "over there"})
+	subject.free()
+	_free(legs)
+
+
+## Loose snow does not stay on a shoulder in a gale. The packed crust does.
+func test_the_wind_strips_the_settled_half_and_not_the_packed_one() -> void:
+	var legs := _fresh()
+	_walk(legs, DEEP, 5)
+	legs.set_snowfall_rate(1.0)
+	for _tick in range(300):
+		legs._process(1.0)
+	var caked: float = legs.settled()
+	var packed: float = legs.carried()
+	assert_true(caked > 0.9, "the storm never covered him: %f" % caked)
+	# The snowfall has to stop, or the wind is fighting the sky rather than the
+	# load: a gale that also brings snow is a different question.
+	legs.set_snowfall_rate(0.0)
+	legs.set_wind(Vector3(12.0, 0.0, 0.0))
+	for _tick in range(30):
+		legs._process(1.0)
+	assert_true(legs.settled() < caked * 0.5, "half a minute of gale left %f of %f" % [legs.settled(), caked])
+	assert_almost_eq(
+		legs.carried(), packed, 0.0001,
+		"the wind stripped the packed crust off his boots as well"
+	)
+	_free(legs)
+
+
+# --- what it costs him ----------------------------------------------------------
+
+## A stand-in for the SurvivalSystem autoload, recording what was pushed at it.
+## A Node rather than a RefCounted because that is what the real one is, and
+## `is_instance_valid()` has to mean the same thing about both.
+class FakeSurvival extends Node:
+	var pushed: Array = []
+	var removed: Array = []
+
+	func push_modifier(target: StringName, source: StringName, operation: int,
+			value: float, _duration := -1.0) -> bool:
+		pushed.append({"target": target, "source": source, "operation": operation, "value": value})
+		return true
+
+	func remove_source(source: StringName) -> int:
+		removed.append(source)
+		return 1
+
+	func live() -> Dictionary:
+		# What the stack would hold: every push since the last remove of that source.
+		var held := {}
+		for entry in pushed:
+			held[entry["source"]] = entry
+		return held
+
+
+## SNOW ON YOUR CLOTHES MAKES YOU COLD, which is what the owner asked for by
+## name. A MULTIPLY on the DRAIN channel rather than an ADD against recovery:
+## snow does not remove a fixed number of degrees, it defeats the insulation, so
+## it scales whatever was already taking heat out of him -- and composes with
+## NightExposure's own doubling instead of arguing with it.
+func test_the_snow_he_is_carrying_makes_him_lose_heat_faster() -> void:
+	var legs := _fresh()
+	var body := FakeSurvival.new()
+	legs.set_survival_system(body)
+	# Clean: nothing pushed at all. A modifier that multiplies by one is still a
+	# modifier, and "there is no snow on him" should look like nothing.
+	legs._process(0.1)
+	assert_true(body.pushed.is_empty(), "a dry man was charged for snow he is not carrying")
+	_walk(legs, DEEP, 6)
+	legs._process(0.1)
+	assert_false(body.pushed.is_empty(), "a man out of a full drift was charged nothing")
+	var last: Dictionary = body.pushed[body.pushed.size() - 1]
+	assert_eq(last["target"], &"core_temperature:drain", "the chill landed on the wrong channel")
+	assert_eq(
+		last["operation"], Modifier.Operation.MULTIPLY,
+		"the chill was added rather than multiplied, so it does not compose with the "
+			+ "night doubling and does not scale with what is already draining him"
+	)
+	assert_true(
+		last["value"] > 1.2,
+		"a full load costs him a factor of %f, which is not a cost" % last["value"]
+	)
+	assert_almost_eq(
+		float(last["value"]), legs.chill_at_full_load, 0.02,
+		"a full load did not reach the full chill"
+	)
+	# REMOVE THEN PUSH. A second push without the remove compounds the stack, and a
+	# load that ticked up a hundred times would multiply by the hundredth power.
+	assert_eq(
+		body.removed.size(), body.pushed.size(),
+		"%d pushes against %d removes: the stack is being compounded"
+			% [body.pushed.size(), body.removed.size()]
+	)
+	# And it goes away when he does. Melting it off must leave nothing behind.
+	legs.set_indoors(true)
+	for _tick in range(80):
+		legs._process(0.1)
+	assert_true(
+		body.removed.size() > body.pushed.size(),
+		"a man who melted his snow off indoors is still being charged for it"
+	)
+	body.free()
+	_free(legs)
+
+
+## Linear from free to full, so it can be pushed unconditionally rather than
+## being a special case at each end.
+func test_the_chill_is_proportional_to_what_he_is_carrying() -> void:
+	assert_almost_eq(SnowLoadScript.chill_multiplier(0.0, 1.6), 1.0, 0.0001, "a dry man pays something")
+	assert_almost_eq(SnowLoadScript.chill_multiplier(1.0, 1.6), 1.6, 0.0001)
+	assert_almost_eq(SnowLoadScript.chill_multiplier(0.5, 1.6), 1.3, 0.0001)
+	assert_almost_eq(SnowLoadScript.chill_multiplier(2.0, 1.6), 1.6, 0.0001, "the load is not clamped")
+	assert_almost_eq(SnowLoadScript.chill_multiplier(1.0, 0.4), 1.0, 0.0001, "a load made him warmer")
+
+
+## THE TWO LOADS ARE NOT ADDED. They are loads on different parts of him: a man
+## with white shoulders and white boots is not carrying twice what a man with
+## only white shoulders is, and summing them would let two half-loads cost more
+## than one whole one.
+func test_the_two_loads_are_the_larger_of_the_two_and_never_their_sum() -> void:
+	var legs := _fresh()
+	# The stride first: a footfall shakes the settled half loose, so settling
+	# BEFORE walking would measure a body the walk had already half cleaned.
+	_walk(legs, DEEP, 1)
+	var packed: float = legs.carried()
+	assert_true(packed > 0.4 and packed < 0.95, "this test needs a part-packed leg, not %f" % packed)
+	legs.set_snowfall_rate(1.0)
+	for _tick in range(40):
+		legs._process(1.0)
+	var settled: float = legs.settled()
+	assert_true(settled > 0.4 and settled < 0.95, "this test needs a part-settled body, not %f" % settled)
+	assert_almost_eq(
+		legs.total_load(), maxf(packed, settled), 0.0001,
+		"two half-loads summed to %f, which is more than a man can carry" % legs.total_load()
+	)
+	assert_true(legs.total_load() <= 1.0)
+	_free(legs)
+
+
+## The arithmetic of the two clocked rules, pinned on its own and framerate-
+## correct: an exponential approach integrated as `+= rate * delta` drifts with
+## the frame time, and this effect is judged in captures taken at a fixed 60
+## while the game runs at whatever it runs at.
+func test_settling_and_melting_do_not_depend_on_the_frame_rate() -> void:
+	var one_step := SnowLoadScript.settled_after(0.0, 1.0, 0.5, 4.0)
+	var many := 0.0
+	for _tick in range(400):
+		many = SnowLoadScript.settled_after(many, 1.0, 0.5, 0.01)
+	assert_almost_eq(one_step, many, 0.0005, "settling in one tick and in four hundred disagree")
+	var melted_once := SnowLoadScript.decayed_after(1.0, 0.5, 4.0)
+	var melted_often := 1.0
+	for _tick in range(400):
+		melted_often = SnowLoadScript.decayed_after(melted_often, 0.5, 0.01)
+	assert_almost_eq(melted_once, melted_often, 0.0005, "melting in one tick and in four hundred disagree")
+	# No snowfall settles nothing; no warmth melts nothing.
+	assert_almost_eq(SnowLoadScript.settled_after(0.3, 0.0, 0.5, 10.0), 0.3, 0.0001)
+	assert_almost_eq(SnowLoadScript.decayed_after(0.3, 0.0, 10.0), 0.3, 0.0001)
+	assert_true(SnowLoadScript.settled_after(0.99, 1.0, 0.5, 1000.0) <= 1.0, "settling ran past a full body")
+
+
+## The settled half lands on what faces the sky and the waded half lives in a
+## band, and it is that difference -- not a branch anywhere -- that puts one on
+## his shoulders and the other on his boots.
+func test_what_falls_on_him_lands_on_what_faces_the_sky() -> void:
+	var legs := _fresh()
+	var crust: ShaderMaterial = legs.crust_material()
+	assert_almost_eq(crust.get_shader_parameter(&"settle_coverage"), legs.settle_coverage, 0.0001)
+	assert_true(
+		legs.settle_facing > 0.0,
+		"a surface facing dead sideways collects snow out of the sky at %f, so a shin "
+			% legs.settle_facing
+			+ "whitens in a blizzard the same way a shoulder does"
+	)
+	var text := FileAccess.get_file_as_string(SHADER_PATH)
+	assert_true(
+		text.contains("smoothstep(settle_facing, settle_facing + settle_falloff, upness)"),
+		"%s does not gate the settled snow on which way the surface faces" % SHADER_PATH
+	)
+	# And it is NOT gated by the wading band, or it could not reach his hood.
+	assert_true(
+		text.contains("float coverage = max(waded, settled);"),
+		"%s does not combine the two loads, so one of them cannot be seen" % SHADER_PATH
+	)
+	_free(legs)

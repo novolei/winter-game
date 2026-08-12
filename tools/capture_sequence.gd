@@ -31,6 +31,11 @@ extends Node
 ##   --open-door         opens the farmhouse door at the start, so a walk can
 ##                       cross the threshold without an interact keypress
 ##   --preset <id>       force one of the Art Bible looks, held for the run
+##   --snowfall <0..1>   force how hard it is snowing, held for the run. Driven
+##                       through Snowfall's own set_snowfall_rate(), so the
+##                       layers, the ground and what settles on the walker all
+##                       move together -- a sequence that snowed on the character
+##                       and not on the world would be a lie about the weather.
 ##   --ortho <m>         frame height in metres, as tools/capture_frame.gd's own
 ##                       --ortho: the gameplay framing is what a feature is
 ##                       judged at, and a close-up is what it is diagnosed at
@@ -44,6 +49,7 @@ var _every := 6
 var _settle := 12
 var _arrive := ARRIVE
 var _preset := ""
+var _snowfall := -1.0
 var _ortho := 0.0
 var _open_door := false
 var _waypoints: Array[Vector2] = []
@@ -64,6 +70,7 @@ func _ready() -> void:
 	_settle = int(_arg(args, "--settle", "12"))
 	_arrive = float(_arg(args, "--arrive", str(ARRIVE)))
 	_preset = _arg(args, "--preset", "")
+	_snowfall = float(_arg(args, "--snowfall", "-1"))
 	_ortho = float(_arg(args, "--ortho", "0"))
 	_open_door = _arg(args, "--open-door", "") != "" or args.has("--open-door")
 	for pair in _arg(args, "--waypoints", "").split(";", false):
@@ -122,6 +129,18 @@ func _at_start() -> void:
 		var lighting := get_node_or_null("Main/Lighting")
 		if lighting != null:
 			lighting.apply_preset(StringName(_preset))
+	# The weather, if this run asked for one. Through the registry rather than the
+	# node path, because Snowfall publishes itself as a service and a capture that
+	# knew where it sat in the scene would break the day somebody moved it.
+	if _snowfall >= 0.0:
+		var registry := get_node_or_null("/root/ServiceRegistry")
+		var sky = null if registry == null else registry.get_service(&"snowfall")
+		if sky != null and sky.has_method("set_snowfall_rate"):
+			sky.set_snowfall_rate(_snowfall)
+			# Skip the six-second ease, so frame zero of a sequence is already in
+			# the weather the sequence is about.
+			if sky.has_method("settle"):
+				sky.settle()
 	if _open_door:
 		var door := get_node_or_null("Main/Farmhouse/Door")
 		if door != null and door.has_method("open"):
@@ -217,13 +236,14 @@ func _state(index: int) -> String:
 		line += "  " + String(fader.report())
 	# The other thing a still cannot carry: whether the first step out of a drift
 	# throws more snow than the fourth, and how high up his legs this particular
-	# crossing reached. LegSnow's own numbers, per frame.
+	# crossing reached, and what the sky has settled on his shoulders since.
+	# SnowLoad's own numbers, per frame.
 	#
 	# Under the walker rather than at /root: it is a child of the body it dresses,
 	# because the crust is a parameter on that body's own mesh and one global node
 	# could only ever whiten one set of legs.
 	if player != null:
-		var legs := player.get_node_or_null("LegSnow")
+		var legs := player.get_node_or_null("SnowLoad")
 		if legs != null and legs.has_method("report"):
 			line += "  " + String(legs.report())
 	var reveal := get_node_or_null("Main/Farmhouse/InteriorReveal")

@@ -28,7 +28,7 @@
 [ext_resource type="Script" path="res://src/entities/interior/interior_warmth.gd" id="26_warmth"]
 [ext_resource type="PackedScene" path="res://scenes/effects/snowfall.tscn" id="27_snowfall"]
 [ext_resource type="PackedScene" path="res://scenes/effects/snow_lens.tscn" id="28_snow_lens"]
-[ext_resource type="PackedScene" path="res://scenes/effects/leg_snow.tscn" id="30_leg_snow"]
+[ext_resource type="PackedScene" path="res://scenes/effects/snow_load.tscn" id="30_snow_load"]
 
 ; The two rooms of the farmhouse ground floor, in the model's own coordinates.
 ; The boundary of these boxes IS the threshold -- the front face of MainRoom
@@ -83,13 +83,14 @@ script = ExtResource("29_accumulation")
 [node name="Player" type="CharacterBody3D" parent="." unique_id=1145769148]
 script = ExtResource("3_player")
 
-; The snow he carries out of a drift and knocks off again. A CHILD OF HIM, and
-; that placement is the wiring: the node finds its subject by looking up, so the
-; walker it dresses is the walker it hangs under. It still takes its footfalls
-; off the EventBus and ignores the ones that landed too far away to be his, which
-; is what lets the bear in Wave 4 get leg snow by hanging the same scene under
-; the bear -- one node, no code.
-[node name="LegSnow" parent="Player" instance=ExtResource("30_leg_snow")]
+; The snow he is carrying -- out of a drift on his boots, out of the sky on his
+; shoulders -- and knocks off again. A CHILD OF HIM, and that placement is the
+; wiring: the node finds its subject by looking up, so the walker it dresses is
+; the walker it hangs under. It still takes its footfalls off the EventBus and
+; ignores the ones that landed too far away to be his, which is what lets the
+; bear in Wave 4 get snow on it by hanging the same scene under the bear -- one
+; node, no code.
+[node name="SnowLoad" parent="Player" instance=ExtResource("30_snow_load")]
 
 [node name="Terrain" type="MeshInstance3D" parent="." unique_id=2024731026]
 script = ExtResource("4_terrain")

@@ -1,18 +1,19 @@
 [gd_scene load_steps=2 format=3]
 
-[ext_resource type="Script" path="res://src/entities/leg_snow.gd" id="1_legsnow"]
+[ext_resource type="Script" path="res://src/entities/snow_load.gd" id="1_snowload"]
 
-; The snow a walker carries out of a drift, and sheds step by step.
+; The snow a walker is carrying: packed onto his boots by a drift, settled on his
+; shoulders by the sky, shaken off by his own steps and melted off by warmth.
 ;
 ; A SCENE SO IT CAN BE DROPPED UNDER A BODY, and that is the whole of it: this
 ; node belongs to ONE walker, because the crust it drives is a material
 ; parameter on that walker's own mesh.
 ;
 ; It was an autoload, and an autoload cannot do this job. One global instance can
-; whiten one set of legs, and the reason this effect takes its footfalls off the
+; whiten one body, and the reason this effect takes its footfalls off the
 ; EventBus rather than calling into the player is so the bear in Wave 4 and the
-; hungry man in Wave 5 get leg snow for free. Free means adding this scene as a
-; child of the bear -- no export to point, no service to register, no `.gd` to
+; hungry man in Wave 5 get snow on them for free. Free means adding this scene as
+; a child of the bear -- no export to point, no service to register, no `.gd` to
 ; change -- and a single autoload could not have delivered any of it.
 ;
 ; Placed under the body rather than beside it in scenes/main.tscn for the same
@@ -21,5 +22,5 @@
 ; that made them; this node's own transform is nothing but a culling box, which
 ; its parent now carries between footfalls for free.
 
-[node name="LegSnow" type="Node3D"]
-script = ExtResource("1_legsnow")
+[node name="SnowLoad" type="Node3D"]
+script = ExtResource("1_snowload")

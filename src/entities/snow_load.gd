@@ -1,7 +1,43 @@
 extends Node3D
 
-## A CHILD OF A WALKER. Snow packs onto his boots and shins in a drift, and he
-## knocks it off again, step by step, until his legs are clean.
+## A CHILD OF A WALKER. Snow packs onto his boots and shins when he wades a
+## drift, and settles on his hood and shoulders when it snows on him -- and he
+## knocks both off again, step by step, until he is clean. What he is carrying
+## makes him colder.
+##
+## ---------------------------------------------------------------------------
+## ONE LOAD FIELD, TWO SOURCES, AND THEY LIVE IN DIFFERENT PLACES
+## ---------------------------------------------------------------------------
+##   WADED   from below. Boots and shins, gated on `SnowField.deep_depth_m`,
+##           packed on by a footfall and knocked off by one. It marks him to the
+##           depth he actually walked through.
+##   SETTLED from above. Whatever faces the sky -- hood, shoulders, the tops of
+##           the sleeves, the rim of a boot -- fed by the snowfall rate and by
+##           nothing else, so it builds while he STANDS STILL and only while it
+##           is actually snowing.
+##
+## The owner asked for exactly one special case and it is not written anywhere:
+## "with no snowfall, only walking in deep snow marks the boots and shins". That
+## falls out. The settling rate is proportional to the snowfall rate, so at a
+## rate of zero it is zero, and the waded half is untouched by weather.
+##
+## THREE THINGS TAKE IT OFF, and the first of them is why standing still is what
+## lets it build:
+##   * A FOOTFALL shakes some of both loose. Same impact model as the shed --
+##     see below -- so a man who walks it off has to walk, and a man who stands
+##     in a blizzard accumulates.
+##   * WARMTH MELTS IT, fast: inside a building, or near a lit fire. Snow on a
+##     coat in a warm room is gone in seconds and the player should be able to
+##     watch it go.
+##   * WIND STRIPS the settled half. Loose snow on a shoulder in a gale does not
+##     stay there. The waded half is packed and is not touched by this.
+##
+## AND IT MAKES HIM COLD. The total load pushes a MULTIPLY onto
+## `core_temperature:drain` through SurvivalSystem's own modifier stack, which is
+## the seam NightExposure and Stove already use, in the same remove-then-push
+## idiom they use. Snow on your clothes takes heat out of you; that is the whole
+## claim, and it is an input to the survival model rather than anything to do
+## with how fast he walks.
 ##
 ## ---------------------------------------------------------------------------
 ## WHY IT IS A CHILD AND NOT AN AUTOLOAD
@@ -125,8 +161,30 @@ extends Node3D
 ## read three ways rather than four.
 
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
-const CRUST_SHADER_PATH := "res://assets/shaders/leg_snow.gdshader"
+const CRUST_SHADER_PATH := "res://assets/shaders/snow_load.gdshader"
 const FOOTPRINT_EVENT := &"player.footprint"
+
+## The events this listens to for warmth, all of them already published by
+## somebody else. Nothing here reaches into a farmhouse or a stove: a building
+## says when it has been entered, a fire says when it has been lit, and this node
+## melts what it is carrying if either is near. A Wave 5 beacon that emits
+## `stove.lit` melts snow off a walker for free.
+const INTERIOR_ENTERED_EVENT := &"interior.entered"
+const INTERIOR_EXITED_EVENT := &"interior.exited"
+const FIRE_LIT_EVENT := &"stove.lit"
+const FIRE_OUT_EVENT := &"stove.went_out"
+
+## The service that says how hard it is snowing, and the autoload that holds the
+## body's reserves. Both resolved rather than referenced -- see `_resolve()`.
+const SNOWFALL_SERVICE := &"snowfall"
+const SURVIVAL_PATH := "/root/SurvivalSystem"
+
+## SurvivalSystem's channel grammar: "<stat>:<channel>". A bare stat id means the
+## drain channel, but it is spelled out here because a warmth source and a chill
+## source must never be able to land on the same stack -- see the survival
+## system's own note on why recovery is a separate stack from drain.
+const CHILL_TARGET := &"core_temperature:drain"
+const CHILL_SOURCE := &"snow_load"
 
 ## How near a footfall has to be to count as this walker's.
 ##
@@ -178,6 +236,75 @@ const FOOTPRINT_EVENT := &"player.footprint"
 ## until something calls `set_air_chill()`, and at 0 `shed_retention` above is
 ## exactly what applies.
 @export var shed_retention_cold := 0.56
+
+## ---------------------------------------------------------------------------
+## The snow that falls ON him
+## ---------------------------------------------------------------------------
+## How much of what is still BARE settles in a second of the heaviest snowfall
+## there is. The same saturating rule as the waded half, on a clock rather than
+## on footfalls -- because this one IS about the passage of time: it is the sky
+## depositing snow at a rate, and a man who stands still for a minute in a
+## whiteout is a man wearing a minute of it.
+##
+## At 1/40 a whiteout covers him in about two minutes of standing still and gets
+## him visibly white in forty seconds. `Snowfall`'s own rate is 1.0 only in the
+## `whiteout` preset and 0.12 in `pale_day`, so an ordinary snowy afternoon takes
+## the better part of a quarter of an hour -- which is the right shape for
+## something meant to be a slow cost the player has to notice rather than a
+## timer he has to beat.
+@export var settle_per_second := 1.0 / 40.0
+
+## What a footfall shakes off the settled half, as a fraction of what is there.
+##
+## SEPARATE FROM `shed_retention`, and much harsher, because it is a different
+## material. The waded crust has been compacted by the leg and part-melted by
+## body heat and refrozen, and it clings; snow that has merely landed on a
+## shoulder is loose and the first hard step takes most of it. At 0.45 retention
+## the settled load runs 0.55, 0.30, 0.17, 0.09 -- gone in four or five strides,
+## which is what makes "shake it off at the door" a thing a player can do.
+@export var settle_retention := 0.45
+
+## How much of the settled half a full gale strips per second. Loose snow does
+## not stay on a shoulder in a wind. The waded crust is packed and gets none of
+## this -- the same distinction the two retentions above make.
+##
+## Inert until something drives `set_wind()`: `src/systems/wind_system.gd` is
+## Wave 3, and at zero wind this contributes nothing.
+@export var settle_wind_strip := 0.09
+
+## How fast warmth melts BOTH loads, as a fraction of what is left per second.
+## The owner asked for "quickly" and this is quickly: at 0.55 a full load is
+## under a tenth in four seconds and gone in eight. Fast enough to watch, slow
+## enough to be a thing that happens rather than a switch.
+@export var melt_per_second := 0.55
+
+## How near a lit fire has to be for its warmth to melt what he is carrying.
+## Stove's own `warm_radius_m` is 3.0 and its falloff runs to 6.0; this sits
+## between them, because melting the snow off a coat is a thing that happens
+## where you can feel the fire rather than everywhere its light reaches.
+@export var fire_melt_radius_m := 4.0
+
+## ---------------------------------------------------------------------------
+## What it costs him
+## ---------------------------------------------------------------------------
+## How much faster he loses heat with a FULL load on, as a multiplier on
+## `core_temperature`'s drain. 1.0 would be free; at 1.55 a man caked in snow
+## cools about half again as fast as a dry one, which is roughly the difference
+## between a 20-minute reserve and a 13-minute one.
+##
+## A MULTIPLY rather than an ADD, and on the drain channel rather than against
+## recovery, because that is what it is: snow on your clothes does not remove a
+## fixed number of degrees, it defeats the insulation, so everything that was
+## already taking heat out of you takes it out faster. It composes correctly with
+## NightExposure's own 2.0 for the same reason.
+@export var chill_at_full_load := 1.55
+
+## How much the load has to move before the modifier is rewritten. SurvivalSystem
+## wants remove-then-push -- a re-push without the remove compounds the stack --
+## and doing that pair sixty times a second to track a number that changes on
+## footfalls would be churn. Two per cent is finer than anything the player can
+## perceive and coarse enough that a steady walk rewrites it once a step.
+@export var chill_step := 0.02
 
 ## ---------------------------------------------------------------------------
 ## Where on the leg it sits
@@ -361,21 +488,71 @@ const FOOTPRINT_EVENT := &"player.footprint"
 ## is solid. Bare fabric shows BETWEEN the patches, not THROUGH them.
 @export var crust_opacity := 1.0
 
+## HOW MUCH OF THE CLOTH CARRIES SNOW where the crust is thickest, at the sole.
+##
+## THIS IS THE NUMBER THE EFFECT WAS FAILING ON, and it was failing by an order
+## of magnitude rather than by a little. Measured off a rendered frame with
+## `tools/measure_crust_coverage.gd` -- which renders the band on its own, renders
+## the crust, and counts one against the other -- the shipped version covered
+## 30.9% of the band at a full load and **2.9%** at 0.70. 0.70 is the first load
+## the game ever shows, because the crust is exactly buried while he is still in
+## the drift and his first step out sheds three tenths of it, so 2.9% is what
+## every frame anybody judged this by actually contained. It read as a dusting of
+## sparkles on a boot rim rather than as a man who had waded a drift.
+##
+## The target is a third to a half of the band, so this is the coverage at the
+## sole and `patch_scatter` thins it from there. Do not tune it by eye -- run the
+## measurement.
+@export var crust_coverage := 0.44
+
 ## How big the patches are, as a frequency over the character's UVs. Higher is
 ## finer grit; lower is bigger slabs.
-@export var patch_scale := 42.0
+##
+## COARSE, AND THAT IS HALF THE FIX. Raising the coverage of a fine speckle gives
+## forty per cent of NOISE, not forty per cent of snow: the eye reads a
+## camouflage print rather than material stuck to cloth. The first version was at
+## 42 and produced exactly that.
+@export var patch_scale := 11.5
 
 ## How hard the edges of the patches are against the noise's own distribution. At
 ## 1 the noise is used raw and the threshold sweeps a soft, gradual field; higher
 ## stretches it so patches appear and disappear as WHOLE patches, which is the
 ## breaking-up read the shed is supposed to have.
-@export var patch_contrast := 2.1
+##
+## Around 1.8 the stretched field is close to flat, which is what makes
+## `crust_coverage` above mean very nearly "this fraction of the cloth" -- so it
+## can be aimed at a measured target instead of tuned until it looks right.
+@export var patch_contrast := 1.8
 
-## How far below the crust's upper line the coverage ramp runs, as a fraction of
-## the figure. This is what makes it thick low down and scattered at the top
-## rather than a band with an edge: at the sole the coverage is full and every
-## patch is present; approaching the line only the luckiest few are.
-@export var patch_scatter := 0.16
+## How far the clump outlines are pushed about by a coarse noise of their own.
+## Thresholding a plain fBm gives round shoulders; this pulls them into fingers
+## and inlets, which is the shape snow actually breaks into.
+@export var patch_warp := 0.55
+
+## How far below the crust's upper line the coverage ramp runs, AS A FRACTION OF
+## THE BAND. At the sole every patch is present; approaching the line he waded
+## only the luckiest few are.
+##
+## AGAINST THE BAND, NOT THE FIGURE, and that is the other half of the fix. It
+## used to be 0.16 of the FIGURE -- 30 cm -- against a band that is only 43 cm
+## tall, so five sixths of the crust lived on the falling half of the ramp and
+## the whole thing collapsed the moment the band shortened. Measured against the
+## band it keeps its shape whether he came out of half a metre of snow or a fifth
+## of one.
+@export var patch_scatter := 0.35
+
+## The same pair for the snow that FELL on him: how much of an upward-facing
+## surface it covers at a full settled load, how far up a surface has to face
+## before it holds any, and how quickly that gate opens.
+##
+## `settle_facing` is what makes the two loads live in different places without a
+## line of code choosing: at 0.12 a vertical shin collects nothing out of the
+## sky, while a hood, a shoulder, the top of a sleeve and the rim of a boot all
+## do. A man standing still in a blizzard whitens from the top and a man out of a
+## drift whitens from the bottom, and neither is a special case.
+@export var settle_coverage := 0.82
+@export var settle_facing := 0.12
+@export var settle_falloff := 0.62
 
 ## How strongly the character's own normal map decides WHERE it catches.
 ##
@@ -398,6 +575,8 @@ const EMIT_PLACED := GPUParticles3D.EMIT_FLAG_POSITION | GPUParticles3D.EMIT_FLA
 var _bus: Node
 var _registry: Node
 var _snow: Node
+var _snowfall: Node
+var _survival: Node
 var _subject: Node3D
 var _mist: GPUParticles3D
 var _grains: GPUParticles3D
@@ -414,6 +593,20 @@ var _last_shed := 0.0
 var _steps_since_drift := 0
 var _wind := Vector3.ZERO
 var _air_chill := 0.0
+## What the sky has put on him, 0 clean .. 1 caked. Separate from `_load` because
+## it lives somewhere else on the body, is fed by something else, and comes off
+## at a different rate -- see the header.
+var _settle := 0.0
+var _snowfall_rate := 0.0
+var _sky_overridden := false
+var _indoors := false
+## Where the lit fires are. Kept as positions rather than as nodes because that
+## is what the events carry, and because a fire is a place that is warm rather
+## than an object this needs to hold on to.
+var _fires: Dictionary = {}
+## The last chill multiplier actually pushed at SurvivalSystem, so the
+## remove-then-push pair happens when the load MOVES rather than every frame.
+var _chill_pushed := 1.0
 
 
 func _ready() -> void:
@@ -427,11 +620,28 @@ func _ready() -> void:
 		_bus = get_node_or_null("/root/EventBus")
 	if _bus != null:
 		_bus.subscribe(FOOTPRINT_EVENT, _on_footprint)
+		# WARMTH, TAKEN OFF WHOEVER PUBLISHES IT. A building says it has been
+		# entered and a fire says it has been lit; nothing here knows what a
+		# farmhouse or a stove is, so a Wave 5 beacon that emits `stove.lit` melts
+		# the snow off a walker without a line being added.
+		_bus.subscribe(INTERIOR_ENTERED_EVENT, _on_interior_entered)
+		_bus.subscribe(INTERIOR_EXITED_EVENT, _on_interior_exited)
+		_bus.subscribe(FIRE_LIT_EVENT, _on_fire_lit)
+		_bus.subscribe(FIRE_OUT_EVENT, _on_fire_out)
 
 
 func _exit_tree() -> void:
 	if _bus != null:
 		_bus.unsubscribe(FOOTPRINT_EVENT, _on_footprint)
+		_bus.unsubscribe(INTERIOR_ENTERED_EVENT, _on_interior_entered)
+		_bus.unsubscribe(INTERIOR_EXITED_EVENT, _on_interior_exited)
+		_bus.unsubscribe(FIRE_LIT_EVENT, _on_fire_lit)
+		_bus.unsubscribe(FIRE_OUT_EVENT, _on_fire_out)
+	# A walker who leaves the scene stops being cold. Leaving a MULTIPLY behind on
+	# a stat nobody is applying it to any more is the exact failure the
+	# remove-then-push idiom exists to prevent.
+	if _survival != null and is_instance_valid(_survival):
+		_survival.remove_source(CHILL_SOURCE)
 	_undress()
 
 
@@ -455,6 +665,45 @@ static func loaded_after(carried: float, gain: float) -> float:
 ## the first strides out of a drift burst and the later ones do not.
 static func shed_by_a_step(carried: float, retention: float) -> float:
 	return clampf(carried, 0.0, 1.0) * (1.0 - clampf(retention, 0.0, 1.0))
+
+
+## What a second of snowfall settles onto him.
+##
+## The same saturating fraction-of-what-is-bare rule as `loaded_after`, and
+## deliberately so: one physical claim, read three ways. `rate` is the snowfall
+## rate, 0 clear .. 1 whiteout, so THE SPECIAL CASE THE OWNER ASKED FOR IS NOT
+## WRITTEN ANYWHERE -- at a rate of nothing, nothing settles, and only wading
+## marks him.
+##
+## Framerate-correct rather than `+= rate * delta`: an exponential approach
+## integrated per frame drifts with the frame time, and this effect is judged in
+## captures taken at a fixed 60 while the game runs at whatever it runs at.
+static func settled_after(carried: float, rate: float, gain_per_second: float, delta: float) -> float:
+	var held := clampf(carried, 0.0, 1.0)
+	var pace := maxf(gain_per_second, 0.0) * clampf(rate, 0.0, 1.0)
+	if pace <= 0.0 or delta <= 0.0:
+		return held
+	return clampf(held + (1.0 - held) * (1.0 - exp(-pace * delta)), 0.0, 1.0)
+
+
+## What a second of warmth, or of wind, takes off. Also a fraction of what is
+## left per second, and also integrated properly for the same reason.
+static func decayed_after(carried: float, per_second: float, delta: float) -> float:
+	var held := clampf(carried, 0.0, 1.0)
+	if per_second <= 0.0 or delta <= 0.0:
+		return held
+	return clampf(held * exp(-per_second * delta), 0.0, 1.0)
+
+
+## How much faster he loses heat carrying this much snow.
+##
+## Linear in the load and starting at 1.0, so a dry man is charged nothing and
+## the modifier can be pushed unconditionally rather than being a special case at
+## zero. A MULTIPLY on the drain channel: snow does not remove a fixed number of
+## degrees, it defeats the insulation, so it scales whatever was already taking
+## heat out of him.
+static func chill_multiplier(carried: float, at_full: float) -> float:
+	return 1.0 + (maxf(at_full, 1.0) - 1.0) * clampf(carried, 0.0, 1.0)
 
 
 ## How much of a wind a particle with this much drag picks up, 0 .. 1.
@@ -501,6 +750,35 @@ func carried() -> float:
 	return _load
 
 
+## How much has settled on him out of the sky, 0 clean .. 1 caked.
+func settled() -> float:
+	return _settle
+
+
+## What he is carrying altogether, and the number the survival system is charged
+## for. The larger of the two rather than their sum, because they are loads on
+## DIFFERENT PARTS of him -- a man with white shoulders and white boots is not
+## carrying twice what a man with only white shoulders is, and adding them would
+## let two half-loads cost more than one whole one.
+func total_load() -> float:
+	return maxf(_load, _settle)
+
+
+## Is he somewhere warm enough for it to melt off him? Public because it is the
+## kind of thing a test wants to state directly, and because whoever wires a
+## second warm place can drive it without inventing a second event.
+func is_thawing() -> bool:
+	if _indoors:
+		return true
+	if _fires.is_empty() or _subject == null or not is_instance_valid(_subject):
+		return false
+	var here := _subject.global_position if _subject.is_inside_tree() else _subject.position
+	for spot in _fires.values():
+		if (spot as Vector3).distance_to(here) <= fire_melt_radius_m:
+			return true
+	return false
+
+
 ## What the last footfall knocked off. Zero on a step that loaded instead.
 func last_shed() -> float:
 	return _last_shed
@@ -537,9 +815,10 @@ func crust_top_fraction() -> float:
 ## is the crust's own height in centimetres, which is what makes a deep crossing
 ## and a shallow one comparable across two sequences rather than only by eye.
 func report() -> String:
-	return "legsnow[load=%.2f shed=%.2f steps=%d wade=%.0fcm line=%.0fcm]" % [
-		_load, _last_shed, _steps_since_drift,
+	return "snowload[load=%.2f settle=%.2f shed=%.2f steps=%d wade=%.0fcm line=%.0fcm fall=%.2f%s]" % [
+		_load, _settle, _last_shed, _steps_since_drift,
 		_wade_line_m * 100.0, crust_top_fraction() * _subject_height() * 100.0,
+		_snowfall_rate, " thawing" if is_thawing() else "",
 	]
 
 
@@ -582,6 +861,74 @@ func set_subject(subject: Node3D) -> void:
 	_subject = subject
 
 
+## How hard it is snowing, 0 clear .. 1 whiteout.
+##
+## PUSHED OR PULLED, and both work. `Snowfall` publishes itself under
+## `&"snowfall"` and this reads `snowfall_rate()` off it every frame, which is
+## the same arrangement `SnowAccumulation` uses. This setter exists so a test can
+## make it snow without a weather system, and so anything that wants to override
+## the sky for one walker can -- a man under a porch roof, say.
+##
+## ONCE SET IT STICKS, exactly as `Snowfall.set_snowfall_rate()` sticks, and for
+## the same reason: a setter that the next frame's pull silently overwrites is a
+## setter that does nothing, which is worse than not having one. Found the way
+## these things are always found -- a unit test made it snow and the node
+## obediently ignored it the moment it was in a real scene.
+func set_snowfall_rate(rate: float) -> void:
+	_snowfall_rate = clampf(rate, 0.0, 1.0)
+	_sky_overridden = true
+
+
+func snowfall_rate() -> float:
+	return _snowfall_rate
+
+
+## Injection point for the body's reserves. Null is legal and means the load
+## costs him nothing, which is what a walker in a test scene should experience.
+func set_survival_system(system: Node) -> void:
+	if _survival != null and is_instance_valid(_survival) and _survival != system:
+		_survival.remove_source(CHILL_SOURCE)
+	_survival = system
+	_chill_pushed = 1.0
+
+
+## Warmth, by hand. The events do this on their own; this is for a test, and for
+## whoever builds a warm place that is neither a building nor a fire.
+func set_indoors(inside: bool) -> void:
+	_indoors = inside
+
+
+# --- warmth, off the bus ------------------------------------------------------
+
+## All four handlers take one untyped argument, because EventBus always calls
+## back with exactly one whatever the payload is, and a payload this cannot use
+## must be ignored rather than crash the publisher.
+func _on_interior_entered(_payload) -> void:
+	_indoors = true
+
+
+func _on_interior_exited(_payload) -> void:
+	_indoors = false
+
+
+func _on_fire_lit(payload) -> void:
+	if not (payload is Dictionary):
+		return
+	var spot = (payload as Dictionary).get("position", null)
+	if spot is Vector3:
+		# Keyed by where it is, so a fire that announces itself twice is one fire
+		# and a fire that goes out can be found again by the same key.
+		_fires[spot] = spot
+
+
+func _on_fire_out(payload) -> void:
+	if not (payload is Dictionary):
+		return
+	var spot = (payload as Dictionary).get("position", null)
+	if spot is Vector3:
+		_fires.erase(spot)
+
+
 # --- the footfall -------------------------------------------------------------
 
 ## Untyped, because it arrives off the bus and a payload this cannot use must be
@@ -604,6 +951,15 @@ func _on_footprint(payload) -> void:
 ## One footfall, and the whole of the model. Public so a test can walk a body
 ## through a drift and out of it without a bus, a field or a scene tree.
 func step(spot: Vector3, depth: float, heading: Vector2) -> void:
+	# EVERY footfall shakes the settled half loose, in the drift and out of it, and
+	# that is the whole of why STANDING STILL is what lets it build. It is a
+	# separate retention from the waded crust's because it is a different material:
+	# what has merely landed on a shoulder is loose, and the first hard step takes
+	# most of it, while a crust packed by a leg and refrozen clings.
+	var shaken := shed_by_a_step(_settle, settle_retention)
+	_settle = maxf(_settle - shaken, 0.0)
+	if shaken >= shed_floor:
+		_throw(spot, shaken, heading, _subject_height() * 0.45, _subject_height() * 0.95)
 	var deep := _deep_depth()
 	if depth >= deep:
 		_load = loaded_after(_load, pack_per_step)
@@ -628,7 +984,7 @@ func step(spot: Vector3, depth: float, heading: Vector2) -> void:
 		# next drift gets to leave its own mark rather than inheriting this one's.
 		_wade_line_m = 0.0
 		return
-	_throw(spot, shed, heading)
+	_throw(spot, shed, heading, 0.06, _leg_top_m())
 
 
 ## How far up his legs the snow he is standing in actually reaches, in metres.
@@ -708,28 +1064,33 @@ static func _heading_of(data: Dictionary) -> Vector2:
 ## the thing the whole design rests on -- and it is why the emitters are driven
 ## by `emit_particle()` rather than by a rate. A rate would put the burst on a
 ## clock, and the clock is the one thing this effect must not have.
-func _throw(spot: Vector3, shed: float, heading: Vector2) -> void:
-	if _mist == null or _grains == null:
+## THE BAND IS AN ARGUMENT, because there are two of them. The waded crust throws
+## its shed off the boots and shins -- the band the crust is actually occupying,
+## so a deep crossing throws off the whole shin and a nearly-clean leg off the
+## boot. The settled load throws off the shoulders and the hood. One burst
+## routine, two heights, and the particles land wherever the snow was.
+func _throw(spot: Vector3, shed: float, heading: Vector2, low: float, high: float) -> void:
+	if _mist == null or _grains == null or shed <= 0.0:
 		return
-	var top := _leg_top_m()
 	var thrown := burst_count(grains_per_shed * shed, randf())
 	for _index in range(thrown):
 		_grains.emit_particle(
-			Transform3D(Basis.IDENTITY, _birth_point(spot, top)),
+			Transform3D(Basis.IDENTITY, _birth_point(spot, low, high)),
 			_grain_velocity(heading), Color.WHITE, Color.WHITE, EMIT_PLACED)
 	var puffs := burst_count(mist_per_shed * shed, randf())
 	for _index in range(puffs):
 		_mist.emit_particle(
-			Transform3D(Basis.IDENTITY, _birth_point(spot, top * 0.8)),
+			Transform3D(Basis.IDENTITY, _birth_point(spot, low, lerpf(low, high, 0.8))),
 			_powder_velocity(heading), Color.WHITE, Color.WHITE, EMIT_PLACED)
 
 
-## Somewhere on the boot or the shin. Spread over the whole band rather than
-## emitted from a point, because the snow is not on a point -- it is on a leg.
-func _birth_point(spot: Vector3, top: float) -> Vector3:
+## Somewhere in the band the snow was sitting on. Spread over the whole band
+## rather than emitted from a point, because the snow is not on a point -- it is
+## on a leg, or across a pair of shoulders.
+func _birth_point(spot: Vector3, low: float, high: float) -> Vector3:
 	return spot + Vector3(
 		randf_range(-0.055, 0.055),
-		randf_range(0.06, maxf(top, 0.1)),
+		randf_range(low, maxf(high, low + 0.04)),
 		randf_range(-0.055, 0.055))
 
 
@@ -808,10 +1169,12 @@ func _place(spot: Vector3) -> void:
 
 # --- the crust ----------------------------------------------------------------
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	_resolve()
 	if _subject != null and is_instance_valid(_subject):
 		_dress(_subject)
+	_advance_settled(delta)
+	_charge_for_the_load()
 	var feet := 0.0
 	if _subject != null and is_instance_valid(_subject):
 		feet = _subject.global_position.y
@@ -819,6 +1182,9 @@ func _process(_delta: float) -> void:
 	var line := wade_fraction()
 	for crust in _crusts:
 		crust.set_shader_parameter(&"load", _load)
+		# What fell ON him, which the shader puts on whatever faces the sky. The
+		# waded load beside it is a band; this one has no height at all.
+		crust.set_shader_parameter(&"settle", _settle)
 		# THE DEPTH HE WALKED THROUGH, and the one number that makes this effect
 		# say anything. Written every frame beside the load because the pair is
 		# what the shader mixes: the line is where the crust reaches when he is
@@ -829,6 +1195,65 @@ func _process(_delta: float) -> void:
 		# height would ride up his legs the moment he walked downhill.
 		crust.set_shader_parameter(&"origin_y", feet)
 		crust.set_shader_parameter(&"fill", Vector3(fill.r, fill.g, fill.b))
+
+
+## The half of the model that IS about the passage of time, and the only half.
+##
+## The waded crust is untouched by anything here -- it changes on a footfall and
+## on nothing else, which is the claim `tests/unit/test_snow_load.gd` opens with.
+## What is on a clock is the sky depositing snow at a rate, the wind stripping it
+## off again, and warmth melting it, all three of which are genuinely rates.
+##
+## The one exception is warmth, which takes BOTH: a man who walks into a warm
+## room does not keep the crust on his boots either, and that is the behaviour the
+## owner asked for by name.
+func _advance_settled(delta: float) -> void:
+	if not _sky_overridden and _snowfall != null and is_instance_valid(_snowfall) \
+			and _snowfall.has_method("snowfall_rate"):
+		_snowfall_rate = clampf(float(_snowfall.snowfall_rate()), 0.0, 1.0)
+	if is_thawing():
+		_settle = decayed_after(_settle, melt_per_second, delta)
+		_load = decayed_after(_load, melt_per_second, delta)
+		if _load < shed_floor:
+			_wade_line_m = 0.0
+		return
+	_settle = settled_after(_settle, _snowfall_rate, settle_per_second, delta)
+	# Loose snow does not stay on a shoulder in a gale. The waded crust is packed
+	# and gets none of this.
+	_settle = decayed_after(_settle, settle_wind_strip * _wind.length(), delta)
+
+
+## What the load costs him, pushed at the body's own reserves.
+##
+## REMOVE THEN PUSH, which SurvivalSystem's own header calls mandatory: a second
+## push without the remove leaves two MULTIPLYs on one stack, and a load that
+## ticked up a hundred times would end up multiplying by the hundredth power.
+## `chill_step` is what keeps that pair off the per-frame path.
+##
+## At a clean body the source is removed outright rather than pushed at 1.0. A
+## modifier that does nothing is still a modifier: it shows up in
+## `modifier_count()`, it survives a reload, and "there is no snow on him" should
+## look like nothing rather than like a multiplication by one.
+func _charge_for_the_load() -> void:
+	if _survival == null or not is_instance_valid(_survival):
+		return
+	# CLEAN IS ITS OWN STATE, and `shed_floor` is what says so -- the same number
+	# that already means "there is nothing left worth throwing off a boot". Both
+	# rules here decay exponentially and neither ever reaches zero, so without a
+	# floor the source would never be taken off: the charge would fall to a
+	# thousandth of a per cent and sit there for the rest of the run.
+	var clean := total_load() < shed_floor
+	if clean and _chill_pushed <= 1.0 + 0.0001:
+		return
+	var wanted := 1.0 if clean else chill_multiplier(total_load(), chill_at_full_load)
+	if not clean and absf(wanted - _chill_pushed) < chill_step:
+		return
+	_survival.remove_source(CHILL_SOURCE)
+	_chill_pushed = 1.0
+	if clean:
+		return
+	if _survival.push_modifier(CHILL_TARGET, CHILL_SOURCE, Modifier.Operation.MULTIPLY, wanted):
+		_chill_pushed = wanted
 
 
 ## One property write per mesh, and nothing about the character's own material
@@ -947,11 +1372,17 @@ func crust_material() -> ShaderMaterial:
 	crust.set_shader_parameter(&"boot_line", boot_line)
 	crust.set_shader_parameter(&"wade_line", wade_fraction())
 	crust.set_shader_parameter(&"max_opacity", crust_opacity)
+	crust.set_shader_parameter(&"crust_coverage", crust_coverage)
 	crust.set_shader_parameter(&"patch_scale", patch_scale)
 	crust.set_shader_parameter(&"patch_contrast", patch_contrast)
+	crust.set_shader_parameter(&"patch_warp", patch_warp)
 	crust.set_shader_parameter(&"patch_scatter", patch_scatter)
+	crust.set_shader_parameter(&"settle_coverage", settle_coverage)
+	crust.set_shader_parameter(&"settle_facing", settle_facing)
+	crust.set_shader_parameter(&"settle_falloff", settle_falloff)
 	crust.set_shader_parameter(&"crease_bias", crease_bias)
 	crust.set_shader_parameter(&"load", _load)
+	crust.set_shader_parameter(&"settle", _settle)
 	return crust
 
 
@@ -1195,12 +1626,21 @@ func _apply_wind() -> void:
 func _resolve() -> void:
 	if _subject == null or not is_instance_valid(_subject):
 		_subject = _walker_above()
-	if _snow != null or not is_inside_tree():
+	if not is_inside_tree():
 		return
 	if _registry == null:
 		_registry = get_node_or_null("/root/ServiceRegistry")
 	if _registry != null:
-		_snow = _registry.get_service(&"snow_field") as Node
+		if _snow == null:
+			_snow = _registry.get_service(&"snow_field") as Node
+		# The sky, pulled rather than pushed -- the same arrangement
+		# SnowAccumulation uses on the same service, and for the same reason: the
+		# rate is a fact about the world that several systems read, not a message
+		# anybody sends. `set_snowfall_rate()` overrides it for one walker.
+		if _snowfall == null:
+			_snowfall = _registry.get_service(SNOWFALL_SERVICE) as Node
+	if _survival == null:
+		_survival = get_node_or_null(SURVIVAL_PATH)
 
 
 ## The body this node is a part of: its nearest Node3D ancestor.
