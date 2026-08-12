@@ -20,13 +20,14 @@ notes = "Three cuts, 91-93% of their energy in 800-2000 Hz. Triggered by the `ba
 [sub_resource type="Resource" id="Resource_wal0d"]
 script = ExtResource("1_c35xq")
 call_id = &"dog.growl"
+stream_paths = Array[String](["res://assets/audio/wildlife/dog/dog_growl_01.wav", "res://assets/audio/wildlife/dog/dog_growl_02.wav", "res://assets/audio/wildlife/dog/dog_growl_03.wav", "res://assets/audio/wildlife/dog/dog_growl_04.wav", "res://assets/audio/wildlife/dog/dog_growl_05.wav"])
 takes = Array[StringName]([&"growl"])
 gain_db = -2.0
 pitch_spread = 0.03
 carry_m = 14.0
 unit_size = 3.0
-cooldown_s = 3.2
-notes = "DECLARED AND SILENT. dog_raw.mp3 holds no growl: 60-250 Hz never exceeds 10.5 dB over its own floor. Drop a file in and this row is the only change."
+cooldown_s = 2.8
+notes = "Five passages, 1.93-3.67 s, cut at the dog's own breaths. 48-85% of each one's energy is in 60-250 Hz. Cooldown is under the take's 3.042 s loop so every cycle re-voices."
 
 [sub_resource type="Resource" id="Resource_toq3f"]
 script = ExtResource("1_c35xq")

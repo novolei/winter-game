@@ -19,6 +19,15 @@ extends TestCase
 ##                  a huff and some breath. **No growl** -- see the cutter's
 ##                  header for the band measurement that settles it.
 ##
+##   dog_growl_raw  13.9755 s, 44100 Hz, near-dual-mono (L/R correlate 0.9989),
+##   .mp3           room tone at -41.8 dBFS, 11 ms of head silence and a natural
+##                  decay to digital silence at the tail. FIVE growl passages
+##                  separated by the animal's own breaths, and a growl by
+##                  measurement rather than by filename: 158 of 279 windows put
+##                  60-250 Hz more than 15 dB over its own floor, the
+##                  fundamental runs 145-200 Hz, and the 20-60 Hz rumble band
+##                  that fooled nobody in the first file is empty here.
+##
 ## ---------------------------------------------------------------------------
 ## THE CLAIM THIS FILE EXISTS TO CHECK
 ## ---------------------------------------------------------------------------
@@ -61,6 +70,11 @@ const CrowScript := preload("res://src/entities/wildlife/crow.gd")
 
 const CROW_FOLDER := "res://assets/audio/wildlife/crow"
 const DOG_FOLDER := "res://assets/audio/wildlife/dog"
+
+## Zero crossings per second. Below this is a growl's register, above it is
+## everything else this project has recorded. Measured, not chosen -- see
+## `test_the_growl_slot_holds_something_that_is_actually_low`.
+const GROWL_CROSSINGS := 1450.0
 
 const FRAME := 1.0 / 60.0
 
@@ -137,10 +151,11 @@ func test_the_dog_take_was_cut_into_separate_calls() -> void:
 		assert_true(parts.size() == 3, "%s is not named dog_<call>_NN.wav" % path)
 		if parts.size() == 3:
 			families[parts[1]] = true
-	assert_true(
-		families.has("bark") and families.has("whine") and families.has("whimper"),
-		"the dog folder is missing one of bark/whine/whimper: %s" % [families.keys()]
-	)
+	for wanted in ["bark", "whine", "whimper", "growl"]:
+		assert_true(
+			families.has(wanted),
+			"the dog folder has no %s: %s" % [wanted, families.keys()]
+		)
 
 
 ## Import settings, asserted rather than read off a `.import` file -- the
@@ -169,8 +184,23 @@ func test_no_call_loops_and_every_one_is_mono() -> void:
 		assert_eq(stream.mix_rate, 44100, "%s resampled to %d Hz" % [path, stream.mix_rate])
 
 
-## Long enough to be a call, short enough to be one call. A slice that ran to two
-## seconds would mean the cut had swallowed the silence and the next call with it.
+## Long enough to be a call, short enough to be one call.
+##
+## ---------------------------------------------------------------------------
+## A GROWL IS NOT AN EVENT AND IS NOT BOUNDED LIKE ONE
+## ---------------------------------------------------------------------------
+## A bark, a caw, a whine and a whimper are EVENTS: the animal does one, then
+## stops, and a slice that ran past a second would mean the cut had swallowed the
+## silence and the next call with it. That bound is real and it stays.
+##
+## A growl is a HELD ATTITUDE -- `DogAnimations.LOOPS` marks its take as looping
+## for the same reason -- so the same bound applied to it would be measuring the
+## wrong thing. Its own bound is the take: each slice has to be long enough to
+## carry a 3.042 s animation cycle without a hole in the middle, and short enough
+## that two consecutive cycles are not three dogs growling at once.
+##
+## This test was NOT loosened to let the growls through. It grew a second band,
+## and both are tighter than one band wide enough for both would have been.
 func test_every_call_is_one_call_long() -> void:
 	for path in _wavs_in(CROW_FOLDER) + _wavs_in(DOG_FOLDER):
 		var stream := ResourceLoader.load(path) as AudioStream
@@ -178,10 +208,103 @@ func test_every_call_is_one_call_long() -> void:
 		if stream == null:
 			continue
 		var length := stream.get_length()
+		if path.get_file().begins_with("dog_growl_"):
+			assert_true(
+				length > 1.5 and length < 4.5,
+				"%s is %.3f s -- a growl has to cover a 3.042 s take cycle" % [path, length]
+			)
+			continue
 		assert_true(
 			length > 0.15 and length < 1.0,
 			"%s is %.3f s -- a single call is a fifth of a second to a second" % [path, length]
 		)
+
+
+## A FILE NAMED GROWL IS NOT EVIDENCE.
+##
+## ---------------------------------------------------------------------------
+## WHY THIS GATE EXISTS AT ALL
+## ---------------------------------------------------------------------------
+## The first dog take the owner supplied was believed to hold a growl and did
+## not: measured, its 60-250 Hz band never rose more than 10.5 dB above its own
+## floor, and the low energy it did have sat at 31-47 Hz -- mic rumble, present
+## at the same level in the silent tail. The whole dog voice shipped one commit
+## with `dog.growl` declared and silent on the strength of that measurement.
+##
+## So the growl slot is the one place in this project where "the filename says
+## so" has already been wrong once, and it is the one that carries the warning
+## mechanic. It gets a gate that reads the samples.
+##
+## ---------------------------------------------------------------------------
+## ZERO CROSSINGS, BECAUSE GDSCRIPT HAS NO FFT AND DOES NOT NEED ONE
+## ---------------------------------------------------------------------------
+## A growl is phonation at 145-200 Hz; a bark sits at 800-2000 Hz and a caw
+## higher still. Counting sign changes is the cheap form of that question, and
+## measured across all sixteen calls it separates them completely:
+##
+##   growls          568, 739, 881, 938, 1213 crossings/s
+##   everything else 1670 .. 4032
+##
+## The threshold below sits in the gap with 16% clear on one side and 15% on the
+## other. It needs `compress/mode=0` in the `.import` -- QOA is not readable from
+## GDScript -- which is why these sixteen files are PCM while the engine default
+## is QOA. That is a second reason for a choice already worth making, since the
+## sources are lossy mp3 and QOA would be a second lossy generation.
+func test_the_growl_slot_holds_something_that_is_actually_low() -> void:
+	var growls := 0
+	for path in _wavs_in(CROW_FOLDER) + _wavs_in(DOG_FOLDER):
+		var stream := ResourceLoader.load(path) as AudioStreamWAV
+		assert_not_null(stream, path)
+		if stream == null:
+			continue
+		assert_eq(
+			stream.format, AudioStreamWAV.FORMAT_16_BITS,
+			"%s is not 16-bit PCM, so its samples cannot be read here" % path
+		)
+		if stream.format != AudioStreamWAV.FORMAT_16_BITS:
+			continue
+		var rate := stream.mix_rate
+		var crossings := _crossings_per_second(stream, 1.0)
+		if path.get_file().begins_with("dog_growl_"):
+			growls += 1
+			assert_true(
+				crossings < GROWL_CROSSINGS,
+				"%s crosses zero %.0f times a second; a growl is under %d and a bark is over 2000 -- this is not a growl" % [
+					path, crossings, GROWL_CROSSINGS]
+			)
+		else:
+			assert_true(
+				crossings > GROWL_CROSSINGS,
+				"%s crosses zero only %.0f times a second, which is a growl's register, not a %s's" % [
+					path, crossings, path.get_file().split("_")[1]]
+			)
+		assert_true(rate == 44100, "%s is at %d Hz" % [path, rate])
+	assert_true(growls >= 3, "only %d growl(s) to check" % growls)
+
+
+## Sign changes per second over the first `seconds` of a stream, read straight
+## out of the imported 16-bit PCM. Zero samples are skipped rather than counted
+## as a crossing -- a run of silence would otherwise read as an enormous
+## frequency, which is the opposite of the truth.
+func _crossings_per_second(stream: AudioStreamWAV, seconds: float) -> float:
+	var samples := stream.data.size() / 2
+	var window := mini(samples, int(stream.mix_rate * seconds))
+	if window <= 1:
+		return 0.0
+	var crossings := 0
+	var previous := 0
+	for index in range(window):
+		var value := stream.data.decode_s16(index * 2)
+		var sign := 0
+		if value > 0:
+			sign = 1
+		elif value < 0:
+			sign = -1
+		if sign != 0:
+			if previous != 0 and sign != previous:
+				crossings += 1
+			previous = sign
+	return float(crossings) / (float(window) / float(stream.mix_rate))
 
 
 # --- the crow system, unchanged ----------------------------------------------

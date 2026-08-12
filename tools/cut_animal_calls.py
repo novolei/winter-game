@@ -123,7 +123,26 @@ CUTS = [
 	 "quiet (peak 0.139), 649 Hz, slow rise and fall -- no attack at all"),
 	("dog_raw.mp3", "dog", "dog_whimper_02", 3.970, 4.560, 10.0, 60.0,
 	 "0.59 s, 668 Hz falling, periodicity 0.89 -- the injured-dog sound"),
+
+	# THE GROWLS. Cut at the animal's own breaths -- see the header. The fades
+	# are long because a sustained sound faded in 5 ms clicks and faded out in
+	# 45 ms reads as the audio failing rather than as the dog stopping. At every
+	# boundary below the take is already at 0.4-3% of its peak, so 40 ms in and
+	# 90 ms out is inaudible either way.
+	("dog_growl_raw.mp3", "dog", "dog_growl_01", 0.320, 2.580, 20.0, 90.0,
+	 "from silence to the first breath; F0 rises 83 -> 197 Hz as it winds up"),
+	("dog_growl_raw.mp3", "dog", "dog_growl_02", 2.500, 4.700, 40.0, 90.0,
+	 "breath to breath, the steadiest passage -- F0 145-165 Hz throughout"),
+	("dog_growl_raw.mp3", "dog", "dog_growl_03", 5.020, 6.950, 40.0, 90.0,
+	 "the loudest onset in the take, F0 166-198 Hz"),
+	("dog_growl_raw.mp3", "dog", "dog_growl_04", 6.930, 10.080, 40.0, 90.0,
+	 "3.15 s, closest to the 3.042 s take's own loop length"),
+	("dog_growl_raw.mp3", "dog", "dog_growl_05", 10.050, 13.720, 40.0, 60.0,
+	 "3.67 s ending on the file's own decay to digital silence"),
 ]
+
+## Calls whose energy must sit in 60-250 Hz to be what they say they are.
+GROWL_PREFIX = "dog_growl"
 
 
 def load_mono(path):
@@ -138,6 +157,19 @@ def rms(block):
 	if len(block) == 0:
 		return 0.0
 	return float(np.sqrt((block ** 2).mean()))
+
+
+BANDS = [(20, 60), (60, 250), (250, 800), (800, 2000), (2000, 8000)]
+
+
+def bands(block, rate):
+	"""Share of total energy in each of BANDS. What separates a growl from a
+	bark: a growl lives in 60-250 Hz, a bark in 800-2000."""
+	nfft = 1 << int(np.ceil(np.log2(max(len(block), 2))))
+	spec = np.abs(np.fft.rfft(block * np.hanning(len(block)), nfft)) ** 2
+	freqs = np.fft.rfftfreq(nfft, 1.0 / rate)
+	total = spec.sum() + 1e-20
+	return [float(spec[(freqs >= lo) & (freqs < hi)].sum() / total) for lo, hi in BANDS]
 
 
 def write_wav(path, samples, rate):
@@ -160,8 +192,9 @@ def main():
 		print("%s: %d frames at %d Hz = %.4f s" % (name, len(mono), rate, len(mono) / rate))
 
 	print()
-	print("%-16s %8s %8s %7s %8s %8s %8s" %
-	      ("file", "start", "end", "len", "peak", "rms", "edge rms"))
+	print("%-16s %8s %8s %7s %8s %8s %8s %6s %6s %6s %6s" %
+	      ("file", "start", "end", "len", "peak", "rms", "edge rms",
+	       "60-250", "250-8h", ".8-2k", "zcr"))
 	for source, folder, name, t0, t1, fade_in_ms, fade_out_ms, _why in CUTS:
 		mono, rate = sources[source]
 		a = int(round(t0 * rate))
@@ -183,9 +216,17 @@ def main():
 		os.makedirs(folder_path, exist_ok=True)
 		out_path = os.path.join(folder_path, name + ".wav")
 		write_wav(out_path, slice_, rate)
-		print("%-16s %8.3f %8.3f %7.3f %8.4f %8.5f %8.5f" %
+
+		# Verified per slice rather than per source file: a growl that is a
+		# growl on average could still have a bark cut out of it. `zcr` is the
+		# cheap discriminator a GDScript gate can reproduce without an FFT --
+		# a 150 Hz phonation crosses zero far less often than a 1 kHz bark.
+		shares = bands(slice_, rate)
+		crossings = float((np.diff(np.sign(slice_)) != 0).sum() / (len(slice_) / float(rate)))
+		print("%-16s %8.3f %8.3f %7.3f %8.4f %8.5f %8.5f %6.2f %6.2f %6.2f %6.0f" %
 		      (name, t0, t1, (b - a) / float(rate),
-		       float(np.abs(slice_).max()), rms(slice_), edge))
+		       float(np.abs(slice_).max()), rms(slice_), edge,
+		       shares[1], shares[2], shares[3], crossings))
 
 	print()
 	print("wrote %d file(s) under %s" % (len(CUTS), OUT))

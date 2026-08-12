@@ -120,11 +120,12 @@ func test_no_call_points_at_a_file_that_is_not_there() -> void:
 			)
 
 
-## The finding, as a gate. NOT an assertion that the growl must stay silent --
-## the day one is recorded this keeps passing. What it pins is that the entry
-## exists and that the take is wired to it, so a recorded growl is a file path in
-## `tools/generate_dog_voice.gd` and no `.gd` change anywhere.
-func test_the_growl_is_declared_even_though_the_supplied_take_had_none() -> void:
+## The growl is the whole of the warning mechanic, and it shipped one commit
+## declared-and-silent because the first supplied take had no growl in it. The
+## gate was written then to keep passing on the day one landed; this is that day,
+## so it now also asserts the entry is VOICED. Going back to silent would be a
+## regression, not a state to tolerate.
+func test_the_growl_is_wired_to_its_take_and_has_a_voice() -> void:
 	assert_not_null(_map)
 	if _map == null:
 		return
@@ -137,9 +138,104 @@ func test_the_growl_is_declared_even_though_the_supplied_take_had_none() -> void
 		"dog.growl is not wired to the `growl` take, so the animation would play mute"
 	)
 	assert_true(
-		_map.voiced_count() >= 3,
-		"%d of %d calls have a file behind them" % [_map.voiced_count(), _map.calls.size()]
+		growl.is_voiced(),
+		"dog.growl has no file; a dog growling at something unseen is the best warning the roster has"
 	)
+	assert_eq(
+		_map.voiced_count(), _map.calls.size(),
+		"%d of %d calls still have no file" % [
+			_map.calls.size() - _map.voiced_count(), _map.calls.size()]
+	)
+
+
+## THE DEFECT THAT ARRIVED WITH THE FILE, AND COULD NOT EXIST BEFORE IT.
+##
+## `growl` is a LOOPING take of 3.042 s, so `notice_take()` sees the animation
+## clock go backwards every 3.042 s and asks to speak again. The cooldown was
+## 3.2 s -- written as "just over the loop, so a held growl re-voices once per
+## cycle", which is exactly backwards: 3.042 < 3.2, so every restart was refused
+## and only every SECOND one got through. A held growl would have voiced every
+## 6.084 s from clips averaging 2.64 s, leaving three and a half seconds of
+## silence in the middle of a dog that is visibly still growling.
+##
+## Nothing errors either way. It was invisible while the call had no file.
+func test_a_held_growl_re_voices_every_cycle_of_its_own_take() -> void:
+	var growl := _map.call_named(&"dog.growl")
+	assert_not_null(growl)
+	if growl == null:
+		return
+	var loop := DogAnimations.length_of(DogAnimations.GOLDEN_RETRIEVER, DogAnimations.GROWL)
+	assert_true(loop > 0.0, "the golden retriever has no growl take to measure against")
+	assert_true(
+		growl.cooldown_s < loop,
+		"the growl cooldown is %.2f s against a %.2f s looping take -- every other cycle is refused and the dog falls silent while still growling" % [
+			growl.cooldown_s, loop]
+	)
+	# And not so short that a behaviour calling say() every frame can stutter it.
+	assert_true(
+		growl.cooldown_s > 1.0,
+		"a %.2f s cooldown lets a held growl retrigger over itself" % growl.cooldown_s
+	)
+
+
+## Measured against the real take rather than asserted: play the looping growl,
+## drive it past two loop boundaries, and count what the dog actually said.
+func test_a_looping_take_speaks_again_when_it_comes_round() -> void:
+	var take := Animation.new()
+	take.length = 3.042
+	take.loop_mode = Animation.LOOP_LINEAR
+	var library := AnimationLibrary.new()
+	library.add_animation("growl", take)
+	var player := AnimationPlayer.new()
+	player.name = "AnimationPlayer"
+	player.add_animation_library("dog", library)
+	_animal.add_child(player)
+	_player = player
+
+	_voice.watch(player)
+	player.play("dog/growl")
+	_voice.advance(FRAME)
+	assert_eq(_voice.last_asked(), &"dog.growl", "the growl take did not reach the voice")
+	var first := _voice.spoken_count()
+	assert_true(first > 0, "a growling dog made no sound")
+
+	# Two full cycles of the take, driven the way the tree would drive it.
+	var elapsed := 0.0
+	while elapsed < 3.042 * 2.0 + 0.2:
+		player.advance(FRAME)
+		_voice.advance(FRAME)
+		elapsed += FRAME
+	assert_true(
+		_voice.spoken_count() >= first + 2,
+		"two loops of a %.3f s take produced %d utterance(s) in total; a held growl goes quiet between cycles" % [
+			take.length, _voice.spoken_count()]
+	)
+
+
+## A growl carries a fraction of a bark's distance, and that is the design rather
+## than a mixing accident: a growl heard across the valley is not a warning about
+## a place. `AnimalCall`'s own header makes the same argument.
+func test_the_growl_is_the_shortest_ranged_thing_the_dog_says() -> void:
+	var growl := _map.call_named(&"dog.growl")
+	assert_not_null(growl)
+	if growl == null:
+		return
+	for other in _map.calls:
+		if other == null or other.call_id == &"dog.growl":
+			continue
+		assert_true(
+			growl.carry_m < other.carry_m,
+			"the growl carries %.1f m and %s carries %.1f m" % [
+				growl.carry_m, other.call_id, other.carry_m]
+		)
+		# Not just cut off sooner -- quieter at every distance inside its range,
+		# which is what `unit_size` controls. Cutting off at 14 m while being the
+		# loudest thing within 14 m would still read as a bark.
+		assert_true(
+			growl.unit_size < other.unit_size,
+			"the growl falls off like %s (unit %.1f vs %.1f)" % [
+				other.call_id, growl.unit_size, other.unit_size]
+		)
 
 
 ## Two calls claiming one take is an authoring mistake that would let the order
@@ -200,13 +296,31 @@ func test_the_emitters_are_positional_and_ride_the_animal() -> void:
 
 
 ## A declared-but-silent call reports honestly instead of pretending.
+##
+## Built here rather than borrowed from the shipped map, and that is the point:
+## this test used to reach for `dog.growl`, which was the map's only unvoiced
+## call. When the owner supplied a growl the test went red -- not because the
+## behaviour had broken, but because the test was measuring the DATA when it
+## meant to measure the CODE. A declared-and-silent call is a legal state of
+## `AnimalCall` whether or not any shipped animal is currently in it.
 func test_a_call_with_no_file_makes_no_sound_and_admits_it() -> void:
-	assert_false(_voice.say(&"dog.growl"), "say(dog.growl) claimed a sound with no file behind it")
+	var silent := AnimalCall.new()
+	silent.call_id = &"test.silent"
+	# Typed-array locals annotated (briefing trap 4): an untyped `[]` is rejected
+	# by the typed setter and the VM leaves the function without a word.
+	var no_streams: Array[String] = []
+	silent.stream_paths = no_streams
+	var map := AnimalVoiceMap.new()
+	var calls: Array[AnimalCall] = [silent]
+	map.calls = calls
+	_voice.set_map(map)
+
+	assert_false(_voice.say(&"test.silent"), "a call with no file claimed a sound")
 	assert_true(_voice.voices().is_empty(), "a silent call opened an emitter anyway")
 	assert_eq(_voice.spoken_count(), 0)
 	# It was still a real request, and a caller debugging silence needs to be able
 	# to tell "asked and mute" from "never asked".
-	assert_eq(_voice.last_asked(), &"dog.growl")
+	assert_eq(_voice.last_asked(), &"test.silent")
 
 
 func test_a_call_nobody_declared_is_not_silently_swallowed() -> void:

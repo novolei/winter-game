@@ -22,25 +22,38 @@ extends SceneTree
 ##                  0.59 s, which is the injured-animal sound.
 ##
 ## ---------------------------------------------------------------------------
-## AND NO GROWL. THE ONE THE TASK WANTED MOST IS THE ONE THAT IS NOT THERE
+## THE GROWL, WHICH WAS NOT IN THE FIRST FILE AND IS THE WHOLE OF THE SECOND
 ## ---------------------------------------------------------------------------
-## Measured rather than judged: a growl is a low phonation with its fundamental
-## between 50 and 200 Hz, and across the whole take the 60-250 Hz band never
-## rises more than 10.5 dB above its own noise floor -- against 41.1 dB for the
-## barks in 800-2000 Hz. What low-frequency energy the file holds sits at
-## 31-47 Hz and is present at the SAME level in the silent tail: it is mic and
-## room rumble, not an animal.
+## `dog_raw.mp3` had no growl in it, and this generator shipped `dog.growl`
+## declared-and-silent for one commit on that measurement: across that whole take
+## the 60-250 Hz band never rose more than 10.5 dB above its own noise floor,
+## against 41.1 dB for the barks in 800-2000 Hz, and the low-frequency energy it
+## did hold sat at 31-47 Hz at the SAME level in the silent tail -- mic and room
+## rumble, not an animal. Nothing was substituted, because pitching a whine down
+## an octave gives a moan and a wrong animal is worse than silence.
 ##
-## `dog.growl` is therefore declared here with an empty `stream_paths`. Declared,
-## because the dogs ship a 3.042 s looping growl TAKE (`9b028dd`) and the take is
-## the thing a behaviour will drive -- when a growl lands, it is a file path in
-## this generator and nothing else moves. Silent, because nothing was
-## substituted: the only alternative was pitching a whine down an octave, which
-## gives a moan rather than a growl, and this project has already ruled that a
-## wrong animal is worse than silence (a seagull is not a crow).
+## `dog_growl_raw.mp3` closes it, and was put through the same instrument before
+## a single sample was cut, because a file named growl is not evidence:
 ##
-## The symmetry is worth stating plainly: **the animation has a growl and no
-## whimper; the audio has a whimper and no growl.**
+##                              dog_raw.mp3        dog_growl_raw.mp3
+##   60-250 Hz over own floor    10.5 dB max        22.3 dB max, 11.0 mean
+##   windows over 15 dB there    none               158 of 279
+##   fundamental (autocorr)      500-900 Hz         41-251, mostly 145-200 Hz
+##   60-250 share of energy      never over 0.13    0.15-0.88, typically 0.6-0.85
+##   20-60 Hz share              the rumble         0.00-0.09, i.e. absent
+##
+## That last row is the one that matters most: the low energy here is NOT the
+## 31-47 Hz rumble that fooled nobody last time. It is phonation at 145-200 Hz
+## with the rumble band empty. This is a dog.
+##
+## The five files are cut at the animal's own breaths and each is verified
+## individually -- 48-85% of every slice's energy is in 60-250 Hz, against 0.00
+## to 0.01 for every bark, whine, whimper and caw in the project.
+## `tests/unit/test_wildlife_calls.gd` re-checks it on every run by
+## zero-crossing rate, so the growl slot cannot quietly come to hold a bark.
+##
+## What remains unpaired: **the animation has no whimper take**, and the audio
+## now answers everything the animation can do.
 ##
 ## ---------------------------------------------------------------------------
 ## HOW FAR EACH ONE CARRIES, WHICH IS THE DESIGN AND NOT A DEFAULT
@@ -101,22 +114,42 @@ func _initialize() -> void:
 
 	var growl = CallScript.new()
 	growl.call_id = &"dog.growl"
-	# EMPTY, and that is the finding. See the header.
-	var growl_streams: Array[String] = []
+	# Five passages cut at the animal's own breaths. It shipped empty for one
+	# commit and the header records why; `dog_growl_raw.mp3` closed it.
+	var growl_streams: Array[String] = [
+		"%s/dog_growl_01.wav" % CALL_DIR,
+		"%s/dog_growl_02.wav" % CALL_DIR,
+		"%s/dog_growl_03.wav" % CALL_DIR,
+		"%s/dog_growl_04.wav" % CALL_DIR,
+		"%s/dog_growl_05.wav" % CALL_DIR,
+	]
 	growl.stream_paths = growl_streams
 	var growl_takes: Array[StringName] = [&"growl"]
 	growl.takes = growl_takes
 	growl.gain_db = -2.0
+	# Small, and smaller than the bark's 0.07 deliberately: a growl's pitch IS
+	# the animal's size, and one that wandered would read as a different dog
+	# each cycle. +/-3% is about half a semitone.
 	growl.pitch_spread = 0.03
 	growl.carry_m = 14.0
 	growl.unit_size = 3.0
-	# One continuous sound, not a burst. The take loops at 3.042 s and the
-	# cooldown is set just over it so a held growl re-voices once per cycle
-	# rather than once per frame.
+	# One utterance per cycle, not a burst.
 	growl.repeat_min = 1
 	growl.repeat_max = 1
-	growl.cooldown_s = 3.2
-	growl.notes = "DECLARED AND SILENT. dog_raw.mp3 holds no growl: 60-250 Hz never exceeds 10.5 dB over its own floor. Drop a file in and this row is the only change."
+	# UNDER the take's 3.042 s loop, and that is the whole of it.
+	#
+	# This was 3.2 s while the call was silent, chosen as "just over the loop so
+	# a held growl re-voices once per cycle". It does the opposite. `growl` is a
+	# LOOPING take, so `AnimalVoice.notice_take()` sees the animation clock go
+	# backwards every 3.042 s -- and 3.042 < 3.2, so every one of those restarts
+	# was refused and only every SECOND one got through. A held growl would have
+	# voiced every 6.084 s with clips averaging 2.64 s, leaving three and a half
+	# seconds of silence in the middle of a dog that is visibly still growling.
+	#
+	# Nothing would have errored. The defect was invisible while there was no
+	# file to play, and arrived the moment there was one.
+	growl.cooldown_s = 2.8
+	growl.notes = "Five passages, 1.93-3.67 s, cut at the dog's own breaths. 48-85% of each one's energy is in 60-250 Hz. Cooldown is under the take's 3.042 s loop so every cycle re-voices."
 
 	var whine = CallScript.new()
 	whine.call_id = &"dog.whine"
