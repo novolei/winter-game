@@ -145,10 +145,99 @@ func test_the_design_constraints_survive_tuning() -> void:
 	assert_true(map.silence_fade_seconds >= 1.0 and map.silence_fade_seconds <= map.crossfade_seconds,
 		"the drop to silence should be quicker than a crossfade but still a fade; got %f"
 		% map.silence_fade_seconds)
-	assert_true(map.min_gap_seconds >= 60.0,
-		"long silences between cues are the design; min gap is %f s" % map.min_gap_seconds)
-	assert_true(map.max_gap_seconds > map.min_gap_seconds,
+	assert_true(map.gap_min_seconds() >= 60.0,
+		"long silences between cues are the design; min gap is %f s" % map.gap_min_seconds())
+	assert_true(map.gap_max_seconds() > map.gap_min_seconds(),
 		"the gap must be a range, or every cue lands on a metronome")
+
+func test_every_cue_carries_the_length_the_file_actually_is() -> void:
+	## duration_seconds is a COPY of a fact that lives in the mp3, kept in the
+	## map so that booting the game does not have to open nine files to find
+	## out how long they are. A copy can go stale, and this one is load-bearing:
+	## the silence between cues is derived from it, so a wrong number here moves
+	## the density of the whole score without failing anything else.
+	##
+	## This is the only place the copy and the original are ever compared.
+	var map := _map()
+	assert_not_null(map, "the map must load")
+	if map == null:
+		return
+	for cue in map.cues:
+		var stream := ResourceLoader.load(cue.stream_path) as AudioStream
+		assert_not_null(stream, "cue %s did not load as an AudioStream" % cue.cue_id)
+		if stream == null:
+			continue
+		assert_true(cue.duration_seconds > 0.0,
+			"cue %s ships with no measured length, and the gap is derived from it"
+			% cue.cue_id)
+		assert_almost_eq(cue.duration_seconds, stream.get_length(), 0.05,
+			"cue %s says %f s; the file is %f s. Re-run tools/generate_music_map.gd."
+			% [cue.cue_id, cue.duration_seconds, stream.get_length()])
+
+func test_a_situation_beginning_always_brings_music_with_it() -> void:
+	## entry_chance below 1.0 was the second of two stacked randomisers -- a
+	## long gap AND a coin flip -- and the two together meant a nightfall could
+	## pass in silence for no reason at all. That is the one thing this system
+	## cannot afford: it is built so that music LEAVING says a threat is near
+	## (GDD section 9), and absence cannot carry a signal if it also happens by
+	## accident.
+	##
+	## Sparseness is the gap's job, and the gap alone. Pinned rather than
+	## bounded: anything below 1.0 here is the defect coming back.
+	var map := _map()
+	assert_not_null(map, "the map must load")
+	if map == null:
+		return
+	assert_almost_eq(map.entry_chance, 1.0, 0.0001,
+		("entry_chance is %f; below 1.0 music fails to arrive for no reason,"
+		+ " and absence that happens for no reason cannot carry a signal")
+		% map.entry_chance)
+
+func test_the_gap_is_derived_from_the_tracks_and_not_chosen() -> void:
+	## The gap is not a constant. It is what a density and the measured track
+	## lengths imply, and it has to be read that way or it drifts the moment a
+	## track is re-cut: a track that becomes a minute shorter needs a shorter
+	## gap to keep the same density, and nobody would think to come here.
+	var map := _map()
+	assert_not_null(map, "the map must load")
+	if map == null:
+		return
+	var mean := map.mean_cue_duration_seconds()
+	assert_true(mean > 0.0, "the derivation needs at least one measured track length")
+	var share := map.gap_cycle_music_share
+	# Bounded, not pinned. This is a cycle share, and what a whole RUN measures
+	# is well above it -- 0.45 here measured 59.3% of a run with music across
+	# 200 simulated runs. The band is where that run-level figure stays inside
+	# the "roughly half" the owner asked for; tools/measure_music_density.gd is
+	# what settles it, and moving this without re-running that tool is guessing.
+	assert_true(share >= 0.30 and share <= 0.55,
+		"a cycle share of %f puts the run-level share outside roughly half;"
+		% share
+		+ " re-run tools/measure_music_density.gd before moving it")
+	var expected := mean * (1.0 - share) / share
+	assert_almost_eq((map.gap_min_seconds() + map.gap_max_seconds()) * 0.5, expected, 0.01,
+		"the mean gap should be exactly what %f s of track at a %f share implies"
+		% [mean, share])
+
+func test_no_ordinary_gap_can_outlast_the_quiet_that_follows_a_threat() -> void:
+	## THE acceptance test for making music more frequent. GDD section 9 builds
+	## its fear out of the music going away, which only works if a long silence
+	## cannot happen by chance.
+	##
+	## A threat's silence is a full gap PLUS post_silence_hold_seconds, so the
+	## random spread of an ordinary gap must not be wider than that hold -- or
+	## the noise in an ordinary gap swallows the signal that says "something is
+	## out there". This is a relationship between two numbers, not a bound on
+	## one, so it is asserted against the hold rather than against a constant.
+	var map := _map()
+	assert_not_null(map, "the map must load")
+	if map == null:
+		return
+	var spread := map.gap_max_seconds() - map.gap_min_seconds()
+	assert_true(spread <= map.post_silence_hold_seconds,
+		"an ordinary gap varies by %f s but the quiet after a threat only adds %f s;"
+		% [spread, map.post_silence_hold_seconds]
+		+ " a silence long enough to mean danger would be reachable by luck")
 
 func test_no_track_is_imported_as_a_loop() -> void:
 	## A looping stream never reaches its end, the director never hears it

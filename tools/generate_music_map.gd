@@ -13,6 +13,11 @@ extends SceneTree
 ## (winnter1.mp3, -26.1 dBFS RMS) and every ending down to -20.0 dBFS RMS.
 ## Nothing is ever boosted. The endings sit 6 dB above the beds because an
 ## ending is the one moment the music is allowed to speak.
+##
+## duration_seconds is measured here too, off the engine's own get_length(),
+## because the silence between cues is derived from it. There is no authored
+## gap in this file any more -- only gap_cycle_music_share, and a window taken
+## from post_silence_hold_seconds. See MusicMap.gap_mean_seconds.
 
 const DIR := "res://data/audio"
 const PATH := "res://data/audio/music_map.tres"
@@ -122,6 +127,18 @@ func _initialize() -> void:
 		var cue: MusicCue = CueScript.new()
 		cue.cue_id = row[0]
 		cue.stream_path = path
+		# MEASURED, never typed in. The gap between cues is derived from these
+		# lengths, so a number transcribed from a filename or a sleeve note
+		# would move the density of the whole score. Print what the engine
+		# actually returned rather than what this script expected -- the habit
+		# briefing trap 9 ends on.
+		var stream := ResourceLoader.load(path) as AudioStream
+		if stream == null:
+			print("generate_music_map: %s did not load as an AudioStream" % path)
+			failed = true
+			continue
+		cue.duration_seconds = stream.get_length()
+		print("generate_music_map: %-14s %8.3f s" % [String(row[0]), cue.duration_seconds])
 		var situations: Array[StringName] = []
 		for s in row[5]:
 			situations.append(s)
@@ -142,15 +159,40 @@ func _initialize() -> void:
 	map.base_volume_db = -8.0
 	map.crossfade_seconds = 6.0
 	map.silence_fade_seconds = 3.0
-	map.min_gap_seconds = 150.0
-	map.max_gap_seconds = 420.0
 	map.entry_gap_min_seconds = 5.0
 	map.entry_gap_max_seconds = 40.0
-	map.entry_chance = 0.5
+	map.entry_chance = 1.0
 	map.post_silence_hold_seconds = 45.0
 	map.dawn_seconds = 90.0
 	map.dusk_seconds = 75.0
 	map.bus = &"Master"
+
+	# Density: one number, and the gap follows from it and the lengths above.
+	#
+	# 0.45, not 0.5, and MEASURED rather than reasoned. A whole run is not the
+	# cycle this governs -- every dawn and nightfall brings a track in on top of
+	# it -- so the run-level share runs well above this number, and how far above
+	# depends on how much of a run a threat takes away. Across 200 simulated
+	# seven-day runs (tools/measure_music_density.gd):
+	#
+	#   cycle 0.35 -> 51.4% of a run with music alone, 34.8% with threats
+	#   cycle 0.45 -> 59.3%                            43.6%
+	#   cycle 0.50 -> 63.7%                            47.8%
+	#
+	# 0.45 is the only setting that is "roughly half" under BOTH readings, which
+	# matters because the threat system does not exist yet: today a player hears
+	# the first column and after Wave 5 he hears something near the second.
+	map.gap_cycle_music_share = 0.45
+
+	# NOT a constant, and not chosen. The spread of an ordinary gap has to stay
+	# inside the extra quiet that marks a threat, or an ordinary gap can be as
+	# long as a threat's silence and the player cannot read either. Written as
+	# the relationship so that moving the hold moves this with it.
+	map.gap_window_seconds = map.post_silence_hold_seconds
+
+	print("generate_music_map: mean track %.3f s -> gap %.3f-%.3f s at a %.0f%% share"
+		% [map.mean_cue_duration_seconds(), map.gap_min_seconds(), map.gap_max_seconds(),
+			map.gap_cycle_music_share * 100.0])
 
 	var error := ResourceSaver.save(map, PATH)
 	if error != OK:

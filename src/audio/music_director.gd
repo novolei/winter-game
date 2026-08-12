@@ -73,6 +73,19 @@ var _situation: StringName = SITUATION_NONE
 var _gap_remaining := 0.0
 var _gap_armed := false
 
+## True while the running gap carries post_silence_hold_seconds on top -- the
+## quiet that follows a threat. Ordinary gaps get re-rolled by a situation
+## beginning; this one must not be, and without somewhere to write that down
+## there is no way to tell the two apart when the re-roll comes.
+##
+## Found by measurement, not by reading: with entry_chance at 1.0 a dawn or a
+## nightfall lands inside a threat's quiet often enough that 44.6% of them were
+## being cut short, some to under 80 s -- shorter than an ordinary gap. The
+## behaviour that silence after a threat outlasts everything else is the point
+## of this system (GDD section 9), and it was being undone by the mechanism
+## that exists to make dawn reliable.
+var _gap_holds_after_threat := false
+
 var _volume_db := 0.0
 var _volume_overridden := false
 
@@ -187,9 +200,11 @@ func notify_cue_finished(cue_id: StringName) -> void:
 		return
 	if _is_silent_situation(_situation) or _map.is_oneshot_situation(_situation):
 		_gap_armed = false
+		_gap_holds_after_threat = false
 		return
 	_gap_remaining = _selector.next_gap_seconds(_map)
 	_gap_armed = true
+	_gap_holds_after_threat = false
 
 # --- the loop -------------------------------------------------------------
 
@@ -230,6 +245,7 @@ func _sync_situation(is_entry: bool) -> void:
 	if _is_silent_situation(next):
 		_mixer.fade_to_silence(_map.silence_fade_seconds)
 		_gap_armed = false
+		_gap_holds_after_threat = false
 		return
 
 	if _map.is_oneshot_situation(next):
@@ -248,20 +264,41 @@ func _sync_situation(is_entry: bool) -> void:
 		if not _gap_armed:
 			_gap_remaining = _selector.next_gap_seconds(_map)
 			_gap_armed = true
+			_gap_holds_after_threat = false
 		return
 
 	if previous != SITUATION_NONE and _map.is_silent_situation(previous):
 		# Coming out of danger. A full gap plus a hold on top: snapping back to
 		# music the moment the bear wanders off would undo the scene.
 		_gap_remaining = _selector.next_gap_seconds(_map) + _map.post_silence_hold_seconds
-	elif _selector.roll_entry(_map):
-		_gap_remaining = _selector.next_entry_gap_seconds(_map)
-	else:
-		_gap_remaining = _selector.next_gap_seconds(_map)
+		_gap_holds_after_threat = true
+		_gap_armed = true
+		return
+
+	if _gap_armed and _gap_holds_after_threat:
+		# That quiet is still running, and a dawn arriving in the middle of it
+		# does not end it. What follows exists so that a situation beginning
+		# gets music soon; letting it fire here would sound the all-clear while
+		# the bear is still fifty metres off, and would leave the one silence in
+		# this game that carries information looking like the ones that do not.
+		return
+
+	var next_wait := _selector.next_entry_gap_seconds(_map) if _selector.roll_entry(_map) \
+		else _selector.next_gap_seconds(_map)
+	# A SITUATION BEGINNING BRINGS MUSIC FORWARD; IT NEVER POSTPONES IT. Without
+	# the minf, a nightfall landing near the end of a gap throws away the few
+	# seconds left and starts a fresh one -- so an ordinary silence could run to
+	# gap_max PLUS entry_gap_max, measured at 213.8 s against a 182.7 s ceiling.
+	# Two things break there: the gap the density derivation drew is not the gap
+	# served, and an ordinary silence reaches lengths that are supposed to mean
+	# a threat.
+	_gap_remaining = minf(_gap_remaining, next_wait) if _gap_armed else next_wait
+	_gap_holds_after_threat = false
 	_gap_armed = true
 
 func _start_cue() -> void:
 	_gap_armed = false
+	_gap_holds_after_threat = false
 	var cue := _selector.pick(_map, _situation)
 	if cue == null:
 		_mixer.fade_to_silence(_map.silence_fade_seconds)

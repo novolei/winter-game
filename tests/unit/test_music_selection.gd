@@ -15,6 +15,8 @@ const CueScript := preload("res://src/definitions/music_cue.gd")
 
 const SEED := 20260812
 
+const TRACK_SECONDS := 200.0
+
 func _cue(id: StringName, situations: Array, weight := 1.0) -> MusicCue:
 	# Annotated, not `var cue =`: an untyped local emits an untyped Array for
 	# the typed `situations` property, which the setter rejects at runtime and
@@ -22,6 +24,7 @@ func _cue(id: StringName, situations: Array, weight := 1.0) -> MusicCue:
 	var cue: MusicCue = CueScript.new()
 	cue.cue_id = id
 	cue.weight = weight
+	cue.duration_seconds = TRACK_SECONDS
 	var list: Array[StringName] = []
 	for s in situations:
 		list.append(s)
@@ -35,8 +38,11 @@ func _map(cues: Array, penalty := 0.2) -> MusicMap:
 		list.append(c)
 	map.cues = list
 	map.repeat_penalty = penalty
-	map.min_gap_seconds = 150.0
-	map.max_gap_seconds = 420.0
+	# The gap is derived, so a test that wants a known gap states the two
+	# things it comes from: how long a track runs and what share of the time
+	# music should sound. 200 s of track at a half share is a 200 s gap.
+	map.gap_cycle_music_share = 0.5
+	map.gap_window_seconds = 90.0
 	map.entry_gap_min_seconds = 5.0
 	map.entry_gap_max_seconds = 40.0
 	return map
@@ -167,13 +173,57 @@ func test_each_situation_remembers_its_own_last_track() -> void:
 		return
 	assert_eq(cue.cue_id, &"shared", "dusk's only cue must remain drawable")
 
-func test_the_gap_between_cues_falls_inside_the_authored_range() -> void:
+func test_the_gap_between_cues_falls_inside_the_derived_range() -> void:
 	var map := _two_day_cues()
 	var selector: MusicSelector = SelectorScript.new(SEED)
 	for i in 100:
 		var gap := selector.next_gap_seconds(map)
-		assert_true(gap >= map.min_gap_seconds and gap <= map.max_gap_seconds,
-			"gap %f is outside [%f, %f]" % [gap, map.min_gap_seconds, map.max_gap_seconds])
+		assert_true(gap >= map.gap_min_seconds() and gap <= map.gap_max_seconds(),
+			"gap %f is outside [%f, %f]" % [gap, map.gap_min_seconds(), map.gap_max_seconds()])
+
+func test_the_gap_is_what_the_track_lengths_and_the_target_share_imply() -> void:
+	## The gap is not stored anywhere. It is L * (1 - s) / s, and this is the
+	## test that would notice if it stopped being that -- including the case
+	## the whole change is about: a track re-cut shorter must shorten the gap
+	## with it, or the density quietly moves and nobody thinks to look here.
+	var map := _two_day_cues()
+	assert_almost_eq(map.mean_cue_duration_seconds(), TRACK_SECONDS, 0.0001,
+		"three equal-weight cues of the same length average to that length")
+	assert_almost_eq(map.gap_mean_seconds(), TRACK_SECONDS, 0.0001,
+		"at a half share the gap is exactly as long as the track before it")
+
+	map.gap_cycle_music_share = 0.25
+	assert_almost_eq(map.gap_mean_seconds(), TRACK_SECONDS * 3.0, 0.0001,
+		"a quarter share is one part music to three parts quiet")
+
+	map.gap_cycle_music_share = 0.5
+	for cue in map.cues:
+		cue.duration_seconds = TRACK_SECONDS * 0.5
+	assert_almost_eq(map.gap_mean_seconds(), TRACK_SECONDS * 0.5, 0.0001,
+		"halving the tracks must halve the gap, or the density moved on its own")
+
+func test_a_map_whose_lengths_were_never_measured_errs_towards_silence() -> void:
+	## A derivation that fell through to zero would produce wall-to-wall music,
+	## which is the loudest possible way to fail. Better a gap that is too long
+	## than a game that never stops playing.
+	var map := _map([_cue(&"day_a", [&"day"])])
+	for cue in map.cues:
+		cue.duration_seconds = 0.0
+	assert_almost_eq(map.mean_cue_duration_seconds(), MapScript.UNMEASURED_DURATION_SECONDS,
+		0.0001, "an unmeasured map must not report a zero-length track")
+	assert_true(map.gap_min_seconds() > 60.0,
+		"and must not collapse the gap; got %f s" % map.gap_min_seconds())
+
+func test_an_ending_does_not_drag_the_gap_around() -> void:
+	## Endings are oneshots: they never precede a gap, so their length has no
+	## business setting one. mm.mp3 is 3:58 against night beds of 2:04, so
+	## including it would stretch every gap in the game by a third.
+	var map := _map([_cue(&"night_a", [&"night"]), _cue(&"finale", [&"ending_unseen"])])
+	var oneshot: Array[StringName] = [&"ending_unseen"]
+	map.oneshot_situations = oneshot
+	map.cues[1].duration_seconds = TRACK_SECONDS * 4.0
+	assert_almost_eq(map.mean_cue_duration_seconds(), TRACK_SECONDS, 0.0001,
+		"only the tracks that play during the run may set the gap")
 
 func test_the_entry_gap_falls_inside_its_own_shorter_range() -> void:
 	var map := _two_day_cues()

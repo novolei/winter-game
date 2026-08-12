@@ -16,6 +16,20 @@ extends Resource
 
 @export_file("*.mp3", "*.ogg", "*.wav") var stream_path: String = ""
 
+## How long the track runs, in seconds, measured off the file by
+## tools/generate_music_map.gd rather than typed in from the sleeve notes.
+##
+## It is stored here for the same reason `stream_path` is a path: opening nine
+## files at boot to find out how long they are would undo the lazy loading this
+## class exists to allow. That makes it a COPY of a fact that lives in the mp3,
+## so test_music_map_data.gd compares the two rather than trusting this one.
+##
+## It is load-bearing, not documentation. MusicMap derives the silence between
+## cues from the mean of these, so a track re-cut a minute shorter changes how
+## often music is heard -- and a stale number here would leave the gap sized
+## for a track that no longer exists.
+@export var duration_seconds := 0.0
+
 ## Every situation this cue may be drawn for. A cue can serve several.
 @export var situations: Array[StringName] = []
 

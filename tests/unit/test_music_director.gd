@@ -41,14 +41,18 @@ func _cue(id: StringName, situations: Array) -> MusicCue:
 	var cue: MusicCue = CueScript.new()
 	cue.cue_id = id
 	cue.stream_path = ""
+	# The gap is derived from the track length, so every cue here is GAP long
+	# and the map asks for a half share: a GAP-second track at a half share is
+	# followed by a GAP-second gap.
+	cue.duration_seconds = GAP
 	var list: Array[StringName] = []
 	for s in situations:
 		list.append(s)
 	cue.situations = list
 	return cue
 
-## Gaps are pinned (min == max, entry_chance 1.0) so a test can say exactly
-## when a cue is due. The shipped map randomises all of them.
+## Gaps are pinned (a zero-width window, entry_chance 1.0) so a test can say
+## exactly when a cue is due. The shipped map randomises all of them.
 func _map() -> MusicMap:
 	var map: MusicMap = MapScript.new()
 	var cues: Array[MusicCue] = [
@@ -66,8 +70,8 @@ func _map() -> MusicMap:
 	map.base_volume_db = -8.0
 	map.crossfade_seconds = CROSSFADE
 	map.silence_fade_seconds = SILENCE_FADE
-	map.min_gap_seconds = GAP
-	map.max_gap_seconds = GAP
+	map.gap_cycle_music_share = 0.5
+	map.gap_window_seconds = 0.0
 	map.entry_gap_min_seconds = ENTRY_GAP
 	map.entry_gap_max_seconds = ENTRY_GAP
 	map.entry_chance = 1.0
@@ -237,6 +241,51 @@ func test_the_quiet_outlasts_the_threat() -> void:
 	assert_true(director.is_silent(), "the hold is on top of a full gap")
 	director.advance(HOLD)
 	assert_false(director.is_silent(), "and only then does the score come back")
+
+func test_a_nightfall_in_the_middle_of_that_quiet_does_not_end_it() -> void:
+	## Found by simulating whole runs, not by reading: a dawn or a nightfall
+	## landing inside the quiet that follows a threat used to replace it with
+	## the short entry gap, and 44.6% of threat silences were being cut short
+	## that way -- some to under 80 s, which is shorter than an ordinary gap.
+	##
+	## The entry gap exists so that a situation beginning gets music soon. The
+	## one silence in this game that carries information is not a situation
+	## beginning, and it is not for the clock to sound the all-clear on it.
+	var director = _playing_music()
+	director.set_danger(true)
+	director.advance(SILENCE_FADE)
+	director.set_danger(false)
+	# GAP + HOLD is now armed. Nightfall arrives halfway through it.
+	director.advance(GAP * 0.5)
+	director.on_night_started(1)
+	assert_eq(director.current_situation(), &"dusk", "the hour still moves on")
+	director.advance(ENTRY_GAP + 1.0)
+	assert_true(director.is_silent(),
+		"the entry gap must not fire into a threat's quiet")
+	director.advance(GAP + HOLD - GAP * 0.5 - ENTRY_GAP - 1.0 - 1.0)
+	assert_true(director.is_silent(), "which runs its own full length regardless")
+	director.advance(2.0)
+	assert_false(director.is_silent(), "and only then does music come back")
+
+func test_a_situation_beginning_never_makes_the_wait_longer() -> void:
+	## The other half of the same finding. A nightfall landing near the END of
+	## an ordinary gap used to throw away the seconds still owed and start a
+	## fresh 5-40 s entry gap, which POSTPONES music rather than bringing it
+	## forward -- the opposite of what that branch is for.
+	##
+	## It also lets an ordinary silence run to gap_max PLUS entry_gap_max, past
+	## the longest gap the density derivation ever draws, which is the length a
+	## threat's silence has to stay clear of to remain readable.
+	var director = _playing_music()
+	director.notify_cue_finished(director.active_cue_id())
+	assert_true(director.is_silent(), "the track ended, so a full gap is running")
+	director.advance(GAP - 2.0)
+	assert_true(director.is_silent(), "two seconds of it left")
+	director.on_night_started(1)
+	director.advance(2.5)
+	assert_false(director.is_silent(),
+		"nightfall may bring music forward, never push it back: two seconds were"
+		+ " owed and the entry gap is %f s" % ENTRY_GAP)
 
 # --- endings ---------------------------------------------------------------
 

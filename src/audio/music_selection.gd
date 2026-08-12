@@ -65,10 +65,14 @@ func pick(map: MusicMap, situation: StringName) -> MusicCue:
 	return chosen
 
 ## Silence after a track ends before the next one may begin. The long one.
+##
+## The bounds are asked of the map rather than read off it: they are derived
+## from the target share of time-with-music and the measured track lengths, not
+## authored, so there is no pair of numbers here to read.
 func next_gap_seconds(map: MusicMap) -> float:
 	if map == null:
 		return 0.0
-	return _rng.randf_range(map.min_gap_seconds, map.max_gap_seconds)
+	return _rng.randf_range(map.gap_min_seconds(), map.gap_max_seconds())
 
 ## Silence after a situation begins before its cue may begin. The short one,
 ## so that dawn occasionally gets dawn music instead of having ended first.
