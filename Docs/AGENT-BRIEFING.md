@@ -476,3 +476,20 @@ It was found by running the real scene and **printing what the node had actually
 - **A duck-typed sweep makes method names shared vocabulary across the whole project.** Before declaring a setter on a `Node`, grep for `has_method("<name>")` — anything that finds you will drive you.
 
 The general shape, and it is the third instance in this file: **a system that discovers collaborators by method name has an API surface much larger than its class.** Traps 3 and 13 are the same lesson from other directions — a mechanism you did not know was running silently did half your work for you, wrongly.
+
+> **这是同一个缺陷的第二次发作，而且第一次已经建过一道门禁。**
+>
+> 第一次在天气事件那轮：`WindSystem` 的树扫描找到一个名叫 `set_wind()` 的注入器、
+> 把 `Vector3` 推了进去，**在真实场景第一帧就把系统弄坏，而 37 个单元测试全绿**。
+> 那次的应对是建立系统图集成测试，并且用 `WIND_CONSUMERS` 之类的常量**声明谁有资格
+> 回答每一套鸭子类型词汇**，让下一个误占的名字会变红并指名文件。
+>
+> 环境音这轮又中了一次——**同一个方法名、同样的静默、同样的全绿**。
+>
+> 所以结论不是"再记一条陷阱"，而是：**按方法名扫描全树是一个有敌意的模式。**它让
+> "叫什么名字"变成了全局命名空间里的抢占，而任何人都可能无意中抢到。文档挡不住
+> 第三次——挡得住的是让 `WindSystem` 只驱动**显式注册**的消费者，而不是驱动
+> 所有恰好长得像的节点。
+>
+> **这件事已排入队列（见 `Docs/HANDOFF.md` 第 5 节）。**在它被修掉之前，任何新增的
+> `set_wind` / `set_wind_strength` 方法都要先想清楚：你是想被风驱动，还是想自己注入风。
