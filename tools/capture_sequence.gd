@@ -31,6 +31,9 @@ extends Node
 ##   --open-door         opens the farmhouse door at the start, so a walk can
 ##                       cross the threshold without an interact keypress
 ##   --preset <id>       force one of the Art Bible looks, held for the run
+##   --ortho <m>         frame height in metres, as tools/capture_frame.gd's own
+##                       --ortho: the gameplay framing is what a feature is
+##                       judged at, and a close-up is what it is diagnosed at
 ##   --arrive <m>        how near a waypoint counts as reached (default 0.45)
 
 const ARRIVE := 0.45
@@ -41,6 +44,7 @@ var _every := 6
 var _settle := 12
 var _arrive := ARRIVE
 var _preset := ""
+var _ortho := 0.0
 var _open_door := false
 var _waypoints: Array[Vector2] = []
 var _leg := 0
@@ -60,6 +64,7 @@ func _ready() -> void:
 	_settle = int(_arg(args, "--settle", "12"))
 	_arrive = float(_arg(args, "--arrive", str(ARRIVE)))
 	_preset = _arg(args, "--preset", "")
+	_ortho = float(_arg(args, "--ortho", "0"))
 	_open_door = _arg(args, "--open-door", "") != "" or args.has("--open-door")
 	for pair in _arg(args, "--waypoints", "").split(";", false):
 		var parts := pair.split(",")
@@ -122,6 +127,14 @@ func _at_start() -> void:
 		if door != null and door.has_method("open"):
 			door.open()
 	var rig := get_node_or_null("Main/CameraRig")
+	# The frame, if this run asked for one. Written through the rig's own
+	# apply_framed_size() rather than onto the camera behind its back: the rig
+	# holds where the frame currently IS as its own state, and a size poked
+	# straight onto the Camera3D would be undone the moment anything retargeted.
+	if _ortho > 0.0 and rig != null:
+		rig.orthographic_size = _ortho
+		if rig.has_method("apply_framed_size"):
+			rig.apply_framed_size(_ortho)
 	if rig != null and rig.has_method("snap_to_target"):
 		rig.snap_to_target()
 
@@ -202,6 +215,11 @@ func _state(index: int) -> String:
 	var fader := get_node_or_null("/root/OccluderFader")
 	if fader != null and fader.has_method("report"):
 		line += "  " + String(fader.report())
+	# The other thing a still cannot carry: whether the first step out of a drift
+	# throws more snow than the fourth. LegSnow's load and last shed, per frame.
+	var legs := get_node_or_null("/root/LegSnow")
+	if legs != null and legs.has_method("report"):
+		line += "  " + String(legs.report())
 	var reveal := get_node_or_null("Main/Farmhouse/InteriorReveal")
 	if reveal != null and reveal.has_method("fade"):
 		line += "  reveal=%.2f" % reveal.fade()
