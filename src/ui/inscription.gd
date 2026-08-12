@@ -61,6 +61,7 @@ var _glyphs: Array[Label3D] = []
 var _breaths: Array[Breath] = []
 var _placed: Array[Vector3] = []
 var _base_colour := Color.WHITE
+var _outline_colour := Color.BLACK
 var _width := 0.0
 
 # --- composition ------------------------------------------------------------
@@ -79,6 +80,7 @@ func compose(text: String, font: Font, tokens: UITokens,
 		return
 
 	_base_colour = tokens.life_warm if tokens != null else Color.WHITE
+	_outline_colour = tokens.scrim_veil if tokens != null else Color.BLACK
 
 	# Prefix measurement rather than per-character advances, so kerning survives:
 	# the x of character i is the width of everything before it. Measuring each
@@ -104,12 +106,30 @@ func compose(text: String, font: Font, tokens: UITokens,
 		glyph.font_size = font_size
 		glyph.pixel_size = pixel_size
 		glyph.modulate = _transparent(_base_colour)
-		# See the header. All three of these are the effect.
+		# See the header. Both of these are the effect.
 		glyph.billboard = BaseMaterial3D.BILLBOARD_DISABLED
 		glyph.no_depth_test = false
-		glyph.alpha_cut = Label3D.ALPHA_CUT_HASH
 		glyph.double_sided = true
 		glyph.shaded = false
+		# Clean to begin with; seek() switches it to ALPHA_CUT_HASH when the wind
+		# reaches this glyph. Hash dithers EVERY partial-alpha pixel, including
+		# the antialiased rim of a fully opaque glyph, so leaving it on for the
+		# whole life stipples the text the entire time it is being read. It is a
+		# dissolve, not a render mode.
+		glyph.alpha_cut = Label3D.ALPHA_CUT_DISABLED
+		# AN OUTLINE, AND ITS ALPHA HAS TO BE DRIVEN TOO.
+		#
+		# Label3D defaults to a 12 px outline in pure black, and outline_modulate
+		# is a SEPARATE colour from modulate -- so fading the glyph fades only the
+		# fill, and what is left at the end of the exit is a solid black letter.
+		# That shipped in the first capture: the line scattered into black.
+		#
+		# Kept rather than switched off, because this narration stands against
+		# snow at roughly 70% lightness and warm-on-white is the one pairing in
+		# the palette with no contrast to spare. Taken from the darkest structure
+		# tone rather than from black, so it is still the twelve.
+		glyph.outline_size = maxi(int(round(float(font_size) * 0.07)), 1)
+		glyph.outline_modulate = _transparent(_outline_colour)
 		# Centred on the line's own origin, so placing an inscription in the
 		# world is placing its middle rather than its left edge.
 		glyph.position = Vector3(offsets[i] * pixel_size - _width * 0.5, 0.0, 0.0)
@@ -143,7 +163,17 @@ func seek(seconds: float) -> void:
 	for i in range(_glyphs.size()):
 		var glyph := _glyphs[i]
 		var breath := _breaths[i]
-		glyph.modulate = _with_alpha(_base_colour, breath.opacity_at(seconds))
+		var alpha := breath.opacity_at(seconds)
+		glyph.modulate = _with_alpha(_base_colour, alpha)
+		# The outline is a separate colour and fades on its own or not at all.
+		glyph.outline_modulate = _with_alpha(_outline_colour, alpha)
+		# Grainy only while it is being taken. Set every frame rather than once at
+		# the crossing, because seek() is a SCRUB -- a montage may be played
+		# backwards, or sampled at an arbitrary moment by a screenshot harness,
+		# and a one-shot switch would leave the glyph in whichever mode it last
+		# passed through.
+		glyph.alpha_cut = (Label3D.ALPHA_CUT_HASH if seconds >= breath.exit_begins()
+			else Label3D.ALPHA_CUT_DISABLED)
 		var offset: Vector2 = breath.offset_at(seconds)
 		# The offset is authored in the plane of the line, so it moves the glyph
 		# across the inscription's own face -- a line standing at an angle to the

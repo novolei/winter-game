@@ -94,12 +94,40 @@ func test_glyphs_are_depth_tested_so_the_world_can_occlude_them() -> void:
 		assert_false(line.glyph_at(i).no_depth_test,
 			"glyph %d ignores depth, so it draws through the trees" % i)
 
-## Alpha hash is what turns the exit into specks rather than a fade.
-func test_glyphs_dissolve_by_hash_rather_than_fading_flat() -> void:
+## Alpha hash is what turns the exit into specks rather than a fade -- but it
+## dithers EVERY partial-alpha pixel, including the antialiased rim of a fully
+## opaque glyph. Left on for the whole life it stipples the text the entire time
+## it is being read, which is what the first capture showed. So it is switched on
+## at the exit and not before: sharp while it is read, grainy while it is taken.
+func test_glyphs_are_clean_while_read_and_hashed_only_while_taken() -> void:
 	var line := _write()
+	var b := line.breath_at(0)
+	line.seek(b.delay + b.bloom_seconds + b.hold_seconds * 0.5)
+	assert_eq(line.glyph_at(0).alpha_cut, Label3D.ALPHA_CUT_DISABLED,
+		"the glyph is stippled while it is still being read")
+	line.seek(b.exit_begins() + b.exit_seconds * 0.5)
+	assert_eq(line.glyph_at(0).alpha_cut, Label3D.ALPHA_CUT_HASH,
+		"the glyph fades flat instead of coming apart")
+
+## Label3D ships a 12 px outline in pure black, and outline_modulate is a
+## SEPARATE colour from modulate. Fading the glyph therefore fades only the fill,
+## and what survives to the end of the exit is a solid BLACK letter -- which is
+## exactly what the first capture of the montage scattered into.
+func test_the_outline_fades_with_the_glyph_rather_than_outliving_it() -> void:
+	var line := _write()
+	line.seek(line.total_seconds())
 	for i in line.glyph_count():
-		assert_eq(line.glyph_at(i).alpha_cut, Label3D.ALPHA_CUT_HASH,
-			"glyph %d fades flat instead of coming apart" % i)
+		assert_almost_eq(line.glyph_at(i).outline_modulate.a, 0.0, 0.0001,
+			"glyph %d left its outline behind" % i)
+
+## And the outline is a palette colour, not black: rule 3 does not stop applying
+## because the pixel happens to be an edge.
+func test_the_outline_is_taken_from_the_palette() -> void:
+	var line := _write()
+	var outline := line.glyph_at(0).outline_modulate
+	assert_almost_eq(outline.r, _tokens.scrim_veil.r, 0.001)
+	assert_almost_eq(outline.g, _tokens.scrim_veil.g, 0.001)
+	assert_almost_eq(outline.b, _tokens.scrim_veil.b, 0.001)
 
 ## Section 5.9 gives narration the warm token because it is the voice of somebody
 ## still alive -- the first pillar, not an exception to it.

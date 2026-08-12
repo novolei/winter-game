@@ -28,35 +28,51 @@ extends SceneTree
 const OUT_DIR := "res://data/montage"
 const FARMHOUSE := Vector3(13.0, 0.0, -12.0)
 
+## How much of the frame's width a line should cover. Under a third and it reads
+## as a caption sitting in the scene; past a half and it stops being part of the
+## picture and becomes a title card with a photograph behind it.
+const LINE_FRACTION := 0.44
+
+## The frame the sizes are solved against. 16:9; a wider window reveals more
+## valley either side rather than enlarging the line (System Map section 8).
+const ASPECT := 16.0 / 9.0
+
+## Font pixels per glyph before world scaling. Only the RATIO to pixel_size
+## matters for size on screen, so this stays fixed and the scale is solved --
+## large enough that the glyph texture is not the limit at the closest shot.
+const FONT_SIZE := 96
+
 func _initialize() -> void:
 	var ShotScript := load("res://src/definitions/montage_shot.gd")
 	var MontageScript := load("res://src/definitions/montage.gd")
 
 	var shots: Array[MontageShot] = []
 
-	# 1. The valley, from high and far. A slow drift in; nothing is happening yet.
+	# 1. The valley, from high and far. A slow drift in; nothing has happened yet.
 	shots.append(_shot(ShotScript,
 		7.5,
 		FARMHOUSE + Vector3(34.0, 22.0, 40.0), FARMHOUSE + Vector3(28.0, 18.0, 33.0),
 		46.0, 44.0,
-		"雪已经下了七天。",
-		FARMHOUSE + Vector3(12.0, 9.0, 18.0), -38.0))
+		"雪已经下了七天。", 15.0, 0.4, -26.0))
 
 	# 2. Closer, lower. The farmstead resolves out of the snow.
 	shots.append(_shot(ShotScript,
 		7.5,
-		FARMHOUSE + Vector3(16.0, 8.0, 20.0), FARMHOUSE + Vector3(10.0, 5.0, 13.0),
+		FARMHOUSE + Vector3(19.0, 9.0, 23.0), FARMHOUSE + Vector3(14.0, 6.5, 17.0),
 		42.0, 40.0,
-		"他们说会有直升机。",
-		FARMHOUSE + Vector3(5.0, 3.4, 8.0), -34.0))
+		"他们说会有直升机。", 10.0, 0.1, -22.0))
 
-	# 3. In on the one warm window. The line that sets up the ending.
+	# 3. In on the one warm window -- and STOPPING SHORT OF THE PORCH. The first
+	# pass ran the camera to 5.6 m and put the line at 3.4 m, which is inside the
+	# porch: the glyphs intersected the posts and the roof, and depth testing did
+	# exactly what section 5.9 asks of it, hiding everything embedded in the
+	# geometry. What reached the frame was the few millimetres of each letter
+	# still sticking out, which reads as dark glyphs with a warm rim.
 	shots.append(_shot(ShotScript,
 		8.0,
-		FARMHOUSE + Vector3(6.5, 3.0, 9.0), FARMHOUSE + Vector3(3.2, 2.1, 4.6),
+		FARMHOUSE + Vector3(11.0, 5.0, 15.0), FARMHOUSE + Vector3(8.0, 3.8, 11.0),
 		38.0, 34.0,
-		"他们要看得见你。",
-		FARMHOUSE + Vector3(1.6, 2.0, 3.4), -30.0))
+		"他们要看得见你。", 7.0, 0.0, -18.0))
 
 	var opening = MontageScript.new()
 	opening.id = &"opening"
@@ -70,29 +86,66 @@ func _initialize() -> void:
 	quit(0 if error == OK else 1)
 
 
-## One shot. The camera looks at the farmhouse from wherever it is, and the line
-## stands facing back down the camera's approach.
+## One shot.
+##
+## THE LINE IS PLACED FROM THE CAMERA, NOT FROM THE FARMHOUSE, and the first pass
+## did it the other way round. Positioning narration against the SUBJECT means
+## its distance from the lens -- which decides both whether it is legible and
+## whether it is buried in scenery -- is a thing you get by accident. Two of the
+## three shots came out wrong that way: one line 34 m from the lens and seven
+## pixels tall, one embedded in the porch.
+##
+## Given `metres_ahead` along the camera's own view axis, all three follow:
+## the line stands in open air between the lens and the subject, it faces back
+## down the approach, and its size can be SOLVED rather than guessed.
 func _shot(ShotScript, duration: float, from: Vector3, to: Vector3,
 		fov_from: float, fov_to: float, text: String,
-		text_at: Vector3, text_yaw_degrees: float) -> MontageShot:
+		metres_ahead: float, rise: float, text_yaw_degrees: float) -> MontageShot:
+	# `rise` is metres above the camera's own view axis, and it is deliberately
+	# small. The wind carries a line up and to the right as it takes it, so a line
+	# composed high in the frame finishes leaving it before it has finished coming
+	# apart -- the dissolve is the point, and it has to be watchable.
+	var subject := FARMHOUSE + Vector3(0.0, 2.0, 0.0)
 	var shot = ShotScript.new()
 	shot.duration = duration
 	# looking_at keeps the origin and turns -Z toward the target, which is the
 	# direction a Camera3D actually looks.
-	shot.camera_from = Transform3D(Basis.IDENTITY, from).looking_at(FARMHOUSE + Vector3(0.0, 2.0, 0.0), Vector3.UP)
-	shot.camera_to = Transform3D(Basis.IDENTITY, to).looking_at(FARMHOUSE + Vector3(0.0, 2.0, 0.0), Vector3.UP)
+	shot.camera_from = Transform3D(Basis.IDENTITY, from).looking_at(subject, Vector3.UP)
+	shot.camera_to = Transform3D(Basis.IDENTITY, to).looking_at(subject, Vector3.UP)
 	shot.fov_from = fov_from
 	shot.fov_to = fov_to
 	shot.camera_ease = 0.35
 	shot.text = text
-	# Yawed rather than aimed at the camera: a line square to the lens has no
-	# perspective to lose as the camera comes on, and the whole effect is that it
-	# has some. Standing at an angle, the far end of the line foreshortens first.
+
+	var view := (subject - from).normalized()
+	var at := from + view * metres_ahead + Vector3.UP * rise
+
+	# Facing back down the approach, then YAWED off it. A line square to the lens
+	# has no perspective left to lose as the camera comes on, and having some is
+	# the whole of section 5.9 -- obliqued, the far end foreshortens first.
+	var away := at - Vector3(from.x - at.x, 0.0, from.z - at.z)
+	var facing := Transform3D(Basis.IDENTITY, at).looking_at(away, Vector3.UP)
 	shot.text_transform = Transform3D(
-		Basis(Vector3.UP, deg_to_rad(text_yaw_degrees)), text_at)
+		facing.basis.rotated(Vector3.UP, deg_to_rad(text_yaw_degrees)), at)
+
+	shot.text_font_size = FONT_SIZE
+	shot.text_pixel_size = _pixel_size_for(text, metres_ahead, fov_from)
 	shot.text_start = 0.6
 	shot.wind = Vector2(1.0, -0.25)
-	shot.scatter_metres = 1.4
+	shot.scatter_metres = maxf(metres_ahead * 0.16, 0.9)
 	shot.scatter_spin = 0.9
 	shot.lighting_preset = &"nightfall"
 	return shot
+
+
+## Solves the world scale so the line covers `LINE_FRACTION` of the frame width
+## at the distance it actually stands, rather than carrying a constant that is
+## only right for whichever shot it was tuned against.
+func _pixel_size_for(text: String, distance: float, fov_degrees: float) -> float:
+	var frame_height := 2.0 * distance * tan(deg_to_rad(fov_degrees) * 0.5)
+	var frame_width := frame_height * ASPECT
+	# Full-width CJK advances one em per character, so the line is about
+	# `length * font_size` pixels wide before scaling. Latin would measure
+	# narrower and simply read a little smaller, which is the safe direction.
+	var ems := maxf(float(text.length()), 1.0)
+	return (frame_width * LINE_FRACTION) / (ems * float(FONT_SIZE))

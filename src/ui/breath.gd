@@ -166,6 +166,13 @@ func scatter(wind: Vector2, distance: float, spin: float) -> void:
 func total_seconds() -> float:
 	return delay + bloom_seconds + hold_seconds + exit_seconds
 
+## When the 散 begins. Published because some things have to CHANGE at that
+## moment rather than be interpolated across it -- Inscription switches its
+## glyphs from clean alpha blending to stochastic discard here, so the text is
+## sharp while it is being read and grainy only while it is being taken.
+func exit_begins() -> float:
+	return delay + bloom_seconds + hold_seconds
+
 func is_finished(t: float) -> bool:
 	return t >= total_seconds()
 
