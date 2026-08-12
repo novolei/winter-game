@@ -48,13 +48,38 @@ extends GPUParticles3D
 ## one wave later. What arrives is a frame size in metres; where it came from is
 ## none of this layer's business.
 ##
-## Scaling the WHOLE layer by one factor, rather than patching the two or three
-## numbers that were obviously wrong, is the deliberate choice: it is the only
-## rule under which every authored relationship -- flakes per screen area, pixels
-## per flake, the slant, how much of the frame a flake crosses before it dies --
-## survives a change of framing untouched. A volume that scaled while its fall
-## speed did not would put the snow in the right place and have it die halfway
-## down the picture.
+## TWO SCALES, AND WHICH ONE A NUMBER TAKES IS DECIDED BY WHAT IT IS
+##
+## The EMISSION GEOMETRY -- the box, where it sits, how far back up the view axis
+## it is pulled -- scales with the frame on every layer. It is not a physical
+## fact, it is a statement about coverage: the box exists to hold the picture, so
+## it has to grow when the picture does. frame_scale().
+##
+## The FLAKE -- its size, its fall, its drift -- scales only on the lens layer.
+## flake_scale(), and the split is the whole of the art direction:
+##
+##   * Layers 1 and 2 are IN THE WORLD. A snowflake is a physical object at a
+##     physical size, and zooming out must make it smaller on screen exactly as
+##     it makes the trees and the character smaller. A world flake that held its
+##     share of the screen would grow fatter as the player pulled back, and how
+##     hard it is snowing -- a fact about the world -- would appear to change
+##     every time he touched the camera.
+##   * Layer 3 is ON THE LENS. It stands in for snow at or near the glass, it is
+##     not in the world at all, and a camera-space effect does not zoom. Its
+##     screen size is held constant.
+##
+## ---------------------------------------------------------------------------
+## AND A FLOOR, BECAUSE PHYSICAL SCALING RUNS OUT
+## ---------------------------------------------------------------------------
+## Scaling a world flake honestly means that at a wide enough frame it stops
+## being a flake and becomes a sub-pixel sample that shimmers as it moves.
+## `min_flake_pixels` is the floor it is drawn at instead -- a small lie, drawing
+## a distant speck slightly larger than it is, and worth it.
+##
+## When even the LARGEST flake in a layer is under the floor the lie is no longer
+## small: every flake is the same clamped size and none is the size it should be.
+## At that point the layer FADES OUT. A layer that can no longer draw a flake
+## honestly should stop drawing, not alias.
 ##
 ## ---------------------------------------------------------------------------
 ## DENSITY IS `amount_ratio`, NEVER `amount`
@@ -116,16 +141,40 @@ const FADE_IN_FRACTION := 0.08
 ## THE UNIT EVERY METRE ON THIS LAYER IS EXPRESSED IN: the frame, in world
 ## metres, that these numbers were authored against -- x across and y up.
 ##
-## Not a framing stop. The stops are CameraRig's and this file must never learn
-## them; this is a denominator, and the only thing it does is turn the authored
-## metres into a ratio that holds at any frame the camera might present --
-## including one no stop names, which is where the frame sits for the whole of
-## every eased zoom.
+## NOT A FRAMING STOP, AND PLEASE DO NOT "FIX" IT INTO ONE. The y here happens to
+## equal CameraRig's tightest stop, because that is the framing the art was tuned
+## at -- but it is a DENOMINATOR, not a value the camera can be set to. Nothing
+## here reads, stores, or compares against the list of stops; adding a fourth
+## changes nothing in this file. That property is the one that matters, and it is
+## why this survived review as a plain number rather than being rewritten as
+## frame-fractions in the scene files, which would bake the same 10.5 into every
+## authored fraction while making them unreadable.
+##
+## All it does is turn the authored metres into a ratio that holds at any frame
+## the camera might present -- including one no stop names, which is where the
+## frame sits for the whole of every eased zoom.
 ##
 ## A layer nobody has framed uses this as the frame, so every number below is
 ## used exactly as written: a unit-test subject, or a layer standing in a scene
 ## with no orthographic camera, behaves the way its scene file reads.
 @export var authored_frame := Vector2(16.8, 10.5)
+
+## The smallest a flake may be DRAWN, in pixels of frame height.
+##
+## Under about this a flake is no longer a flake: it is a sub-pixel sample that
+## shimmers as it crosses the frame, and reads as video noise rather than as
+## weather. Physical scaling walks the world layers toward it as the frame
+## widens, so the size is clamped here rather than allowed to go under -- and if
+## even the largest flake in the layer lands under it, the layer fades out
+## instead. See legibility_floor_m() and legibility_fade().
+##
+## 2.5 px is this project's own figure, from the test that has guarded the flake
+## sizes since the snowfall shipped.
+@export var min_flake_pixels := 2.5
+
+## How far below the floor a layer is completely gone: half of it, an octave. The
+## fade runs across that interval so the layer leaves rather than blinks.
+const FADE_OUT_OCTAVE := 0.5
 
 ## CAMERA-SPACE LAYERS ONLY -- how far above the top edge of the picture the
 ## BOTTOM of the birth band sits, in authored metres.
@@ -238,6 +287,10 @@ var _frame := Vector2.ZERO
 ## per-frame work to the two properties the weather actually changes.
 var _applied_frame := Vector2(-1.0, -1.0)
 
+## The same frame in pixels, for the legibility floor. Nothing geometric depends
+## on it, so it never triggers a reframe.
+var _pixels := Vector2.ZERO
+
 
 func _ready() -> void:
 	add_to_group(GROUP)
@@ -300,19 +353,87 @@ func frame_size() -> Vector2:
 	return _frame
 
 
+## How big that frame is in PIXELS. A second, separate fact from the frame in
+## metres, and separate because it answers a different question: the legibility
+## floor is about aliasing, aliasing is about pixels, and a floor converted
+## through an assumed resolution would be a guess dressed as a measurement.
+##
+## Vector2.ZERO means nobody has said, and then there is no floor and no fade --
+## which is the honest answer rather than a default one.
+func set_frame_pixels(pixels: Vector2) -> void:
+	_pixels = pixels
+
+
+func frame_pixels() -> Vector2:
+	return _pixels
+
+
 ## The frame actually in force: what was pushed, or what this layer was authored
 ## against when nothing has been.
 func effective_frame() -> Vector2:
 	return authored_frame if _frame.y <= 0.0 else _frame
 
 
-## The authored metres, as a multiple. Exactly 1.0 at the frame this layer was
+## What the EMISSION GEOMETRY scales by, on every layer: the authored metres as a
+## multiple of the frame now in force. Exactly 1.0 at the frame this layer was
 ## tuned against, which is the case in every unit test that does not say
 ## otherwise -- so the scene files stay readable as the thing they describe.
+##
+## The box is not a physical fact. It exists to hold the picture, so it grows
+## when the picture does, whichever side of the lens the layer is on.
 func frame_scale() -> float:
 	if authored_frame.y <= 0.0:
 		return 1.0
 	return effective_frame().y / authored_frame.y
+
+
+## What a FLAKE scales by -- its size, its fall, its drift -- which is a
+## different question with a different answer per layer. See the header.
+##
+## 1.0 in the world, because a snowflake is a physical object and the camera
+## moving must not change it. frame_scale() on the lens, because a camera-space
+## effect stands outside the world and does not zoom with it.
+func flake_scale() -> float:
+	return frame_scale() if camera_space else 1.0
+
+
+## How many pixels a metre of frame height is worth right now. Zero when the
+## viewport is unknown, which switches the legibility floor off rather than
+## guessing at it.
+func pixels_per_metre() -> float:
+	var frame := effective_frame()
+	if _pixels.y <= 0.0 or frame.y <= 0.0:
+		return 0.0
+	return _pixels.y / frame.y
+
+
+## The smallest a flake may be drawn, in world metres: min_flake_pixels converted
+## at the framing now in force. Zero -- no floor at all -- when the viewport is
+## unknown.
+func legibility_floor_m() -> float:
+	var per_metre := pixels_per_metre()
+	if per_metre <= 0.0:
+		return 0.0
+	return min_flake_pixels / per_metre
+
+
+## 1 while the layer can still draw its flake honestly, 0 once it cannot, and a
+## ramp between.
+##
+## Clamping a small flake up to the floor draws it slightly larger than it is,
+## which is a lie worth telling. When even the LARGEST flake is under the floor
+## the lie is the whole layer -- every flake the same clamped size, not one of
+## them the size it should be -- and the honest move is to stop drawing rather
+## than to alias. `largest_m` is the largest flake's size BEFORE the clamp,
+## because after it there is nothing left to notice.
+func legibility_fade(largest_m: float) -> float:
+	var floor_m := legibility_floor_m()
+	if floor_m <= 0.0 or largest_m >= floor_m:
+		return 1.0
+	var gone := floor_m * FADE_OUT_OCTAVE
+	if largest_m <= gone:
+		return 0.0
+	return (largest_m - gone) / (floor_m - gone)
 
 
 ## The half-extents of the box new flakes are born in, in this node's own space.
@@ -472,7 +593,9 @@ func _reframe() -> void:
 	# A GPUParticles3D is culled by this box and not by where its particles
 	# actually got to, so it has to cover the whole fall and the whole drift or
 	# the snow vanishes the moment the emitter's own origin leaves the frame.
-	var span := extents + _reach() * frame_scale()
+	# The box scales with the frame; how far a flake travels out of it scales with
+	# the FLAKE, which in the world is not at all.
+	var span := extents + _reach() * flake_scale()
 	visibility_aabb = AABB(offset - span, span * 2.0)
 
 
@@ -568,7 +691,9 @@ func _apply() -> void:
 	# makes the snow follow an eased zoom rather than jump at the end of one.
 	if effective_frame() != _applied_frame:
 		_reframe()
-	var scale := frame_scale()
+	# The FLAKE's scale, not the box's. In the world these are different numbers
+	# and the difference is the art direction -- see flake_scale().
+	var scale := flake_scale()
 
 	# The clear day is a FRACTION of the storm's buffer rather than a smaller
 	# buffer -- see the header. Deliberately NOT scaled by the framing: the box
@@ -604,5 +729,24 @@ func _apply() -> void:
 	# Born a little smaller when it is barely snowing. A clear sky with the same
 	# flakes as a blizzard, only fewer, reads as a broken emitter.
 	var size := lerpf(0.82, 1.0, _rate)
-	_process_material.scale_min = flake_size_min * size * scale
-	_process_material.scale_max = flake_size_max * size * scale
+	var honest_min := flake_size_min * size * scale
+	var honest_max := flake_size_max * size * scale
+	# ...and never smaller than a flake can legibly be drawn. Under the floor a
+	# flake is a shimmering sub-pixel sample rather than snow, so it is drawn AT
+	# the floor instead -- and if the whole layer has arrived there, it leaves.
+	var floor_m := legibility_floor_m()
+	_process_material.scale_min = maxf(honest_min, floor_m)
+	_process_material.scale_max = maxf(honest_max, floor_m)
+	# THE FADE IS JUDGED WITHOUT THE WEATHER IN IT -- flake_size_max at the current
+	# framing, not the slightly smaller flake a clear day asks for.
+	#
+	# Measured the other way round first, and it was wrong: at 1280x800 the clear
+	# day's 0.82 stacked on top of the framing and took the distant layer to 57%
+	# faded at the widest stop, so the sky thinned out because it had stopped
+	# snowing hard rather than because the frame had moved. The fade answers "can
+	# this LAYER be drawn at this FRAMING", which is a question about the camera
+	# and the resolution and nothing else. The weather still moves the flake's
+	# size; the clamp still keeps every individual flake legible while it does.
+	transparency = clampf(
+		1.0 - legibility_fade(flake_size_max * scale), 0.0, 1.0
+	)

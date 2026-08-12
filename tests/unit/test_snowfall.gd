@@ -119,6 +119,13 @@ func _frame(height: float) -> Vector2:
 	return Vector2(height * FRAME_ASPECT, height)
 
 
+## The viewport the legibility floor is judged against, in pixels. About a
+## thousand tall, which is what snowfall_layer.gd's size bands were reasoned in
+## and what the capture harness shoots.
+func _pixels() -> Vector2:
+	return Vector2(1600.0, 1000.0)
+
+
 func _surface(layer: SnowfallLayer) -> StandardMaterial3D:
 	var mesh: Mesh = layer.draw_pass_1
 	if mesh == null:
@@ -384,34 +391,47 @@ func test_the_flake_acquires_no_specular_or_roughness() -> void:
 ## for a perspective camera where distant snow shrinks -- have to be read as
 ## screen sizes here. Under two pixels is not a flake, it is noise.
 ##
-## At EVERY framing, not only the tightest. The camera now offers three and eases
-## between them, and a flake that keeps its metres while the frame widens is a
-## flake losing its pixels -- the distant layer's specks go under two of them and
-## become noise rather than air.
+## The AUTHORED sizes, at the framing they were authored for -- that the art is
+## sane before any floor rescues it. What happens to a world flake as the frame
+## widens is physical scaling and is guarded separately, by the floor test.
+##
+## The lens flake is checked at EVERY framing, because it is the one the style
+## document says matters and it is the one whose pixels are meant to be constant.
 func test_every_flake_is_big_enough_to_read_at_gameplay_framing() -> void:
+	var viewport := _pixels()
+	for path in [DISTANT_SCENE, NEAR_SCENE, LENS_SCENE]:
+		var layer := _layer(path)
+		layer.set_snowfall_rate(1.0)
+		layer.set_frame_size(layer.authored_frame)
+		layer.set_frame_pixels(viewport)
+		layer._apply()
+		var authored: float = (
+			layer.flake_size_max * viewport.y / layer.authored_frame.y
+		)
+		assert_true(
+			authored >= layer.min_flake_pixels,
+			("%s authors its largest flake at %.1f px at its own framing, under the %.1f "
+				+ "px floor: the art is relying on the clamp to be legible at all")
+				% [path, authored, layer.min_flake_pixels]
+		)
+		layer.free()
+
+	# A lens flake has to be seen crossing the frame, not inferred -- at every
+	# framing, since holding that is the whole reason it is a camera-space layer.
 	for height in _framing_samples():
-		var pixels_per_metre: float = 1000.0 / height
-		for path in [DISTANT_SCENE, NEAR_SCENE, LENS_SCENE]:
-			var layer := _layer(path)
-			layer.set_frame_size(_frame(height))
-			layer.set_snowfall_rate(1.0)
-			layer._apply()
-			var drawn: float = (layer.process_material as ParticleProcessMaterial).scale_max
-			var pixels: float = drawn * pixels_per_metre
-			assert_true(
-				pixels >= 2.5,
-				"%s draws its largest flake %.3f m across at a %.1f m frame, which is "
-					% [path, drawn, height] + "%.1f px" % pixels
-			)
-			if path == LENS_SCENE:
-				# And the one the document says matters. A lens flake has to be seen
-				# crossing the frame, not inferred.
-				assert_true(
-					pixels >= 9.0,
-					"the lens flake is %.1f px at a %.1f m frame; it is meant to be the "
-						% [pixels, height] + "one you notice"
-				)
-			layer.free()
+		var lens := _layer(LENS_SCENE)
+		lens.set_snowfall_rate(1.0)
+		lens.set_frame_size(_frame(height))
+		lens.set_frame_pixels(viewport)
+		lens._apply()
+		var drawn: float = (lens.process_material as ParticleProcessMaterial).scale_max
+		var pixels: float = drawn * viewport.y / height
+		assert_true(
+			pixels >= 9.0,
+			"the lens flake is %.1f px at a %.1f m frame; it is meant to be the one you "
+				% [pixels, height] + "notice"
+		)
+		lens.free()
 
 
 ## TURBULENCE STOPS THE SNOW FALLING, and this test exists because it took a
@@ -745,7 +765,7 @@ func test_the_lens_birth_band_never_starts_inside_the_picture() -> void:
 		var top_edge: float = height * 0.5
 		var fade_fall: float = (
 			absf(lens.birth_velocity().y)
-			* lens.frame_scale()
+			* lens.flake_scale()
 			* lens.life_seconds
 			* SnowfallLayerScript.FADE_IN_FRACTION
 		)
@@ -820,32 +840,177 @@ func test_the_lens_snow_reaches_both_edges_of_the_picture() -> void:
 	lens.free()
 
 
-## SYMPTOM 3. Under a parallel projection a flake is the same size on screen
-## whether it is two metres from the lens or ninety, so SIZE is the only thing
-## separating the three layers -- and snowfall_layer.gd's header states those
-## sizes in PIXELS, which is the number that actually matters. A flake that keeps
-## its metres when the frame widens loses its pixels, and the lens layer stops
-## reading as the one in front of the lens.
-func test_a_flake_keeps_its_authored_screen_size_at_every_framing() -> void:
-	var pixels := 1000.0
+## SYMPTOM 3, AND THE RULING ON IT. The camera has three framings and a flake has
+## to answer to one of two rules, decided by which side of the lens it is on:
+##
+##   * A WORLD flake is a physical object. Zooming out must make it smaller on
+##     screen, exactly as it makes the trees and the character smaller. Its size
+##     in METRES is the constant. A world flake that held its share of the screen
+##     would grow fatter as the player pulled back, and how hard it is snowing --
+##     a fact about the world -- would appear to change when he touched nothing
+##     but the camera.
+##   * A LENS flake is a camera-space effect standing in for snow at the glass. It
+##     is not in the world and does not zoom with it. Its size in PIXELS is the
+##     constant.
+##
+## What shipped was neither rule: metres held constant on all three, which is
+## right for the two world layers by accident and wrong for the lens layer, whose
+## 17 px flake had shrunk to 10.6 at the widest framing.
+func test_a_world_flake_keeps_its_metres_and_a_lens_flake_keeps_its_pixels() -> void:
+	var viewport := _pixels()
 	for path in [DISTANT_SCENE, NEAR_SCENE, LENS_SCENE]:
 		var layer := _layer(path)
 		layer.set_snowfall_rate(1.0)
-		var authored := -1.0
+		var first_metres := -1.0
+		var first_pixels := -1.0
 		for height in _framing_samples():
 			layer.set_frame_size(_frame(height))
+			layer.set_frame_pixels(viewport)
+			layer._apply()
+			# The size the layer WANTS, before the legibility floor clamps it --
+			# the floor is a separate rule and has its own test.
+			var metres: float = (
+				layer.flake_size_max * layer.flake_scale() * lerpf(0.82, 1.0, 1.0)
+			)
+			var on_screen: float = metres * viewport.y / height
+			if first_metres < 0.0:
+				first_metres = metres
+				first_pixels = on_screen
+			if layer.camera_space:
+				assert_almost_eq(
+					on_screen, first_pixels, 0.01,
+					("%s is on the lens and draws its largest flake %.1f px at a %.1f m "
+						+ "frame against %.1f px at the tightest: a camera-space effect "
+						+ "does not zoom") % [path, on_screen, height, first_pixels]
+				)
+			else:
+				assert_almost_eq(
+					metres, first_metres, 0.0001,
+					("%s is in the world and its largest flake is %.3f m at a %.1f m frame "
+						+ "against %.3f m at the tightest: a snowflake does not change size "
+						+ "because the camera moved") % [path, metres, height, first_metres]
+				)
+				assert_true(
+					height <= _framing_samples()[0] + 0.001 or on_screen < first_pixels,
+					("%s holds %.1f px at a %.1f m frame, the same as at the tightest: a "
+						+ "world flake that keeps its share of the screen gets fatter as "
+						+ "the player pulls back") % [path, on_screen, height]
+				)
+		layer.free()
+
+
+## THE LEGIBILITY FLOOR, which is what physical scaling runs into. Below about
+## two and a half pixels a flake is not a flake, it is a sub-pixel sample that
+## shimmers as it crosses the frame -- video noise where the art direction asked
+## for the texture of the air. So the drawn size is clamped at the floor even
+## though that draws a distant speck slightly larger than it honestly is.
+func test_no_flake_is_ever_drawn_below_the_legibility_floor() -> void:
+	var viewport := _pixels()
+	for path in [DISTANT_SCENE, NEAR_SCENE, LENS_SCENE]:
+		var layer := _layer(path)
+		layer.set_snowfall_rate(1.0)
+		for height in _framing_samples():
+			layer.set_frame_size(_frame(height))
+			layer.set_frame_pixels(viewport)
 			layer._apply()
 			var material := layer.process_material as ParticleProcessMaterial
-			var on_screen: float = material.scale_max * pixels / height
-			if authored < 0.0:
-				authored = on_screen
-			assert_almost_eq(
-				on_screen, authored, 0.01,
-				("%s draws its largest flake %.1f px at a %.1f m frame against %.1f px at "
-					+ "the tightest: the layer no longer reads at the size it was authored")
-					% [path, on_screen, height, authored]
+			var smallest: float = material.scale_min * viewport.y / height
+			assert_true(
+				smallest >= layer.min_flake_pixels - 0.001,
+				"%s draws its smallest flake at %.2f px at a %.1f m frame, under its own "
+					% [path, smallest, height] + "%.1f px floor" % layer.min_flake_pixels
 			)
 		layer.free()
+
+	# ...and the floor is switched OFF, not guessed at, when nobody has said how
+	# big the viewport is. A floor converted through an assumed resolution is a
+	# guess wearing a measurement's clothes.
+	var unframed := _layer(DISTANT_SCENE)
+	unframed.set_frame_size(_frame(17.0))
+	unframed._apply()
+	assert_eq(
+		unframed.legibility_floor_m(), 0.0,
+		"a layer with no viewport invented a %f m floor" % unframed.legibility_floor_m()
+	)
+	unframed.free()
+
+
+## AND WHAT HAPPENS WHEN THE FLOOR IS NOT ENOUGH. Clamping a small flake up is a
+## small lie. Once even the LARGEST flake in a layer is under the floor, every
+## flake is the same clamped size and not one is the size it should be -- the lie
+## is the whole layer. A layer that can no longer draw a flake honestly should
+## stop drawing rather than alias, so it fades out.
+func test_a_layer_that_can_no_longer_draw_a_flake_honestly_fades_out() -> void:
+	var viewport := _pixels()
+	# No layer may be fading at any framing the camera can currently reach, AT ANY
+	# WEATHER: the fade is a guard against a framing nobody has authored yet, not
+	# something the player can provoke with the scroll wheel.
+	#
+	# Both ends of the weather, because a clear day authors a smaller flake than a
+	# blizzard and the two used to stack -- which took the distant layer to 57%
+	# faded at the widest framing on a 1280x800 window, measured. The fade answers
+	# a question about the camera, so the weather is not allowed into it.
+	for path in [DISTANT_SCENE, NEAR_SCENE, LENS_SCENE]:
+		for rate in [0.0, 1.0]:
+			var layer := _layer(path)
+			layer.set_snowfall_rate(float(rate))
+			for height in _framing_samples():
+				layer.set_frame_size(_frame(height))
+				layer.set_frame_pixels(viewport)
+				layer._apply()
+				assert_eq(
+					layer.transparency, 0.0,
+					("%s is %.0f%% faded out at a %.1f m frame in weather %.1f, and that "
+						+ "is a framing the player can actually reach")
+						% [path, layer.transparency * 100.0, height, float(rate)]
+				)
+			layer.free()
+
+	# Driven past what any stop asks for, a world layer leaves -- and it leaves on
+	# a ramp rather than a switch, or the disappearance is its own pop.
+	var distant := _layer(DISTANT_SCENE)
+	distant.set_snowfall_rate(1.0)
+	distant.set_frame_pixels(viewport)
+	var honest: float = distant.flake_size_max
+	# The frame at which the largest flake lands exactly on the floor, and the one
+	# at which it has fallen a full octave below it. Derived from the layer's own
+	# numbers rather than named, so this test moves when the art does.
+	var at_floor: float = honest * viewport.y / distant.min_flake_pixels
+	var fully_gone: float = at_floor / SnowfallLayerScript.FADE_OUT_OCTAVE
+	for pair in [[at_floor, 0.0], [fully_gone, 1.0]]:
+		distant.set_frame_size(_frame(float(pair[0])))
+		distant._apply()
+		assert_almost_eq(
+			distant.transparency, float(pair[1]), 0.01,
+			"at a %.1f m frame the distant layer is %.2f transparent, wanted %.2f"
+				% [float(pair[0]), distant.transparency, float(pair[1])]
+		)
+	distant.set_frame_size(_frame(lerpf(at_floor, fully_gone, 0.5)))
+	distant._apply()
+	assert_true(
+		distant.transparency > 0.05 and distant.transparency < 0.95,
+		("halfway past the floor the distant layer is %.2f transparent: it is switching "
+			+ "off rather than fading, and a layer that vanishes in one frame is its own "
+			+ "pop") % distant.transparency
+	)
+	var widest: float = _framing_samples()[_framing_samples().size() - 1]
+	assert_true(
+		at_floor > widest,
+		("the distant layer would begin fading at a %.1f m frame against a widest stop "
+			+ "of %.1f: the guard is inside the range the camera already offers")
+			% [at_floor, widest]
+	)
+	# AND THE RESOLUTION THIS DEPENDS ON, stated rather than left implicit. The
+	# floor is a pixel fact, so the headroom shrinks with the window: this is the
+	# viewport height at which the widest stop would begin fading the layer, and
+	# it is the number to watch if a wider stop is ever added.
+	var fades_at_pixels: float = widest * distant.min_flake_pixels / honest
+	assert_true(
+		fades_at_pixels < 800.0,
+		("the distant layer begins to fade at the widest stop on any window under %.0f "
+			+ "px tall, which is a window people actually use") % fades_at_pixels
+	)
+	distant.free()
 
 
 ## THE TRANSITION, which is the case no screenshot at rest can show. CameraRig
@@ -989,6 +1154,30 @@ func test_the_snowfall_reads_the_frame_the_camera_is_drawing() -> void:
 	)
 	camera.free()
 
+	# ...and the pixel count comes off the viewport's own size rather than off its
+	# visible rect. Under this project's `canvas_items` stretch those are different
+	# numbers -- 1152 x 720 of canvas inside a 1280 x 800 window, measured -- and
+	# the legibility floor is a fact about the pixels on the glass.
+	#
+	# The SubViewport branch is exercised here; the Window branch is NOT, and that
+	# is deliberate. A Window built outside the tree and freed leaves ten RIDs
+	# behind at exit ("10 resources still in use"), which fails the run's cleanliness
+	# check for no gain -- the branch is a property read. It was verified by
+	# measurement instead, against a real windowed run: window (1280, 800),
+	# visible rect (1152, 720), texture (1423, 889), and the PNG the frame actually
+	# saved was 1280 x 800. Only the window agreed with the pixels.
+	var sub := SubViewport.new()
+	sub.size = Vector2i(640, 360)
+	assert_eq(
+		SnowfallScript.viewport_pixels(sub), Vector2(640.0, 360.0),
+		"a SubViewport reports %s pixels" % SnowfallScript.viewport_pixels(sub)
+	)
+	sub.free()
+	assert_eq(
+		SnowfallScript.viewport_pixels(null), Vector2.ZERO,
+		"no viewport at all still produced a pixel count"
+	)
+
 
 ## The director is what carries the frame to the layers, on the same frame and
 ## through the same call that carries the weather -- so a layer cannot end up
@@ -1002,11 +1191,18 @@ func test_the_director_hands_every_layer_the_frame_and_scales_the_pullback() -> 
 	var layer := _layer(NEAR_SCENE)
 	var wide: Vector2 = _frame(17.0)
 	director.set_frame_size(wide)
+	director.set_frame_pixels(_pixels())
 	director.drive(layer)
 	assert_eq(
 		layer.frame_size(), wide,
 		"the director drove the layer without telling it what it is drawing into: %s"
 			% layer.frame_size()
+	)
+	# ...in pixels as well as in metres. The legibility floor is about aliasing and
+	# a layer that never hears the resolution cannot judge it.
+	assert_eq(
+		layer.frame_pixels(), _pixels(),
+		"the layer was never told how big the viewport is: %s" % layer.frame_pixels()
 	)
 	assert_true(
 		layer.frame_scale() > 1.0,

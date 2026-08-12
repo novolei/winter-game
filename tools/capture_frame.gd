@@ -117,16 +117,7 @@ func _ready() -> void:
 	# same trail, without two scenes or an edit between them.
 	var ortho := float(_string_arg(args, "--ortho", "0"))
 	if ortho > 0.0:
-		# Children are ready before their parent, so CameraRig._ready() has
-		# already pushed its own size onto the Camera3D by the time this runs.
-		# Setting the export alone is therefore silent and does nothing --
-		# which cost a capture. Set both.
-		var rig := get_node_or_null("Main/CameraRig")
-		if rig != null:
-			rig.orthographic_size = ortho
-		var camera := get_node_or_null("Main/CameraRig/Camera3D") as Camera3D
-		if camera != null:
-			camera.size = ortho
+		_frame_at(ortho)
 
 	# There is deliberately no `--boom`. The 90 m boom looks like it should be a
 	# problem for a wide shot -- the directional shadow cascades run out at 75 m
@@ -177,6 +168,38 @@ func _ready() -> void:
 		var body := get_node_or_null("Main/Player") as Node3D
 		if body != null:
 			body.global_position = Vector3(_start.x, body.global_position.y, _start.y)
+
+
+## `--ortho`, applied THROUGH THE RIG rather than around it.
+##
+## The old version wrote `rig.orthographic_size` and `camera.size` directly. It
+## produced the right picture and left the rig lying: `framing_base()`,
+## `framing_target()` and `framed_size()` all went on reporting the stop the rig
+## had settled at in _ready(), while the camera drew something else. Nothing
+## errors, nothing warns, and the numbers are confidently wrong -- in exactly the
+## captures an agent takes to judge a framing question. It has already been
+## budgeted for once: the snowfall reads `camera.size` rather than the rig partly
+## because of this.
+##
+## So the base is set and refresh_framing() is asked to move the camera to meet
+## it, which is the rig's own documented path and keeps every accessor truthful.
+## The tween is then killed and the target applied outright, because a capture is
+## not a zoom: `refresh_framing()` eases over ~0.22 s, which is shorter than any
+## real capture's settle but not shorter than `--seconds 0 --settle 0`, and a
+## harness whose framing depends on how long the walk was is a harness that will
+## eventually take a wrong picture. All three calls are public rig API.
+func _frame_at(ortho: float) -> void:
+	var rig := get_node_or_null("Main/CameraRig")
+	if rig == null:
+		push_error("capture_frame: --ortho given but there is no CameraRig")
+		return
+	rig.orthographic_size = ortho
+	rig.refresh_framing()
+	var tween: Tween = rig.framing_tween()
+	if tween != null and tween.is_valid():
+		tween.kill()
+	rig.apply_framed_size(rig.framing_target())
+	print("capture_frame: framed at %.2f m (rig reports %.2f)" % [ortho, rig.framed_size()])
 
 
 func _string_arg(args: PackedStringArray, name: String, fallback: String) -> String:

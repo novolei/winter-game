@@ -92,6 +92,10 @@ var _camera_position := Vector3.ZERO
 var _forward := Vector3(0.0, -1.0, 0.0)
 ## What the camera is drawing, in world metres. See frame_size().
 var _frame := Vector2.ZERO
+## ...and the same frame in pixels, which is a different fact and is needed for a
+## different reason: SnowfallLayer's legibility floor is about aliasing, and
+## aliasing is about pixels.
+var _pixels := Vector2.ZERO
 
 
 func _ready() -> void:
@@ -178,6 +182,17 @@ func frame_metres() -> Vector2:
 	return _frame
 
 
+## The viewport, in pixels. Only the legibility floor uses it -- see
+## SnowfallLayer.min_flake_pixels -- and it is a separate hook because it is a
+## separate fact: resizing a window changes this without changing the framing.
+func set_frame_pixels(pixels: Vector2) -> void:
+	_pixels = pixels
+
+
+func frame_pixels() -> Vector2:
+	return _pixels
+
+
 ## Injected by a test, or by whoever wires the scene. Resolved from the
 ## ServiceRegistry otherwise, the same way LightingDirector.set_event_bus() works.
 func set_lighting(lighting) -> void:
@@ -235,6 +250,28 @@ static func volume_centre(
 ## It also picks up the one framing the rig does not know about:
 ## tools/capture_frame.gd's `--ortho` writes the camera directly.
 ##
+## How many PIXELS a viewport is, which is a different question from how big its
+## rect is and has a different answer.
+##
+## `get_visible_rect()` is 2D canvas space: under this project's `canvas_items`
+## stretch it reports the project's base viewport -- measured as 1152 x 720 in a
+## 1280 x 800 window -- so a legibility floor converted through it would be out by
+## eleven per cent, in the safe-looking direction. `get_texture().get_size()` is
+## worse: it reported 1423 x 889 for the same window, an internal allocation that
+## does not match the 1280 x 800 image the frame actually saves.
+##
+## The window's own size is the one that matches the pixels on the glass, checked
+## against a saved PNG. A SubViewport answers the same question with `size`.
+static func viewport_pixels(viewport: Viewport) -> Vector2:
+	if viewport == null:
+		return Vector2.ZERO
+	if viewport is Window:
+		return Vector2((viewport as Window).size)
+	if viewport is SubViewport:
+		return Vector2((viewport as SubViewport).size)
+	return viewport.get_visible_rect().size
+
+
 ## A perspective camera has no frame height in metres -- it has a different one
 ## at every depth -- so this says ZERO rather than inventing one, and the layers
 ## fall back to the numbers their scene files were authored with.
@@ -276,6 +313,7 @@ func drive(layer: SnowfallLayer) -> void:
 	# here: one place samples the camera, so no layer can end up running this
 	# frame's snowfall against last frame's framing.
 	layer.set_frame_size(_frame)
+	layer.set_frame_pixels(_pixels)
 	# A lens layer is parented to the camera and rides it. Moving it would be
 	# taking it off the lens, which is the only thing it does -- and it places its
 	# own emission box in camera space, from the frame it was just handed.
@@ -384,7 +422,8 @@ func _read_camera() -> bool:
 	# Sampled every frame, which is the whole of "follows the tween": the rig
 	# eases the frame over 0.12-0.22 s and this reads wherever it currently is,
 	# rather than what stop it is heading for.
-	_frame = frame_size(camera, viewport.get_visible_rect().size)
+	_pixels = viewport_pixels(viewport)
+	_frame = frame_size(camera, _pixels)
 	return true
 
 
