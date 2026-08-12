@@ -351,3 +351,27 @@ run  (0.6667 s) -> TimeScale 1.00 --/
 Then compute the downstream pace in **strides**, not in metres per second — once the clips are re-timed, neither is playing at its own length any more, so a pace derived from a clip's authored ground speed is wrong.
 
 Related and in the same graph: **`AnimationNodeBlend2.sync` defaults to `false`**, which freezes an input at whatever frame it held when its weight last reached 0, so it re-enters the mix at a stale phase. Set it deliberately on every Blend2 and say why in a comment. Unsynced blending of two locomotion cycles produced a **2.02 s beat** in this project while both endpoints measured clean 0.67 s strides — the character walked with his legs splayed apart, and it looked like a broken animation asset rather than a wiring fault.
+
+### Blending posture is not blending amplitude
+
+Not an engine trap — a craft rule that cost this project a round, and that will recur for every creature with more than one idle.
+
+Two takes can differ in **motion** (how much a limb moves) or in **posture** (where the limb is). A blend degrades these very differently:
+
+- **Motion degrades gracefully.** Half of a tremor still reads as a tremor.
+- **Posture does not.** Half of "arms hugged across the chest" against "arms hanging at the sides" is neither — it is a third posture nobody authored, and it reads as the *wrong* one plus noise.
+
+Measured here on the neutral and cold idles: at a 0.45 blend the tremor was at 47.5% of full and read fine, while the arms still hung at the sides and the character read as **not cold**. The silhouette only changed character at **0.65**. The owner's complaint was "the idle is stiff again" — he was seeing the neutral take's silhouette with tremor painted on top, which is exactly what the blend floor existed to prevent.
+
+**So when two takes differ in posture, the blend value is not a dial from one to the other.** There is a threshold below which you get the first take, and the useful range starts above it. Find it and put the floor there.
+
+**The instrument matters.** A contact sheet stepping *time* at one blend value cannot show this — every frame looks like a plausible pose. Step the **blend value at one instant** instead and read the silhouettes:
+
+```
+0.45  arms at sides          -> not cold
+0.60  forearms angling in    -> ambiguous
+0.65  crossing the belly     -> the silhouette has changed character
+0.80  visibly huddled
+```
+
+Check for a posture difference *before* choosing any blend constant, and say in your report which kind of difference you found.
