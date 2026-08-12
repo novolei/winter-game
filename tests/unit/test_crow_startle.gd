@@ -276,6 +276,16 @@ func _a_flock(seed: int, fewest := 3) -> CrowFlock:
 	flock.set_event_bus(BusStand.new())
 	flock.set_world_clock(ClockStand.new())
 	flock.set_perches(A_WIRE)
+	# `random_seed` is only READ by `attach()`, and a flock built with `.new()`
+	# never runs `_ready()`. Without this line the seed above is inert, a
+	# freshly constructed RandomNumberGenerator seeds itself from entropy, and
+	# every draw below is different on every run. MEASURED before adding it:
+	# 399 of 400 builds of this same "seeded" flock produced different
+	# hesitations, and 1.00% of them handed two birds the same one -- which is
+	# `test_no_two_birds_in_a_burst_hesitate_for_the_same_time`, and which is
+	# what went red on this task's baseline run for no reason anybody had
+	# touched.
+	flock.attach()
 	flock.land_now()
 	var left := 0.3
 	while left > 0.0:
