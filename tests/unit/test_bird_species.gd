@@ -374,11 +374,24 @@ func test_a_bird_drawn_larger_still_has_its_feet_on_the_perch() -> void:
 
 ## AND THE SIZE GATE STILL COVERS THE BIRD THE GAME DRAWS.
 ##
-## `tests/art/test_asset_scale.gd` measures the ASSET on disk, which is the right
-## instrument for the defect it exists for -- a wolf arriving at 15 mm. It cannot
-## see a scale applied at runtime, so the day `model_scale` exists the game can
-## draw a bird any size it likes and that gate stays green. This closes it: the
-## asset's measured size TIMES the species' own scale has to be inside the band
+## ---------------------------------------------------------------------------
+## THE THING THAT MUST BE IN THE BAND IS WHAT THE PLAYER SEES, NOT WHAT IS ON
+## DISK. Read that twice before adding the next scale field.
+## ---------------------------------------------------------------------------
+## `tests/art/test_asset_scale.gd` measures the ASSET on disk. That is the right
+## instrument for the defect it exists for -- a wolf arriving at 15 mm -- and it
+## is structurally blind to anything applied at runtime. So from the moment
+## `BirdSpecies.model_scale` existed, the game could draw a bird at ten times its
+## size and every gate in the project would stay green, because the file on disk
+## never changed.
+##
+## The reflex, on adding a scale field anywhere else -- a dog, a tree, a truck --
+## will be to assume the existing gate covers it. IT DOES NOT, and it cannot: it
+## has no way to know what multiplied the asset between load and draw. Whatever
+## multiplies it has to be multiplied back in here, or the band is measuring a
+## number nobody looks at.
+##
+## So: the asset's measured size TIMES the species' own scale, held to the band
 ## the bird's own `data/scale/*.tres` declares.
 func test_a_bird_as_drawn_is_still_inside_its_own_size_band() -> void:
 	for species in _species():

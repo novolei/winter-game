@@ -191,6 +191,13 @@ func _crow() -> BirdSpecies:
 	# the take out.
 	species.descent_seconds = (67.0 / 30.0) * 0.58
 	species.settle_seconds = (67.0 / 30.0) * 0.42
+	# AND IT DECLINES THE FLARE'S HANG, which is the same statement one field
+	# further on. A bent parameter buys a float at the cost of fall rate (see
+	# BirdSpecies.flare_hang's sweep), and the crow's landing was reviewed and
+	# approved as it was -- so it keeps the unbent curve and its peak descent
+	# stays 3.29 m/s rather than becoming 3.72 as a side effect of fixing the
+	# pigeon. The two birds differing here costs one row in a .tres.
+	species.flare_hang = 1.0
 	species.mill_speed = 5.0
 	species.cruise_speed = 12.0
 	# Swept over an hour of each shipped profile: 0.45 on / 0.36 off holds 10.8
@@ -330,6 +337,13 @@ func _pigeon() -> BirdSpecies:
 	# So the dove holds its other idle for the rest of this -- see the `settle`
 	# role below -- and stands there looking about before it becomes furniture.
 	species.settle_seconds = 0.60
+	# ...and unlike the crow it needs the parameter bent, because the dove pack
+	# gave it no flare to play: `Dove_Fly to Idle` is ten frames. Without the
+	# bend the descent is a symmetric slide that is still doing two thirds of
+	# its peak a quarter of the way from the wire. At 1.3 the last quarter of
+	# the time carries 7.4 per cent of the drop instead of 15.7, and the peak
+	# rate rises only to 4.66 m/s -- against the 18.10 it used to arrive at.
+	species.flare_hang = 1.3
 	# A pigeon flies slower than a crow and turns harder.
 	species.mill_speed = 4.2
 	species.cruise_speed = 9.0
@@ -356,7 +370,7 @@ func _pigeon() -> BirdSpecies:
 func _write(species: BirdSpecies, name: String) -> void:
 	var path: String = OUT.path_join("%s.tres" % name)
 	var status := ResourceSaver.save(species, path)
-	print("%s  %s  %d takes, %d roles, %s, yaw %.4f, scale %.2f, descent %.4f s + settle %.4f s, %s" % [
+	print("%s  %s  %d takes, %d roles, %s, yaw %.4f, scale %.2f, descent %.4f s + settle %.4f s, hang %.2f, %s" % [
 		"ok " if status == OK else "FAIL",
 		path,
 		species.takes.size(),
@@ -366,5 +380,6 @@ func _write(species: BirdSpecies, name: String) -> void:
 		species.model_scale,
 		species.descent_seconds,
 		species.settle_seconds,
+		species.flare_hang,
 		"daylight only" if species.daylight_only else "day and night",
 	])

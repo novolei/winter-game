@@ -261,6 +261,35 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 ## the two come to `land_seconds`, to the millisecond.
 @export var settle_seconds := (67.0 / 30.0) * 0.42
 
+## THE FLARE'S HANG: how much of the descent happens early, so the last stretch
+## is a float rather than the second half of a slide. 1.0 is no bend at all.
+##
+## ---------------------------------------------------------------------------
+## WHY THIS IS PER SPECIES AND NOT ONE NUMBER FOR EVERY BIRD
+## ---------------------------------------------------------------------------
+## It was one number for one draft, and that was wrong for a reason worth
+## keeping: the hang is not free. Distance moved earlier is distance moved
+## faster, and the fall rate is the thing the owner reacted to. Swept over one
+## whole return per bird -- share of the drop still to make with a quarter of
+## the descent's time left, against peak descent rate:
+##
+##   hang   crow: last qtr / peak down     pigeon: last qtr / peak down
+##   1.0        15.5%   3.292 m/s               15.7%   4.130 m/s
+##   1.3         7.3%   3.718 m/s                7.4%   4.656 m/s
+##   1.5         4.4%   4.055 m/s                4.4%   5.074 m/s
+##   1.8         2.0%   4.592 m/s                2.0%   5.742 m/s
+##
+## The pigeon needs a bend because its pack gave it no flare to play: `Dove_Fly
+## to Idle` is ten frames, and without one the descent is a symmetric slide.
+## **The crow does not, because its landing was reviewed and approved as it
+## was**, and a shared 1.3 would have raised its peak fall rate from 3.349 to
+## 3.718 m/s as a side effect of fixing a different bird. It declines the bend
+## and keeps the curve that was signed off.
+##
+## That the two can differ at all is the `Bird` refactor doing its job: neither
+## bird constrains the other, and it costs one row in a `.tres`.
+@export var flare_hang := 1.0
+
 ## Metres per second: milling, and committed. A pigeon flies slower than a crow
 ## and turns harder.
 @export var mill_speed := 5.0

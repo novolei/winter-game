@@ -198,27 +198,97 @@ func test_no_bird_falls_onto_its_perch() -> void:
 		bird.free()
 
 
-## A BEAT OF HANG BEFORE THE FEET TOUCH. Wings out, the body pitching up, and
-## almost nothing left of the descent -- which is what separates a landing from
-## a curve that happens to end in the right place.
+## NO LANDING SPEEDS UP INTO THE PERCH. The universal half, and it holds for
+## every bird whatever it declares: a descent that spent its last quarter of the
+## time on more than its last quarter of the drop would be accelerating into the
+## wire.
 ##
 ## Asserted on DISTANCE rather than on speed, because a share of the drop is a
 ## statement about the picture where a share of the peak is a statement about
-## the curve. A descent with no flare at all spends its last quarter of the time
-## on its last quarter of the drop; measured at HEAD, the crow's old `smoothstep`
-## left 16.0 per cent there and the pigeon's 23.0. A tenth is comfortably under
-## both and comfortably over the 7.3 / 7.4 the shipped `flare_hang` produces.
-func test_the_last_quarter_of_the_descent_is_a_hang() -> void:
+## the curve.
+func test_no_landing_speeds_up_into_the_perch() -> void:
 	for pair in [["crow", _crow()], ["pigeon", _pigeon()]]:
 		var bird := pair[1] as Bird
 		var flown := _fly(bird)
 		var left := flown.share_of_the_drop_left_in_the_last(0.25, (PERCH["at"] as Vector3).y)
 		assert_true(
-			left <= 0.10,
+			left < 0.25,
 			("the %s still had %.1f per cent of its drop to make with a quarter of its descent left "
-				+ "-- it arrives rather than flares") % [pair[0], left * 100.0]
+				+ "-- it is speeding up into the wire, not slowing into it") % [pair[0], left * 100.0]
 		)
 		bird.free()
+
+
+## A BEAT OF HANG BEFORE THE FEET TOUCH, for a bird that asks for one. Wings out,
+## the body pitching up, and almost nothing left of the descent.
+##
+## SCOPED TO THE SPECIES THAT DECLARE IT, and that is not a softened test -- it
+## is the true claim. `flare_hang` is per-species precisely because the bend is
+## not free (see `BirdSpecies.flare_hang`), and the crow declines it: its landing
+## was reviewed and approved with the unbent curve. Holding the crow to a tenth
+## would be asserting that a shot which was signed off is wrong.
+##
+## The threshold is the measurement either side of it: an unbent descent leaves
+## 15.5 per cent of the drop in the last quarter of the time and a bent one 7.4.
+func test_a_bird_that_asks_for_a_flare_hang_gets_one() -> void:
+	var asked := 0
+	for pair in [["crow", _crow()], ["pigeon", _pigeon()]]:
+		var bird := pair[1] as Bird
+		if bird.flare_hang <= 1.0:
+			bird.free()
+			continue
+		asked += 1
+		var flown := _fly(bird)
+		var left := flown.share_of_the_drop_left_in_the_last(0.25, (PERCH["at"] as Vector3).y)
+		assert_true(
+			left <= 0.10,
+			("the %s declares flare_hang %.2f and still had %.1f per cent of its drop to make with a "
+				+ "quarter of its descent left -- the bend is not reaching the curve")
+				% [pair[0], bird.flare_hang, left * 100.0]
+		)
+		bird.free()
+	assert_true(asked > 0, "no shipped species asks for a hang, so this test measured nothing")
+
+
+## The crow declines it, and says so in its own data rather than by accident.
+func test_the_crow_declines_the_hang_and_the_pigeon_asks_for_it() -> void:
+	assert_almost_eq(
+		CROW.flare_hang, 1.0, 0.0001,
+		("the crow's landing was reviewed and approved with the unbent curve; flare_hang %.2f bends it "
+			+ "and raises its fall rate as a side effect of a change made for another bird") % CROW.flare_hang
+	)
+	assert_true(
+		PIGEON.flare_hang > 1.0,
+		("the pigeon's pack gave it no flare to play -- `Dove_Fly to Idle` is ten frames -- so without "
+			+ "a bend its descent is a symmetric slide. flare_hang is %.2f") % PIGEON.flare_hang
+	)
+
+
+## THE CROW'S DESCENT IS THE CURVE THAT WAS APPROVED, and this is what says so
+## in numbers rather than in a duration.
+##
+## `test_the_crows_landing_still_lasts_exactly_its_take` pins the timing, which
+## a change to the SHAPE would sail straight past. These two are the shape:
+## measured on the shipped build before any of this work, one whole return flown
+## at 1/60 s, the crow peaked at 3.349 m/s of descent and left 16.0 per cent of
+## its drop for the last quarter of the time.
+##
+## Both are stated as absolutes rather than read off the code, so a future
+## "shared" constant that quietly bends this bird again turns the suite red.
+func test_the_crows_descent_is_still_the_shape_that_was_signed_off() -> void:
+	var crow := _crow()
+	var flown := _fly(crow)
+	assert_almost_eq(
+		flown.peak_down, 3.349, 0.10,
+		"the crow now falls at %.3f m/s at its fastest; the approved landing peaked at 3.349" % flown.peak_down
+	)
+	var left := flown.share_of_the_drop_left_in_the_last(0.25, (PERCH["at"] as Vector3).y)
+	assert_almost_eq(
+		left, 0.160, 0.02,
+		"the crow now leaves %.1f per cent of its drop for the last quarter; the approved landing left 16.0" % [
+			left * 100.0]
+	)
+	crow.free()
 
 
 ## THE TAKE'S OWN TOUCHDOWN FRAME LANDS ON THE FRAME THE FEET TOUCH, whatever

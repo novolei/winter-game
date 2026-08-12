@@ -112,6 +112,7 @@ launch_climb_m = 0.22
 land_seconds = 0.417
 descent_seconds = 1.05
 settle_seconds = 0.6
+flare_hang = 1.3
 mill_speed = 4.2
 cruise_speed = 9.0
 fewest = 2

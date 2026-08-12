@@ -259,7 +259,7 @@ enum State {
 @export var flare_entry_speed := 0.55
 
 ## THE HANG: how much of the descent happens early, so the last stretch is a
-## float rather than the second half of a slide.
+## float rather than the second half of a slide. Seeded from the species.
 ##
 ## The plain curve in `_descent_point()` is symmetric -- fastest in the middle,
 ## and still doing two thirds of its peak a quarter of the way from the wire.
@@ -271,21 +271,9 @@ enum State {
 ## lengthens the hang WITHOUT reintroducing the step at the seam the whole
 ## treatment exists to remove.
 ##
-## SWEPT, because the hang is not free -- distance moved earlier is distance
-## moved faster, and the fall rate is the number the owner reacted to. Share of
-## the drop still left in the last quarter of the time, against peak descent
-## rate:
-##
-##   hang   crow: last qtr / peak down     pigeon: last qtr / peak down
-##   1.0        15.5%   3.292 m/s               15.7%   4.130 m/s
-##   1.3         7.3%   3.718 m/s                7.4%   4.656 m/s
-##   1.5         4.4%   4.055 m/s                4.4%   5.074 m/s
-##   1.8         2.0%   4.592 m/s                2.0%   5.742 m/s
-##
-## 1.3 is where the float appears without the fall rate climbing: the crow's peak
-## goes 3.349 -> 3.718 m/s against the 18.097 the pigeon used to arrive at, and
-## the last quarter of the descent stops being half of it.
-@export var flare_hang := 1.3
+## PER SPECIES, and it was a shared constant for one draft. See
+## `BirdSpecies.flare_hang` for the sweep and for why the crow declines it.
+@export var flare_hang := 1.0
 
 ## How long an inbound bird is allowed to spend looking for its perch before it
 ## simply commits. A bird whose steering overshot and is circling forever would
@@ -392,6 +380,7 @@ func set_species(value: BirdSpecies) -> void:
 	land_flare = value.land_flare
 	descent_seconds = value.descent_seconds
 	settle_seconds = value.settle_seconds
+	flare_hang = value.flare_hang
 	mill_speed = value.mill_speed
 	cruise_speed = value.cruise_speed
 	balance_on = value.balance_on
