@@ -482,6 +482,38 @@ func _crossings(values: Array, level: float) -> int:
 	return n
 
 
+## THE SHIPPED FILE SAYS WHAT THE GENERATOR SAYS, field by field.
+##
+## Needed because of something `ResourceSaver` does that is easy to miss: it
+## OMITS any value equal to the script's default. The valley profile's numbers
+## are the definition's defaults, so `data/weather/wind_valley.tres` is two lines
+## long -- `id` and `display_name` -- and every other figure in it is inherited
+## from `wind_profile.gd` at load time.
+##
+## That is fine until somebody retunes a default in the definition believing they
+## are changing a fallback, and silently changes THE WEATHER THE GAME SHIPS WITH
+## instead. Nothing in the file would show it and nothing else would fail. This
+## does.
+func test_the_shipped_profiles_say_what_the_generator_says() -> void:
+	var Generator := load("res://tools/generate_wind_profiles.gd")
+	for spec in [Generator.VALLEY, Generator.GALE]:
+		var path := "res://data/weather/%s.tres" % spec["id"]
+		var profile: WindProfile = load(path)
+		assert_not_null(profile, path)
+		if profile == null:
+			continue
+		for key in spec:
+			var wanted = spec[key]
+			var found = profile.get(key)
+			if wanted is float:
+				assert_almost_eq(
+					float(found), float(wanted), 0.00001,
+					"%s.%s is %s, the generator says %s" % [path, key, found, wanted]
+				)
+			else:
+				assert_eq(found, wanted, "%s.%s" % [path, key])
+
+
 func test_both_profiles_load_and_name_themselves() -> void:
 	for path in [VALLEY_PATH, GALE_PATH]:
 		var profile: WindProfile = load(path)
