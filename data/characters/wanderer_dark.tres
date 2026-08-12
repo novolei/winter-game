@@ -8,3 +8,4 @@ id = &"dark"
 display_name = "Dark — the silhouette"
 albedo_tint = Color(0.34, 0.34, 0.36, 1)
 key_energy = 0.0
+ghost_color = Color(0.56078434, 0.6901961, 0.84705883, 0.38)

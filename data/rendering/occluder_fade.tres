@@ -1,0 +1,7 @@
+[gd_resource type="Resource" script_class="OccluderFadeSettings" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/occluder_fade_settings.gd" id="1_p2qxb"]
+
+[resource]
+script = ExtResource("1_p2qxb")
+tint = Color(0.08627451, 0.09411765, 0.10980392, 0.55)

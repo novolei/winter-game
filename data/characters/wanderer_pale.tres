@@ -7,3 +7,4 @@ script = ExtResource("1_vl35h")
 id = &"pale"
 display_name = "Pale — the model's own colours"
 albedo_tint = Color(0.8, 0.8, 0.82, 1)
+ghost_color = Color(0.56078434, 0.6901961, 0.84705883, 0.38)

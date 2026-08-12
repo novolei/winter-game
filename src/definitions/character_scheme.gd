@@ -56,3 +56,72 @@ extends Resource
 @export var key_energy := 1.6
 @export var key_elevation_degrees := 38.0
 @export var key_azimuth_degrees := -25.0
+
+## ---------------------------------------------------------------------------
+## Reading through what stands in front of him
+## ---------------------------------------------------------------------------
+## The colour and opacity the figure shows through an occluder at.
+##
+## Art Bible rule 1's last row is why this exists: the camera **never rotates,
+## it only follows**. There is no stick to swing, so a player who walks behind
+## the farmhouse, a tree or the power pole simply stops being on screen -- and
+## at 45 degrees against a farmstead this happens constantly. The owner's
+## reference frame from the source video shows the answer: the figure reads
+## *through* the geometry as a soft silhouette while the trunks and branches
+## stay fully drawn over it.
+##
+## `wear_ghost()` is where it is applied, and the whole effect is those two
+## property writes. Nothing about the occluders changes -- see that method.
+##
+## ALPHA IS THE OFF SWITCH. A ghost nobody can see is no ghost, so a scheme
+## that wants the effect off asks for zero rather than carrying a second field
+## that can disagree with this one.
+##
+## The colour comes out of `data/palette/color_bible.tres` even though the
+## character is exempt from the 12-colour table. The exemption is about the
+## *figure* -- his coat, his scarf, his boots. This is drawn over the world, and
+## rule 12 caps warm pixels at half a percent of frame and reserves them for
+## fire, windows, beacons, the scarf and the truck; a ghost is none of those and
+## covers far more of the frame than half a percent.
+@export var ghost_color := Color(0.0, 0.0, 0.0, 0.0)
+
+
+## Draws the figure a second time, at `ghost_color`, on exactly the pixels where
+## his first pass failed the depth test.
+##
+## ---------------------------------------------------------------------------
+## WHY THE STENCIL AND NOT ONE OF THE OTHER TWO ANSWERS
+## ---------------------------------------------------------------------------
+## There are three ways to keep a character visible behind scenery, and the
+## constraints on this project choose between them:
+##
+##   1. **Fade the occluder.** Rejected. The occluders are cel-shaded,
+##      palette-coloured and specular-disabled by Art Bible rules 8 and 9, and
+##      `tests/art/test_shading_features.gd` enforces that on every world
+##      material. Making the house dissolve means touching those materials and
+##      widening the exemption -- and the owner asked for the *character* shown
+##      through, not the building dissolved.
+##   2. **A second pass with the depth test inverted.** Correct in outline and
+##      wrong in detail. The figure's own geometry overlaps itself -- a coat
+##      flap in front of a torso -- so the inner surface fails the depth test
+##      against the outer one and the ghost is painted over the character's own
+##      visible body. The effect would then be visible with nothing in the way
+##      at all, which is the one thing it must never be.
+##   3. **The stencil**, which is this. The visible pass marks the pixels it
+##      actually drew; the ghost draws only where that mark is absent. Self-
+##      overlap cannot produce a false positive, because the outer surface has
+##      already claimed those pixels.
+##
+## `STENCIL_MODE_XRAY` builds pass 3 outright: unshaded, alpha-blended, depth
+## test off, stencil compared NOT_EQUAL. What it sets up is pinned by
+## `tests/unit/test_character_occlusion.gd` so that a change to it in some later
+## Godot cannot pass silently.
+##
+## Takes the material rather than living in `PlayerController` so that the
+## figure's whole appearance stays one object's business, and so this is
+## testable without building a body.
+func wear_ghost(material: BaseMaterial3D) -> void:
+	if material == null or ghost_color.a <= 0.0:
+		return
+	material.stencil_mode = BaseMaterial3D.STENCIL_MODE_XRAY
+	material.stencil_color = ghost_color

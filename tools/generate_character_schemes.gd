@@ -9,6 +9,40 @@ extends SceneTree
 ## colour literal is allowed to live, which is why the numbers are here rather
 ## than in the resource script.
 
+## Where the occlusion ghost's colour comes from.
+##
+## Read out of the palette rather than typed here, which is the opposite of what
+## the header says about the character's colours -- and deliberately so. The
+## tint below paints the *figure*, which is exempt from the 12-colour table. The
+## ghost is drawn over the *world*: over trees at `#131C30` and walls two steps
+## down from `#33496E`. Rule 12 caps warm pixels at half a percent of frame and
+## reserves them for fire, windows, beacons, the scarf and the truck, and a
+## silhouette showing through the farmhouse is a good deal more than half a
+## percent of frame. So it takes a world colour, and the brightest cool one
+## there is, because what it has to separate from is the darkest thing on
+## screen.
+const PALETTE_PATH := "res://data/palette/color_bible.tres"
+
+## How much of the ghost reaches the screen.
+##
+## The number the acceptance criteria pin from both ends: high enough that the
+## figure reads clearly through a trunk, low enough that the trunk still reads
+## as solid. Judged at gameplay framing with the figure at 11% of frame height
+## -- see .superpowers/sdd/wave2/shots/.
+##
+## SWEPT, NOT CHOSEN: 0.22, 0.32, 0.42 and 0.55 were rendered from the same
+## standing position 1.2 m behind a trunk, and the two ends both fail. At 0.55
+## the trunk crossing the figure came out at #6d87a8 -- brighter than the snow
+## shadow beside it, so the tree stopped reading as wood. At 0.22 the figure was
+## a smear. The blend is linear, which is why this is so sensitive: the ghost is
+## the palette's brightest snow tone and a tree is `#131C30`, so even a quarter
+## of it doubles the trunk's luminance.
+##
+## The house pulls the other way -- its lit wall and its roof snow are far
+## brighter than a tree, so the same alpha reads much weaker over them -- and
+## 0.38 is where both frames are acceptable at once.
+const GHOST_ALPHA := 0.38
+
 const SCHEMES := [
 	{
 		"file": "wanderer_pale",
@@ -45,6 +79,13 @@ const SCHEMES := [
 func _initialize() -> void:
 	var SchemeScript := load("res://src/definitions/character_scheme.gd")
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://data/characters"))
+	var bible: Resource = load(PALETTE_PATH)
+	if bible == null:
+		printerr("generate_character_schemes: no palette at %s" % PALETTE_PATH)
+		quit(1)
+		return
+	var ghost: Color = bible.snow_tones[0]
+	ghost.a = GHOST_ALPHA
 	var failures := 0
 	for row in SCHEMES:
 		# Annotated, not `var x =`: an untyped local is a Variant and a typed
@@ -55,6 +96,11 @@ func _initialize() -> void:
 		scheme.display_name = row["name"]
 		scheme.albedo_tint = row["tint"]
 		scheme.key_energy = row["key"]
+		# Both looks ghost the same, and that is a decision rather than an
+		# oversight: what the ghost has to separate from is the geometry in
+		# front of the figure, which is the same geometry whichever way the
+		# figure itself is painted.
+		scheme.ghost_color = ghost
 		var path: String = "res://data/characters/%s.tres" % row["file"]
 		var error := ResourceSaver.save(scheme, path)
 		if error != OK:

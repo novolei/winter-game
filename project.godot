@@ -26,6 +26,7 @@ SurvivalSystem="*res://src/systems/survival_system.gd"
 FuelEconomy="*res://src/systems/fuel_economy.gd"
 RunBoot="*res://src/systems/run_boot.gd"
 NightExposure="*res://src/systems/night_exposure.gd"
+OccluderFader="*res://src/rendering/occluder_fader.gd"
 
 [display]
 
