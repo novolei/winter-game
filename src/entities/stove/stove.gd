@@ -125,6 +125,59 @@ const TARGET_REST := &"fatigue:recovery"
 @export var light_range_m := 9.0
 @export var light_fade_seconds := 60.0
 
+## ---------------------------------------------------------------------------
+## WHERE THE FLAME IS, WHICH IS NOT WHERE THE STOVE IS
+## ---------------------------------------------------------------------------
+## The node's origin sits on the floor, because that is where a stove stands and
+## it is what `warmth_at()` measures from. The FIRE is in the firebox, most of a
+## metre up, and until this existed the OmniLight sat on the floor with it --
+## which has one consequence that is invisible in a list of properties and
+## decides the whole look of the room.
+##
+## The world's two-band cel light() bands on `lambert * ATTENUATION`, and lambert
+## for a floor is the dot of +Y with the direction to the light. A light lying ON
+## the floor is in the floor's own plane, so that dot is zero everywhere and
+## **the fire cannot light the floor at all, at any energy or range**. The room's
+## floorboards took the shade band from wall to wall and the only lit surfaces
+## were the vertical ones. Raised into the firebox the same light gives the floor
+## a real falloff -- lambert h/d, brightest under the fire and dying with
+## distance -- which is what makes the room read as lit from one corner.
+##
+## A vector rather than a height, because a firebox faces a direction. Left at
+## the origin the light sits INSIDE the stove's own body, and with shadows on
+## that is a lamp in a closed box: the first thing its shadow map sees is the
+## casing around it. Offset out through the firebox door and the fire is where a
+## fire is, in the room, throwing the stove's own bulk backward onto the wall
+## behind it.
+##
+## Local to the stove, so a stove that is moved or turned takes its fire with it.
+@export var light_offset := Vector3.ZERO
+
+## Godot's omni decay exponent (`OmniLight3D.omni_attenuation`). 1.0 is the
+## engine default and is roughly inverse-distance.
+##
+## Lower indoors, and the reason is the cel band rather than physics. At 1.0 the
+## distance term falls so much faster than the angle term that the band boundary
+## is a ring on the floor a couple of metres out, and every surface past it is
+## one flat colour whichever way it faces. Bring the decay down and the ANGLE is
+## what decides the band, so the boundary lands on the corners of the furniture
+## -- Art Bible section 4.1's two bands, put where they describe the form.
+@export var light_attenuation := 1.0
+
+## Whether the fire casts shadows.
+##
+## Off by default and that must not change: a fire in the OPEN casting shadows
+## would lay a second set of them across snow already shaded by the sun through
+## a two-band cel shader, and there is only supposed to be one shadow direction
+## in this world. The fire outdoors is a glow, not a lamp.
+##
+## INDOORS it is the opposite, and it is the cheapest form the room has. With
+## `light_cull_mask` narrowed to the interior (see below) the shadow map holds
+## only the room's own meshes and whoever is standing in it, and every piece of
+## furniture gets a dark pool under it that both grounds it and separates it
+## from the floorboards it would otherwise merge into.
+@export var light_shadows := false
+
 ## Which render layers this fire may light. Default is everything, which is
 ## what a fire in the open should do.
 ##
@@ -361,11 +414,37 @@ func _build_light() -> void:
 	if bible != null and not bible.warm_tones.is_empty():
 		_light.light_color = bible.warm_tones[bible.warm_tones.size() - 1]
 	_light.omni_range = light_range_m
+	_light.omni_attenuation = light_attenuation
 	_light.light_cull_mask = light_cull_mask
-	# Off: the world is lit by one directional sun through a two-band cel
-	# shader, and a second shadow-casting light would lay a second band across
-	# the snow. The fire is a glow, not a lamp.
-	_light.shadow_enabled = false
+	_light.position = light_offset
+	# See light_shadows: off in the open, on in a room, and never on a light
+	# whose cull mask still reaches the valley.
+	_light.shadow_enabled = light_shadows
+	# A room is boxes standing on a floor, all of it within a few metres of the
+	# lamp, so the defaults -- tuned for a light out in a scene -- detach every
+	# contact shadow from its caster. Small enough to keep the pool touching the
+	# table leg, large enough that a wall the fire rakes along does not
+	# self-shadow into vertical stripes, which is what the first pass produced
+	# on the gable behind the stove.
+	_light.shadow_bias = 0.02
+	_light.shadow_normal_bias = 0.6
+	# A HARD SHADOW, AND NOT BECAUSE HARD IS CHEAPER.
+	#
+	# A two-band cel light() is a THRESHOLD: `smoothstep(t-s, t+s, lambert *
+	# ATTENUATION)` with a narrow s turns any value near t into one band or the
+	# other. Feed it a filtered shadow -- PCF, or a penumbra off `light_size` --
+	# and the filter's own sample pattern, which is invisible under smooth
+	# shading, is quantised into a stipple across every surface whose lambert
+	# happens to sit near the boundary. Measured on 4.7.1: `light_size` 0.35
+	# dithered the whole room, and even the default PCF blur speckled the wall
+	# behind the stove.
+	#
+	# So ATTENUATION has to arrive as 0 or 1 and the resolution has to carry the
+	# edge instead -- which is what the positional shadow atlas in project.godot
+	# is sized for. Art Bible rule 10's soft edges are the SUN's, and the sun
+	# still has them: it is a different light with a different filter quality.
+	_light.light_size = 0.0
+	_light.shadow_blur = 0.0
 	_light.light_specular = 0.0
 	add_child(_light)
 

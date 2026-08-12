@@ -49,6 +49,44 @@ extends Node3D
 ## +Z sides, and the shell holds the +X and -Z ones. Its foundation skirt is the
 ## one part of it that faces the camera, and the snow stands about half a metre
 ## over the top of that (see the wave-2 report), so it is not in any frame.
+##
+## ---------------------------------------------------------------------------
+## TWO TIERS, BECAUSE ONE PAIR OF COLOURS IS A ROOM WITH NO FORM IN IT
+## ---------------------------------------------------------------------------
+## The first version of this handed EVERY warmed surface the same warm pair, and
+## that is a bigger decision than it looks. At warmth 1 the blend reaches the far
+## end, so `mix(lit_color, warm_lit_color, 1.0)` is `warm_lit_color` outright --
+## and the floor, the walls, the table, the bench, the bed and the stove body all
+## arrive at the identical two colours. **Every difference the model carried was
+## thrown away at exactly the moment the room was on screen.** The room came out
+## as one even orange field with the furniture invisible inside it: the reveal's
+## payoff frame, with no form in it at all.
+##
+## So the warm pair is chosen PER PART, off a ladder, and the ladder is the
+## palette's own three warm entries read as three values rather than three hues:
+##
+##     ColorBible.warm_tones = [ #6E2F2E, #A05A35, #FFB257 ]
+##                                 dark      mid      bright
+##
+##   `warm_parts`       the FIELD -- floor, walls, ceiling. The brightest pair,
+##                      #FFB257 over #A05A35. This is the glow the player walked
+##                      through a valley to reach.
+##
+##   `furnishing_parts` what STANDS ON the field -- table, bench, stove body,
+##                      shelves, bed. One step down, #A05A35 over #6E2F2E, so a
+##                      piece of furniture is a dark shape against a warm ground
+##                      whichever band it is in.
+##
+## That is the same value logic the exterior already wins with -- near-black tree
+## and building silhouettes against bright snow (Art Bible rule 7) -- with the
+## field warm instead of blue. **An object reads because its value differs from
+## its ground, not because its hue does.**
+##
+## The one exception is a surface whose own albedo is ALREADY a warm palette
+## entry: the firebox, and a lit window when one is built. Those are light
+## SOURCES, they are the brightest thing in the room by definition, and a stove
+## whose fire went one step darker because the stove is furniture would be a fire
+## behind smoked glass. They take the brightest pair wherever they are listed.
 
 const CEL_INTERIOR_SHADER := "res://assets/shaders/cel_interior.gdshader"
 
@@ -57,10 +95,16 @@ const CEL_INTERIOR_SHADER := "res://assets/shaders/cel_interior.gdshader"
 ## opened roof, and the walls still cast into the world's shadow map.
 const INTERIOR_LAYER := 1 << 2
 
-## What counts as the room, by name, resolved under `building_path`. Authored
-## per building exactly like InteriorReveal.fade_parts, and for the same reason:
-## wave 4 adds four more buildings and none of them may need new code.
+## The room's FIELD, by name, resolved under `building_path` -- the floor, the
+## walls, the ceiling. Authored per building exactly like
+## InteriorReveal.fade_parts, and for the same reason: wave 4 adds four more
+## buildings and none of them may need new code.
 @export var warm_parts: Array[StringName] = []
+
+## What stands on the field: the furniture. Same room, same shader, same render
+## layer -- one step down the warm ladder. See the header for why the two lists
+## exist rather than one.
+@export var furnishing_parts: Array[StringName] = []
 
 ## Empty means the node this hangs under.
 @export var building_path: NodePath = ^""
@@ -76,6 +120,14 @@ const INTERIOR_LAYER := 1 << 2
 @export var warm_lit_slot := 2
 @export var warm_shade_slot := 1
 
+## How far down the warm ladder a furnishing sits below the field. One step is
+## the whole of the two-tier scheme in the header: the field runs #FFB257 over
+## #A05A35 and the furniture runs #A05A35 over #6E2F2E, so a furnishing's LIT
+## band is the field's SHADE band and it can never out-value the room it stands
+## in. Two would put every stick of furniture on #6E2F2E in both bands -- a pure
+## silhouette, which is legible but throws away the furniture's own form.
+@export var furnishing_drop := 1
+
 ## Surfaces already on this warm slot are light SOURCES, not lit surfaces: the
 ## stove's firebox is the only one in this building. They get emission, and the
 ## Environment's existing glow blooms them. Art Bible rule 12's warm-pixel quota
@@ -83,6 +135,36 @@ const INTERIOR_LAYER := 1 << 2
 ## for interior lighting to be added to rule 12's list explicitly.
 @export var emissive_slot := 2
 @export var emission_strength := 1.6
+
+## ---------------------------------------------------------------------------
+## WHERE THE BAND BOUNDARY FALLS, AND WHY THE ROOM SETS ITS OWN
+## ---------------------------------------------------------------------------
+## The world's solids take these from the lighting preset through
+## CelPainter.set_world_shading(), because outside there is one light and it is
+## the sun: the threshold is tuned against a 21.5-degree elevation on flat snow.
+##
+## A room is a different problem. It is lit by a point source standing IN it, so
+## the term that decides the band is the angle to the fire and the distance from
+## it, and 0.30 -- the value a wall takes outdoors -- puts the boundary about two
+## metres from the stove and leaves five-sixths of the floor in the shade band.
+## That is a room with a torch in it, not a room with a fire in it.
+##
+## Lower, the boundary stops being a ring on the floor and starts landing on the
+## CORNERS: a face turned toward the fire is lit however far away it is, a face
+## turned away is not, and the line between them is an edge of the furniture
+## rather than an arbitrary curve across it. Art Bible section 4.1's two bands
+## are intact -- this moves where they meet, it does not soften the meeting.
+## There is a second reason this number is 0.18 and not, say, 0.13, and it cost
+## a capture to find. The sun still reaches a revealed room, and the inward face
+## of the back wall meets it at N.L = 0.129 -- a grazing hit, from a light that
+## is behind the wall's own building. A threshold set anywhere near that value
+## puts the whole wall ON the boundary, where the directional shadow's filter
+## (project.godot runs it at Ultra, which is a sampled penumbra) is quantised by
+## the band into a vertical hatch across the largest shape in the frame. Above
+## 0.155 the sun cannot reach the band at all on that face and the wall belongs
+## entirely to the fire, which is the point of the room.
+@export var band_threshold := 0.18
+@export var band_softness := 0.025
 
 ## How long the room takes to catch, and to go cold. Slower than the reveal's
 ## 0.30 s on purpose: a roof coming off is an edit, a fire taking hold is not.
@@ -148,16 +230,18 @@ func resolve() -> void:
 	var shader: Shader = load(CEL_INTERIOR_SHADER)
 	var painter := CelPainter.new(snow_shade_step, structure_shade_step)
 	var building := building_node()
-	for name in warm_parts:
-		var found: GeometryInstance3D = null
-		if building != null:
-			found = building.find_child(String(name), true, false) as GeometryInstance3D
-		if found == null:
-			_missing.append(String(name))
-			continue
-		_parts.append(found)
-		found.layers |= INTERIOR_LAYER
-		_repaint(found, painter, bible, shader)
+	for entry in [{"names": warm_parts, "drop": 0}, {"names": furnishing_parts, "drop": furnishing_drop}]:
+		var drop: int = entry["drop"]
+		for name in entry["names"]:
+			var found: GeometryInstance3D = null
+			if building != null:
+				found = building.find_child(String(name), true, false) as GeometryInstance3D
+			if found == null:
+				_missing.append(String(name))
+				continue
+			_parts.append(found)
+			found.layers |= INTERIOR_LAYER
+			_repaint(found, painter, bible, shader, drop)
 	apply_warmth(_warmth)
 
 
@@ -175,12 +259,12 @@ func _complain() -> void:
 		)
 
 
-func _repaint(part: GeometryInstance3D, painter: CelPainter, bible: ColorBible, shader: Shader) -> void:
+func _repaint(
+		part: GeometryInstance3D, painter: CelPainter, bible: ColorBible,
+		shader: Shader, drop: int) -> void:
 	var instance := part as MeshInstance3D
 	if instance == null or instance.mesh == null:
 		return
-	var warm_lit := _warm_tone(bible, warm_lit_slot)
-	var warm_shade := _warm_tone(bible, warm_shade_slot)
 	var emissive := _warm_tone(bible, emissive_slot)
 	for surface in range(instance.mesh.get_surface_count()):
 		# Off the mesh's own imported material, not off whatever override is
@@ -190,12 +274,17 @@ func _repaint(part: GeometryInstance3D, painter: CelPainter, bible: ColorBible, 
 		var albedo := Color(1.0, 0.0, 1.0)
 		if existing is BaseMaterial3D:
 			albedo = (existing as BaseMaterial3D).albedo_color
+		# A surface that is ALREADY a warm palette entry is a source, not a lit
+		# surface, and never drops a rung -- see the header.
+		var rung := 0 if _is_warm(bible, albedo) else drop
 		var material := ShaderMaterial.new()
 		material.shader = shader
 		material.set_shader_parameter("lit_color", albedo)
 		material.set_shader_parameter("shade_color", painter.shade_for(albedo))
-		material.set_shader_parameter("warm_lit_color", warm_lit)
-		material.set_shader_parameter("warm_shade_color", warm_shade)
+		material.set_shader_parameter("warm_lit_color", _warm_tone(bible, warm_lit_slot - rung))
+		material.set_shader_parameter("warm_shade_color", _warm_tone(bible, warm_shade_slot - rung))
+		material.set_shader_parameter("band_threshold", band_threshold)
+		material.set_shader_parameter("band_softness", band_softness)
 		material.set_shader_parameter("emission_strength",
 			emission_strength if CelPainter._same(albedo, emissive) else 0.0)
 		instance.set_surface_override_material(surface, material)
@@ -206,6 +295,33 @@ func _warm_tone(bible: ColorBible, slot: int) -> Color:
 	if bible == null or bible.warm_tones.is_empty():
 		return Color(1.0, 0.0, 1.0)
 	return bible.warm_tones[clampi(slot, 0, bible.warm_tones.size() - 1)]
+
+
+## Is this colour one of the palette's warm family? Compared with the same
+## 1/255 tolerance CelPainter uses, and for the same reason: the colour has been
+## through an 8-bit albedo field on the way here.
+func _is_warm(bible: ColorBible, albedo: Color) -> bool:
+	if bible == null:
+		return false
+	for tone in bible.warm_tones:
+		if CelPainter._same(tone, albedo):
+			return true
+	return false
+
+
+## The warm pair a part on `drop` rungs would be given, as [lit, shade]. Public
+## so a test can state the tiers without reaching into a ShaderMaterial, and so
+## the two lists can be compared against each other rather than against numbers
+## typed twice.
+func warm_pair_for(drop: int) -> Array[Color]:
+	var bible: ColorBible = load(CelPainter.PALETTE_PATH)
+	# Appended rather than returned as a literal: an untyped array literal in a
+	# typed return position is the write the typed setter rejects, and it aborts
+	# the caller rather than logging (briefing trap 4).
+	var pair: Array[Color] = []
+	pair.append(_warm_tone(bible, warm_lit_slot - drop))
+	pair.append(_warm_tone(bible, warm_shade_slot - drop))
+	return pair
 
 
 # --- the warmth itself ------------------------------------------------------

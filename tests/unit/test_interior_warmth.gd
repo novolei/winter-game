@@ -19,6 +19,14 @@ extends TestCase
 ##      centred on the house that read as a debug gizmo. Putting the room on
 ##      its own render layer is what lets that light be aimed at the room.
 ##
+##   3. THE ROOM HAS FORM IN IT. The first version handed every warmed surface
+##      the same warm pair, and at warmth 1 the blend reaches the far end -- so
+##      the floor, the walls, the table and the bed all arrived at the identical
+##      two colours and the payoff frame of the whole game was an even orange
+##      field with the furniture invisible inside it. The warm pair is now
+##      chosen per part off a ladder, and these tests are what stop it
+##      collapsing back to one.
+##
 ## Every subject is built with .new() and never enters the tree, so the blend
 ## snaps instead of tweening and every endpoint is assertable with no wall clock.
 
@@ -53,7 +61,7 @@ func _bible() -> ColorBible:
 ## A building whose parts carry real palette colours, because that is what the
 ## component reads: the .glb's imported StandardMaterial3D albedo, resolved at
 ## import time by tools/palette_import_materials.gd.
-func _build(names := WARMED) -> InteriorWarmth:
+func _build(names := WARMED, furnishings := []) -> InteriorWarmth:
 	var bible := _bible()
 	_building = Node3D.new()
 	_building.name = "Farmhouse"
@@ -66,8 +74,11 @@ func _build(names := WARMED) -> InteriorWarmth:
 		# is the one that has to come out emissive.
 		&"FH_Furniture": bible.warm_tones[2],
 		&"FH_Porch": bible.snow_tones[1],
+		# A furnishing that is NOT already warm, so the ladder actually moves for
+		# it -- the table, the bench, the bed frame.
+		&"FH_Table": bible.structure_tones[2],
 	}
-	for part_name in WARMED + LEFT_COLD:
+	for part_name in WARMED + LEFT_COLD + [&"FH_Table"]:
 		var part := MeshInstance3D.new()
 		part.name = String(part_name)
 		var mesh := BoxMesh.new()
@@ -77,9 +88,15 @@ func _build(names := WARMED) -> InteriorWarmth:
 		part.mesh = mesh
 		model.add_child(part)
 	var warmth: InteriorWarmth = InteriorWarmthScript.new()
+	# Annotated, not `var list = []`: an untyped local makes the compiler emit an
+	# untyped Array and the typed setter rejects it, aborting the rest of this
+	# function with every later assertion silently unrun (briefing trap 4).
 	var list: Array[StringName] = []
 	list.assign(names)
 	warmth.warm_parts = list
+	var stood_on: Array[StringName] = []
+	stood_on.assign(furnishings)
+	warmth.furnishing_parts = stood_on
 	_building.add_child(warmth)
 	warmth.resolve()
 	return warmth
@@ -242,6 +259,145 @@ func test_only_a_surface_on_the_emissive_slot_glows() -> void:
 		float(_material(&"FH_Room").get_shader_parameter("emission_strength")), 0.0, 0.0001,
 		"the floor is lit, not luminous"
 	)
+
+
+# --- the two tiers, which are what put form back in the room ----------------
+
+## THE REGRESSION TEST FOR THE ORANGE BOX.
+##
+## `mix(lit_color, warm_lit_color, warmth)` at warmth 1 is warm_lit_color
+## outright, so whatever pair a surface is handed IS its colour in the frame the
+## whole reveal exists to produce. One pair for the room means one colour for the
+## room. A furnishing has to arrive on a different, darker pair or the table is
+## the same value as the floor it stands on.
+func test_a_furnishing_takes_a_darker_warm_pair_than_the_field() -> void:
+	var warmth := _build([&"FH_Room"], [&"FH_Table"])
+	var field := _material(&"FH_Room")
+	var stood_on := _material(&"FH_Table")
+	assert_true(
+		_luma(stood_on.get_shader_parameter("warm_lit_color"))
+			< _luma(field.get_shader_parameter("warm_lit_color")),
+		"a furnishing's lit band is not darker than the field's, so the room is flat again"
+	)
+	assert_true(
+		_luma(stood_on.get_shader_parameter("warm_shade_color"))
+			< _luma(field.get_shader_parameter("warm_shade_color")),
+		"a furnishing's shade band is not darker than the field's"
+	)
+
+
+## One rung, exactly. The furnishing's LIT band is the field's SHADE band, which
+## is what makes it impossible for a piece of furniture to out-value the room it
+## stands in whichever band either of them is in.
+func test_a_furnishing_can_never_out_value_the_field() -> void:
+	var warmth := _build([&"FH_Room"], [&"FH_Table"])
+	assert_eq(
+		_material(&"FH_Table").get_shader_parameter("warm_lit_color"),
+		_material(&"FH_Room").get_shader_parameter("warm_shade_color"),
+		"the ladder has more than one rung between the field and what stands on it"
+	)
+
+
+func test_the_two_tiers_come_off_the_palette_and_not_out_of_a_literal() -> void:
+	var warmth := _build([&"FH_Room"], [&"FH_Table"])
+	var bible := _bible()
+	for pair in [
+		{"part": &"FH_Room", "drop": 0},
+		{"part": &"FH_Table", "drop": warmth.furnishing_drop},
+	]:
+		var expected: Array[Color] = warmth.warm_pair_for(int(pair["drop"]))
+		var material := _material(pair["part"])
+		assert_eq(
+			material.get_shader_parameter("warm_lit_color"), expected[0],
+			"%s's lit band is not the palette entry its tier names" % pair["part"]
+		)
+		assert_eq(
+			material.get_shader_parameter("warm_shade_color"), expected[1],
+			"%s's shade band is not the palette entry its tier names" % pair["part"]
+		)
+		assert_true(
+			bible.warm_tones.has(expected[0]) and bible.warm_tones.has(expected[1]),
+			"both bands must be entries of ColorBible.warm_tones (briefing constraint 6)"
+		)
+
+
+## The firebox is a light SOURCE. Art Bible rule 12 spends warm pixels on the
+## fire before anything else, so a stove that went one rung down because a stove
+## is furniture would be a fire behind smoked glass.
+func test_a_surface_already_warm_keeps_the_brightest_pair_wherever_it_is_listed() -> void:
+	var warmth := _build([&"FH_Room"], [&"FH_Furniture"])
+	var bible := _bible()
+	assert_eq(
+		_material(&"FH_Furniture").get_shader_parameter("warm_lit_color"),
+		bible.warm_tones[warmth.warm_lit_slot],
+		"the firebox dropped a rung with the furniture it is built into"
+	)
+	assert_true(
+		float(_material(&"FH_Furniture").get_shader_parameter("emission_strength")) > 0.0,
+		"the firebox stopped glowing"
+	)
+
+
+func test_a_furnishing_is_on_the_fires_render_layer_too() -> void:
+	var warmth := _build([&"FH_Room"], [&"FH_Table"])
+	assert_true(
+		_part(&"FH_Table").layers & InteriorWarmthScript.INTERIOR_LAYER != 0,
+		"a furnishing off the interior layer is furniture the fire cannot light"
+	)
+	assert_eq(warmth.parts().size(), 2, "both lists must resolve into the same part list")
+
+
+func test_a_furnishing_name_the_building_does_not_have_is_reported() -> void:
+	var warmth := _build([&"FH_Room"], [&"FH_Cellar"])
+	assert_eq(
+		Array(warmth.unresolved()), ["FH_Cellar"],
+		"a missing furnishing must be nameable; got %s" % ", ".join(warmth.unresolved())
+	)
+
+
+# --- where the band boundary falls ------------------------------------------
+
+func test_the_room_sets_its_own_band_boundary_on_every_surface() -> void:
+	var warmth := _build([&"FH_Room"], [&"FH_Table"])
+	for part_name in [&"FH_Room", &"FH_Table"]:
+		assert_almost_eq(
+			float(_material(part_name).get_shader_parameter("band_threshold")),
+			warmth.band_threshold, 0.0001,
+			"%s did not take the room's own threshold, so it bands like an outdoor wall" % part_name
+		)
+		assert_almost_eq(
+			float(_material(part_name).get_shader_parameter("band_softness")),
+			warmth.band_softness, 0.0001,
+			"%s did not take the room's own softness" % part_name
+		)
+
+
+## The sun still reaches a revealed room, and it meets the inward face of the
+## back wall at N.L = 0.129 -- see LightingDirector.sun_azimuth_degrees and
+## sun_elevation_degrees, from which this number is derived below rather than
+## typed. A band boundary anywhere near it puts the largest shape in the frame
+## exactly ON the threshold, where the directional shadow's sampled penumbra is
+## quantised into a hatch. The boundary has to clear it.
+func test_the_band_boundary_clears_the_grazing_sun_on_a_back_wall() -> void:
+	var warmth := _build()
+	var elevation := deg_to_rad(21.5)
+	var azimuth := deg_to_rad(82.0)
+	# The direction back toward the sun, and the inward normal of a wall whose
+	# outward face is -Z. Same construction as LightingDirector._write().
+	var to_sun := Vector3(sin(azimuth) * cos(elevation), sin(elevation), cos(azimuth) * cos(elevation))
+	var grazing: float = maxf(to_sun.dot(Vector3(0.0, 0.0, 1.0)), 0.0)
+	assert_almost_eq(grazing, 0.1295, 0.002, "the wall's grazing lambert is not what the tuning assumed")
+	assert_true(
+		warmth.band_threshold - warmth.band_softness > grazing,
+		"the room's band boundary (%.3f - %.3f) sits on the sun's grazing hit (%.3f) on the back wall"
+			% [warmth.band_threshold, warmth.band_softness, grazing]
+	)
+
+
+## Perceived brightness, sRGB-weighted. Enough to rank three palette entries,
+## and deliberately not a colour comparison: the point of the ladder is VALUE.
+func _luma(colour: Color) -> float:
+	return 0.2126 * colour.r + 0.7152 * colour.g + 0.0722 * colour.b
 
 
 # --- timing -----------------------------------------------------------------

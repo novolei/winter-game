@@ -575,3 +575,120 @@ func test_a_dying_fire_dims() -> void:
 	)
 	stove.advance(600.0)
 	assert_eq(stove.light_energy_now(), 0.0, "a dead fire is still giving light")
+
+# --- the fire as a light in a room -------------------------------------------
+#
+# Four properties that decide what a revealed room looks like, and every one of
+# them fails silently: the picture is still a room, it is just a flat one.
+#
+# Each builds a bare stove rather than going through _build(), which would also
+# construct a bus, an economy and a survival model and overwrite the fields
+# after_each() frees -- leaking the previous set (briefing constraint 2). A
+# light needs none of them.
+
+## A stove that has run _ready() and therefore built its light. _ready() has not
+## run on a node that was never added to a tree (briefing trap 1), so it is
+## called by hand, exactly as test_a_dying_fire_dims does.
+func _lamp_stove():
+	var stove = StoveScript.new()
+	_stove = stove
+	return stove
+
+
+func _firelight(stove) -> OmniLight3D:
+	for child in stove.get_children():
+		if child is OmniLight3D:
+			return child as OmniLight3D
+	return null
+
+
+## THE ONE THAT DECIDES WHETHER THE FLOOR IS LIT AT ALL.
+##
+## The world's two-band cel light() bands on `lambert * ATTENUATION`, and a
+## floor's lambert is the dot of +Y with the direction to the light. A light
+## left at the stove's own origin lies IN the floor plane, so that dot is zero
+## across the whole room and the floorboards take the shade band at any energy
+## and any range. Offsetting it is not a tweak, it is the difference between a
+## fire that lights a room and a fire that lights only the walls.
+func test_the_fire_can_be_lifted_out_of_the_floor_it_stands_on() -> void:
+	var stove = _lamp_stove()
+	stove.light_offset = Vector3(0.0, 1.05, 0.5)
+	stove._ready()
+	var light := _firelight(stove)
+	assert_not_null(light, "the stove built no OmniLight at all")
+	if light == null:
+		return
+	assert_eq(light.position, Vector3(0.0, 1.05, 0.5), "the fire is not where the firebox is")
+	assert_true(
+		light.position.y > 0.0,
+		"a light at the stove's own origin lies in the floor plane and cannot light the floor"
+	)
+
+
+## Default is off, and that must stay true. A fire in the OPEN casting shadows
+## lays a second set of them across snow already shaded by the sun, and there is
+## only supposed to be one shadow direction in this world.
+func test_a_fire_casts_no_shadows_unless_it_is_asked_to() -> void:
+	var stove = _lamp_stove()
+	stove._ready()
+	var light := _firelight(stove)
+	assert_not_null(light, "the stove built no OmniLight at all")
+	if light == null:
+		return
+	assert_false(light.shadow_enabled, "a stove casts shadows by default; outdoors that is a second sun")
+	assert_almost_eq(
+		stove.light_attenuation, 1.0, 0.0001,
+		"the default decay must stay the engine's own, so a fire in the open is unchanged"
+	)
+	assert_eq(stove.light_offset, Vector3.ZERO, "the default fire must stay where the stove is")
+
+
+func test_a_fire_asked_for_shadows_casts_them() -> void:
+	var stove = _lamp_stove()
+	stove.light_shadows = true
+	stove._ready()
+	var light := _firelight(stove)
+	assert_not_null(light, "the stove built no OmniLight at all")
+	if light == null:
+		return
+	assert_true(light.shadow_enabled, "light_shadows was asked for and the light does not cast")
+
+
+## A shadow that arrives through a filter cannot survive a threshold. The cel
+## band is `smoothstep(t - s, t + s, lambert * ATTENUATION)` with a narrow s, so
+## a fractional ATTENUATION anywhere near t is quantised into a stipple: measured
+## on 4.7.1, a `light_size` of 0.35 dithered the whole room and even the default
+## PCF blur speckled the wall behind the stove. ATTENUATION has to arrive as 0
+## or 1 and the shadow atlas has to carry the edge instead.
+func test_the_fires_shadow_is_hard_because_the_cel_band_is_a_threshold() -> void:
+	var stove = _lamp_stove()
+	stove.light_shadows = true
+	stove._ready()
+	var light := _firelight(stove)
+	assert_not_null(light, "the stove built no OmniLight at all")
+	if light == null:
+		return
+	assert_almost_eq(light.light_size, 0.0, 0.0001, "a sized source gives a sampled penumbra, which stipples")
+	assert_almost_eq(light.shadow_blur, 0.0, 0.0001, "a blurred shadow gives a fractional ATTENUATION, which stipples")
+	assert_eq(
+		int(ProjectSettings.get_setting("rendering/lights_and_shadows/positional_shadow/soft_shadow_filter_quality", 2)),
+		0,
+		"the positional shadow filter must be Hard, or the engine puts the fractions back"
+	)
+
+
+## The distance term and the angle term compete for which one decides the band.
+## At the engine's default decay the distance term wins and the boundary is a
+## ring on the floor a couple of metres out, with everything past it one flat
+## colour whichever way it faces. Lower, the ANGLE decides, and the boundary
+## lands on the corners of the furniture -- Art Bible section 4.1's two bands,
+## put where they describe the form.
+func test_the_falloff_can_be_flattened_so_the_angle_decides_the_band() -> void:
+	var stove = _lamp_stove()
+	stove.light_attenuation = 0.45
+	stove._ready()
+	var light := _firelight(stove)
+	assert_not_null(light, "the stove built no OmniLight at all")
+	if light == null:
+		return
+	assert_almost_eq(light.omni_attenuation, 0.45, 0.0001, "the authored decay never reached the light")

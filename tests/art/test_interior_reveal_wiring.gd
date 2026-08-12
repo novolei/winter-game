@@ -286,6 +286,52 @@ func test_the_farmhouse_fire_cannot_light_anything_on_the_default_layer() -> voi
 			mask & InteriorWarmthScript.INTERIOR_LAYER != 0,
 			"the stove must still light the room it is standing in; its mask is %d" % mask
 		)
+		# A fire that casts shadows AND reaches the default layer would put a
+		# second, fire-shaped shadow direction across snow the sun already
+		# shades. The cull mask is the only thing standing between the two.
+		if bool(_scene()[path]["properties"].get("light_shadows", false)):
+			assert_eq(
+				mask & 1, 0,
+				"the farmhouse fire casts shadows onto render layer 1, which is the valley"
+			)
+		return
+	assert_true(false, "%s does not instance %s anywhere" % [MAIN_SCENE, STOVE_SCENE])
+
+
+## The stove's origin sits on the floor, because that is where a stove stands.
+## The FIRE has to be somewhere else, and the reason is not decoration: a floor's
+## cel band is `lambert * ATTENUATION` with lambert the dot of +Y against the
+## direction to the light, so a light lying in the floor plane cannot light the
+## floor at any energy or range. Left at the origin it is also inside the stove's
+## own casing, which with shadows on is a lamp in a closed box.
+##
+## Stove_Body in tools/blender/build_farmhouse.py is x -0.48 .. 0.48,
+## y 0.45 .. 1.40, z -4.98 .. -5.72 in the model's own space, and the stove node
+## is placed at 0, 0.45, -5.35 -- so the offset has to carry the light out of
+## that box.
+func test_the_farmhouse_fire_sits_in_the_firebox_and_not_in_the_floor() -> void:
+	for path in _scene():
+		if _scene()[path]["instance"] != STOVE_SCENE:
+			continue
+		var properties: Dictionary = _scene()[path]["properties"]
+		var offset = properties.get("light_offset", Vector3.ZERO)
+		assert_true(offset is Vector3, "the farmhouse stove has no light_offset")
+		if not (offset is Vector3):
+			return
+		assert_true(
+			(offset as Vector3).y > 0.3,
+			"the fire is %.2f m above the floor it is meant to be lighting" % (offset as Vector3).y
+		)
+		var transform = properties.get("transform", null)
+		if not (transform is Transform3D):
+			return
+		var flame: Vector3 = (transform as Transform3D).origin + (offset as Vector3)
+		var body := AABB(Vector3(-0.48, 0.45, -5.72), Vector3(0.96, 0.95, 0.74))
+		assert_false(
+			body.has_point(flame),
+			"the fire is at %s, inside Stove_Body %s .. %s -- a lamp in a closed box"
+				% [flame, body.position, body.end]
+		)
 		return
 	assert_true(false, "%s does not instance %s anywhere" % [MAIN_SCENE, STOVE_SCENE])
 
@@ -305,17 +351,61 @@ func test_the_farmhouse_carries_an_interior_warmth() -> void:
 	assert_true((list as Array).size() > 0, "nothing is warmed, so the revealed room is a box")
 
 
+## Both authored lists, as one set of names. The component resolves them
+## together -- they differ only in which rung of the warm ladder they take -- so
+## every check that asks "is this a real part of the building" has to see both,
+## or half the room drops out of the gate the day a name is moved between them.
+func _warmed_names(found: Dictionary) -> PackedStringArray:
+	var names := PackedStringArray()
+	for key in ["warm_parts", "furnishing_parts"]:
+		for name in found["node"]["properties"].get(key, []):
+			names.append(String(name))
+	return names
+
+
 func test_every_warmed_name_is_a_mesh_the_model_actually_has() -> void:
 	var found := _running(WARMTH_SCRIPT)
 	assert_false(found.is_empty(), "%s holds no node running %s" % [MAIN_SCENE, WARMTH_SCRIPT])
 	if found.is_empty():
 		return
 	var names := _mesh_names()
-	for name in found["node"]["properties"].get("warm_parts", []):
+	for name in _warmed_names(found):
 		assert_true(
-			names.has(String(name)),
+			names.has(name),
 			"the room warms %s by name and %s holds no mesh called that" % [name, MODEL_PATH]
 		)
+
+
+## THE REGRESSION TEST FOR THE ORANGE BOX, at the scene level.
+##
+## `mix(lit_color, warm_lit_color, warmth)` at warmth 1 is warm_lit_color
+## outright, so a building that puts every part on one list gets one colour for
+## the whole room: floor, walls, table, bed and stove all identical, and the
+## payoff frame of the game is an even orange field with nothing in it. The
+## furniture has to be on the darker rung, and the floor and the walls on the
+## brighter one, or the reveal uncovers a box again.
+func test_the_furniture_stands_on_the_room_rather_than_dissolving_into_it() -> void:
+	var found := _running(WARMTH_SCRIPT)
+	assert_false(found.is_empty(), "%s holds no node running %s" % [MAIN_SCENE, WARMTH_SCRIPT])
+	if found.is_empty():
+		return
+	var field := PackedStringArray()
+	for name in found["node"]["properties"].get("warm_parts", []):
+		field.append(String(name))
+	var stood_on := PackedStringArray()
+	for name in found["node"]["properties"].get("furnishing_parts", []):
+		stood_on.append(String(name))
+	assert_true(
+		stood_on.has("FH_Furniture"),
+		"FH_Furniture is not on furnishing_parts, so every stick of furniture is the same "
+			+ "colour as the floor it stands on; the list is %s" % ", ".join(stood_on)
+	)
+	for name in ["FH_Room", "FH_Shell"]:
+		assert_true(
+			field.has(name),
+			"%s is not on warm_parts, so the room has no lit field for anything to read against" % name
+		)
+		assert_false(stood_on.has(name), "%s is the field, not something standing on it" % name)
 
 
 ## A part cannot be both faded away and warmed: warming something the reveal
@@ -331,8 +421,8 @@ func test_nothing_is_both_faded_and_warmed() -> void:
 	var faded := PackedStringArray()
 	for name in reveal["node"]["properties"].get("fade_parts", []):
 		faded.append(String(name))
-	for name in warmth["node"]["properties"].get("warm_parts", []):
-		assert_false(faded.has(String(name)), "%s is both faded and warmed" % name)
+	for name in _warmed_names(warmth):
+		assert_false(faded.has(name), "%s is both faded and warmed" % name)
 
 
 # --- the door ---------------------------------------------------------------
