@@ -148,3 +148,21 @@ a 45-degree camera, not a broken take.
 | W2-4 | **At full accumulation the roofs go white and the buildings lose their silhouette.** Compare `roads-snow/road-00.png` with `road-03.png`: at day 1 the farmhouse reads as a dark shape with pale roof panels, and at full accumulation the roof is white and only the vertical walls still carry the shape. The Art Bible's whole value logic is dark solids against bright snow, so this is the composition weakening at exactly the point in the seven-day arc where the picture should be at its most desperate. Not a defect — arguably the correct narrative, the world being buried — but it must be judged with the day-1-to-day-7 arc played end to end, not from single frames. Whoever owns that playthrough owns this call. |
 | W2-5 | **Day 1's pitched roof carries no shader snow**; only flat tops accumulate at that level. The implementer asked whether it should start sooner. **Director's ruling: no.** A steep roof shedding snow is real, and the dark pitch is what makes the house read against the field. One constant if this is ever revisited. |
 | W2-6 | **No roof cap mesh shipped, deliberately.** Every model that needs one already carries geometry for it (the farmhouse's six roof slabs, the shed and well-house slabs, the truck's three panels, the pole's crossarm plate) and the shader grows snow *between* them. Growing a cap would need vertex displacement, which cracks every hard edge on these split-vertex models. Accepted; recorded so the style document's roof-cap line is not re-raised as an omission. |
+
+---
+
+## Director 裁决 — `SurvivalSystem` 的作用域（`0cef365` 引出）
+
+火源可发现性那轮报告指出：`survival.threshold_crossed` / `stat_depleted` / `stat_recovered` / `died` 全都只说是哪条数值，**从不说是谁的身体**。它称之为"最大的一处潜伏实例"，并且正确地判断这不是改载荷能解决的——它取决于 `SurvivalSystem` 是否继续是一个全局 autoload，而这个问题必须在波次 5 给饿汉真正的饥饿之前回答。
+
+**裁决：`SurvivalSystem` 保持玩家专属，并且必须把这件事明写出来。**
+
+理由：
+
+1. GDD §5 那五条互相咬合的状态是**玩家的游戏体验本身**——体温、疲劳、饥饿、精神、冻伤。熊不需要 `core_temperature`，僵尸不需要疲劳。把这个模型泛化到所有生物身上，是为一个不存在的需求付架构代价。
+2. 一旦确认它是玩家专属的，那些事件就**不存在歧义**——它们永远在说玩家。缺失的主语不是缺陷，是未被写下来的前提。
+3. 将来某个威胁真的需要状态模型时，它应该拿到一个**为它自己造的、小的**模型，而不是把这个撑大。
+
+**要做的**：在 `SurvivalSystem` 的类文档里写明作用域，并在事件命名或文档中让这个边界可见。**不要**为了假想的通用性去加主语字段。
+
+**与已知问题的关系**：波次 5「零新增代码」目标本就被登记为当前架构不支持（`StateMachine` 无数据化状态图）。威胁的状态模型是同一个问题的另一面，两者应当一起解决，而不是各自打补丁。
