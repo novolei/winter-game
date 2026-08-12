@@ -26,12 +26,23 @@ var _map: UISoundMap
 func before_each() -> void:
 	_map = ResourceLoader.load(MAP_PATH, "", ResourceLoader.CACHE_MODE_IGNORE) as UISoundMap
 	_audio = UIAudioScript.new()
+	# IN THE TREE, because an AudioStreamPlayer genuinely cannot play outside one.
+	# A bare .new() here exercised every branch except the one that makes a sound,
+	# and the engine's refusal only showed up as ERROR lines in the console --
+	# where the tests, which were all passing, could not see it. Briefing trap 1
+	# permits reaching for the live tree when the wiring IS the thing under test;
+	# what it requires is that whatever was added is removed and freed.
+	_root().add_child(_audio)
 	_audio.load_map(MAP_PATH)
 
 func after_each() -> void:
 	if _audio != null:
+		_root().remove_child(_audio)
 		_audio.free()
 		_audio = null
+
+func _root() -> Node:
+	return (Engine.get_main_loop() as SceneTree).root
 
 # --- the map ----------------------------------------------------------------
 
@@ -105,6 +116,24 @@ func test_playing_a_known_cue_reports_success() -> void:
 func test_playing_an_unknown_cue_is_a_refusal_rather_than_a_crash() -> void:
 	assert_false(_audio.play(&"ui.no_such_sound"))
 	assert_false(_audio.play(&""))
+
+## play() RETURNING TRUE IS NOT THE SAME AS A SOUND HAVING STARTED, and until
+## this assertion existed nothing in the file could tell the two apart.
+##
+## AudioStreamPlayer refuses to play from outside the scene tree. It refuses
+## loudly to the console and quietly to the caller: UIAudio's own bookkeeping has
+## all succeeded by then, so play() still reports true. Every assertion above
+## therefore measured the return value of a method that had played nothing.
+##
+## This is the one that checks the AudioServer instead of the return value.
+func test_a_played_cue_actually_reaches_the_audio_server() -> void:
+	assert_true(_audio.play(&"ui.confirm"))
+	var player := _audio.last_player()
+	assert_not_null(player)
+	if player == null:
+		return
+	assert_true(player.is_playing(),
+		"play() reported success but the AudioServer is not playing anything")
 
 func test_a_played_cue_carries_its_authored_gain_and_pitch() -> void:
 	var cue := _map.cue(&"ui.back")

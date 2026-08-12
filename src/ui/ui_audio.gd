@@ -55,6 +55,12 @@ func _ready() -> void:
 ## means it is inert, which is a legal state -- a scene may run before the audio
 ## has landed, and it must not take the scene down with it.
 func load_map(path := DEFAULT_MAP_PATH) -> int:
+	# Asked before loading, because ResourceLoader.load() on a path that is not
+	# there logs three ERROR lines before returning null -- and by this project's
+	# standard a dirty console is a failed run, whether or not the code handled
+	# the absence correctly. Here it does: a missing map is a legal, inert state.
+	if not ResourceLoader.exists(path):
+		return 0
 	_map = ResourceLoader.load(path) as UISoundMap
 	if _map == null:
 		return 0
@@ -69,6 +75,14 @@ func set_map(map: UISoundMap) -> void:
 ## from a sound that played -- silence alone is not.
 func play(cue_id: StringName) -> bool:
 	if _map == null or cue_id == &"":
+		return false
+	# An AudioStreamPlayer cannot play outside the tree -- the engine refuses it
+	# with "Playback can only happen when a node is inside the scene tree" -- so
+	# saying yes here would be a lie. It shipped as one: the first version
+	# returned true anyway, the tests went green, and the only trace was five
+	# ERROR lines the console-cleanliness wrapper caught after an unrelated fix
+	# stopped drowning them out. A caller asking "did that play" gets the truth.
+	if not is_inside_tree():
 		return false
 	var cue := _map.cue(cue_id)
 	if cue == null or cue.stream_path == "":
