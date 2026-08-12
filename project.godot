@@ -8,6 +8,12 @@
 
 config_version=5
 
+[WinterTime]
+
+config/ninetailsrabbit.interaction_kit_3d/update_notification_enabled=true
+config/ninetailsrabbit.interaction_kit_3d/interactables_collision_layer=6
+config/ninetailsrabbit.interaction_kit_3d/grabbables_collision_layer=7
+
 [application]
 
 config/name="WinterTime"
@@ -27,6 +33,7 @@ FuelEconomy="*res://src/systems/fuel_economy.gd"
 RunBoot="*res://src/systems/run_boot.gd"
 NightExposure="*res://src/systems/night_exposure.gd"
 OccluderFader="*res://src/rendering/occluder_fader.gd"
+BeehaveGlobalDebugger="*uid://bl3ma400hpvsh"
 
 [display]
 
@@ -35,7 +42,7 @@ window/stretch/aspect="expand"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/godot_ai/plugin.cfg")
+enabled=PackedStringArray("res://addons/GodotGAS/plugin.cfg", "res://addons/beehave/plugin.cfg", "res://addons/gaea/editor/plugin.cfg", "res://addons/gaea/plugin.cfg", "res://addons/gaea/runtime/plugin.cfg", "res://addons/godot_ai/plugin.cfg", "res://addons/ninetailsrabbit.interaction_kit_3d/plugin.cfg")
 
 [input]
 
@@ -59,5 +66,5 @@ camera_framing_wider={
 rendering_device/driver.windows="d3d12"
 lights_and_shadows/directional_shadow/size=8192
 lights_and_shadows/directional_shadow/soft_shadow_filter_quality=4
-lights_and_shadows/positional_shadow/atlas_size=8192
 lights_and_shadows/positional_shadow/soft_shadow_filter_quality=0
+lights_and_shadows/positional_shadow/atlas_size=8192
