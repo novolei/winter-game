@@ -128,11 +128,66 @@ const SNOW_NOISE_STRENGTH := 0.30
 const WARM_LIGHT_INDEX := 2
 const WARM_PAINT_RECEPTIVITY := 0.45
 
+## ---------------------------------------------------------------------------
+## THE SURFACES A SETTLED MASS DOES NOT LIE ON
+## ---------------------------------------------------------------------------
+## The three numbers above are facts about a palette COLOUR, and two kinds of
+## surface need something a colour cannot say:
+##
+##   * a HAIRLINE. The shader's snow pattern is 1.33 m across and a power wire is
+##     one to two pixels at the game camera. A wire cannot carry a pattern; it
+##     can only break into dashes, and a wire breaking into dashes reads as a
+##     MESH COMING APART. Measured on the shipped scene at one camera: solid line
+##     at cover 0.362, dotted at 0.620, and it begins at 0.14.
+##   * a ROOF PLANE that carries a modelled settled mass. Two white things on one
+##     roof is the whole of the defect this closes -- the mass's silhouette stops
+##     reading the moment the plane behind it is white too, and what the eye
+##     picks out instead is its stepped edges and its cast shadows. The owner's
+##     own words, from play: the roof "resolves into rectangles".
+##
+## The wire, the insulators, the antenna, the roof planes and every tree in the
+## wood are all `PAL_STRUCT_4`, so `receptivity_for()` cannot separate them. The
+## PART can, and it says so in the material name the build script already
+## authors: `PAL_STRUCT_4_BARE` is the same colour with the snow refused.
+## tools/blender/propkit.py carries the reasoning and the measurement behind
+## choosing a name over a vertex attribute.
+const BARE_SLOT_MARK := "_BARE"
+
+## ---------------------------------------------------------------------------
+## THE MASS ITSELF, and why this class drives it
+## ---------------------------------------------------------------------------
+## Roof snow and body snow are different materials and must not share a look.
+## Body snow is powder caught in cloth -- noise-broken patches with ragged edges,
+## which is src/entities/snow_load.gd's job and correct there. Roof snow is a
+## settled MASS: it slumps under its own weight, its edges roll off and bulge,
+## and it reads smooth and swelling. At every boundary it shows a cross-section,
+## and that cross-section is where the thickness lives.
+##
+## A threshold in a shader cannot draw that, because a threshold has no
+## thickness -- it can only pick a side of a line, and both sides are the same
+## flat plane. So the mass is GEOMETRY, shipped in the .glb as a blend shape
+## named `snow_mass`: collapsed inside the roof slab at one end of its travel,
+## and at the other a mass 0.24 m thick whose lip rolls out past the eave.
+##
+## It is driven from HERE rather than from a building script for the same reason
+## the light is: there is one world scalar, it moves every frame, and a building
+## instanced at runtime has to carry the same weather as the ones already
+## standing. `paint()` already walks every mesh in a model, so adopting the ones
+## that can grow costs one test per mesh and no new wiring anywhere.
+const SNOW_MASS_SHAPE := "snow_mass"
+
+## Below this the world has a dusting rather than a mass, and a dusting has no
+## cross-section to show. Above it the mass builds continuously for the rest of
+## the run -- `smoothstep`, so its rate is continuous at both ends too and there
+## is no frame at which the roof changes suddenly.
+const SNOW_MASS_ONSET := 0.06
+
 static var _band_threshold := 0.30
 static var _band_softness := 0.07
 static var _light_tint := Vector3(1.0, 1.0, 1.0)
 static var _snow_cover := 0.0
 static var _register: Array[WeakRef] = []
+static var _masses: Array[WeakRef] = []
 
 var _bible: ColorBible
 var _shader: Shader
@@ -184,6 +239,25 @@ static func set_snow_cover(cover: float) -> void:
 		living.append(handle)
 	_register = living
 
+	var mass := snow_mass(_snow_cover)
+	var standing: Array[WeakRef] = []
+	for handle in _masses:
+		var instance := handle.get_ref() as MeshInstance3D
+		if instance == null:
+			continue
+		_set_mass(instance, mass)
+		standing.append(handle)
+	_masses = standing
+
+
+## How far the modelled roof mass has grown, 0 collapsed .. 1 fully settled.
+##
+## Static and public because it is the one number that decides what the roofs
+## look like, and a test asserting the shape of the settling has to be able to
+## ask for it without a frame.
+static func snow_mass(cover: float) -> float:
+	return smoothstep(SNOW_MASS_ONSET, 1.0, clampf(cover, 0.0, 1.0))
+
 
 ## What the last broadcast carried. For a test, and for a tuner reading the
 ## world's state without a frame in front of them.
@@ -199,6 +273,48 @@ static func live_material_count() -> int:
 		if handle.get_ref() != null:
 			alive += 1
 	return alive
+
+
+## The same, for the meshes carrying a settled mass. A separate register from
+## the materials': a material is a Resource nothing frees by hand, a mesh
+## instance is a Node the scene tree frees the moment a building is removed, and
+## a strong reference here would be the reason a demolished shed stayed in
+## memory.
+static func live_mass_count() -> int:
+	var alive := 0
+	for handle in _masses:
+		if handle.get_ref() != null:
+			alive += 1
+	return alive
+
+
+## Which blend shape on this instance is the settled mass, or -1.
+##
+## Asked of the MESH rather than through MeshInstance3D's own lookup, because
+## the mesh is where the names live and a null mesh is the ordinary state of an
+## instance a test has just constructed.
+##
+## **The cast to ArrayMesh is load-bearing.** `get_blend_shape_count()` is
+## declared on ArrayMesh, not on Mesh, so calling it on the BoxMesh a test builds
+## -- or on any PrimitiveMesh the game ever places -- is a script error, and a
+## script error aborts the caller rather than returning something wrong. Every
+## imported .glb arrives as an ArrayMesh; nothing else can carry a blend shape.
+static func mass_shape_index(instance: MeshInstance3D) -> int:
+	if instance == null:
+		return -1
+	var mesh := instance.mesh as ArrayMesh
+	if mesh == null:
+		return -1
+	for index in range(mesh.get_blend_shape_count()):
+		if mesh.get_blend_shape_name(index) == SNOW_MASS_SHAPE:
+			return index
+	return -1
+
+
+static func _set_mass(instance: MeshInstance3D, mass: float) -> void:
+	var index := mass_shape_index(instance)
+	if index >= 0:
+		instance.set_blend_shape_value(index, mass)
 
 
 static func _stamp(material: ShaderMaterial) -> void:
@@ -244,24 +360,51 @@ func paint(node: Node) -> void:
 			for surface in range(mesh.get_surface_count()):
 				var existing := mesh.surface_get_material(surface)
 				var albedo := Color(1.0, 0.0, 1.0)
+				var bare := false
 				if existing is BaseMaterial3D:
 					albedo = (existing as BaseMaterial3D).albedo_color
-				instance.set_surface_override_material(surface, material_for(albedo))
+				if existing != null:
+					# `contains` rather than `ends_with`: Godot's glTF importer
+					# appends `.001` to a duplicated material name, and the
+					# palette gate already matches these by prefix for the same
+					# reason.
+					bare = existing.resource_name.contains(BARE_SLOT_MARK)
+				instance.set_surface_override_material(surface, material_for(albedo, bare))
+		_adopt_mass(instance)
 	for child in node.get_children():
 		paint(child)
 
 
+## Take over any mesh that ships a settled mass, and set it to the weather that
+## is already outside. Both halves matter for the same reason the materials'
+## do: a shed placed on day 5 must not arrive with a bare roof, and it must not
+## stay that way either.
+func _adopt_mass(instance: MeshInstance3D) -> void:
+	if mass_shape_index(instance) < 0:
+		return
+	for handle in _masses:
+		if handle.get_ref() == instance:
+			return
+	_masses.append(weakref(instance))
+	_set_mass(instance, snow_mass(_snow_cover))
+
+
 ## One material per palette colour, so ten slots cost ten materials rather than
 ## one per surface across every mesh in the farmstead.
-func material_for(lit: Color) -> ShaderMaterial:
-	var key := lit.to_html(false)
+##
+## `bare` is part of the key, not a property written onto a shared material: the
+## roof planes and the trees are the same colour and only one of them refuses
+## snow, so they have to be two materials or the last surface painted would
+## decide for both.
+func material_for(lit: Color, bare := false) -> ShaderMaterial:
+	var key := "%s|%s" % [lit.to_html(false), bare]
 	if _materials.has(key):
 		return _materials[key]
 	var material := ShaderMaterial.new()
 	material.shader = _shader
 	material.set_shader_parameter("lit_color", lit)
 	material.set_shader_parameter("shade_color", shade_for(lit))
-	_stamp_snow_profile(material, lit)
+	_stamp_snow_profile(material, lit, bare)
 	# Stamped with whatever the light and the weather currently are, then
 	# registered so the next change of either finds it. Both halves matter: a
 	# building placed at midnight in a blizzard must not arrive lit for noon and
@@ -275,11 +418,11 @@ func material_for(lit: Color) -> ShaderMaterial:
 ## The shape of the snow, and which of the twelve refuses it. Written once at
 ## creation rather than on every broadcast: none of it moves, and the one thing
 ## that does -- the cover -- goes through _stamp().
-func _stamp_snow_profile(material: ShaderMaterial, lit: Color) -> void:
+func _stamp_snow_profile(material: ShaderMaterial, lit: Color, bare := false) -> void:
 	if _bible != null and _bible.snow_tones.size() > 3:
 		material.set_shader_parameter("snow_lit", _bible.snow_tones[0])
 		material.set_shader_parameter("snow_shade", _bible.snow_tones[3])
-	material.set_shader_parameter("snow_receptivity", receptivity_for(lit))
+	material.set_shader_parameter("snow_receptivity", 0.0 if bare else receptivity_for(lit))
 	material.set_shader_parameter("snow_bare_threshold", SNOW_BARE_THRESHOLD)
 	material.set_shader_parameter("snow_full_threshold", SNOW_FULL_THRESHOLD)
 	material.set_shader_parameter("snow_edge_softness", SNOW_EDGE_SOFTNESS)

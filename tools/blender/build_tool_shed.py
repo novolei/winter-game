@@ -68,7 +68,6 @@ VERGE = 0.20               # roof overhang past the gable ends
 FRONT_EAVE = 0.58          # ...and past the front wall, measured down the slope
 BACK_EAVE = 0.22
 ROOF_T = 0.10
-SNOW_T = 0.13
 
 ## Where the front roof edge ends up, which is what the posts have to reach and
 ## what the icicles hang off. Derived rather than typed, so changing the pitch
@@ -78,6 +77,7 @@ FRONT_EAVE_Z = RIDGE_Z - (SLOPE + FRONT_EAVE) * RISE / SLOPE
 
 
 def build():
+    """Returns the settled mass's collapsed positions, for the shape key."""
     kit.block("Foundation", kit.SKIRT, X0 - 0.07, X1 + 0.07, Y0 - 0.07, Y1 + 0.07,
               0.0, BASE_Z)
     kit.block("Wall_Back", kit.SIDING, X0, X1, Y1 - T, Y1, BASE_Z - kit.BITE, EAVE_Z)
@@ -87,22 +87,26 @@ def build():
     kit.prism_y("Gable_Left", kit.SIDING, Y0, Y1, 0.0, EAVE_Z, RIDGE_Z, X0, X0 + T)
     kit.prism_y("Gable_Right", kit.SIDING, Y0, Y1, 0.0, EAVE_Z, RIDGE_Z, X1 - T, X1)
 
+    # `_BARE`: the roof planes and the ridge cap carry a settled mass now, and a
+    # plane that whitens behind its own snow is the fault this build closes --
+    # see propkit's block above BARE. The ridge stays the darkest line on the
+    # building, which is what Art Bible rule 10 asks of it.
     for sign, side, eave in ((-1, "Front", FRONT_EAVE), (1, "Back", BACK_EAVE)):
-        kit.slope_y("Roof_" + side, kit.ROOF, sign, 0.0, RIDGE_Z, RUN, RISE,
+        kit.slope_y("Roof_" + side, kit.bare(kit.ROOF), sign, 0.0, RIDGE_Z, RUN, RISE,
                     X0 - VERGE, X1 + VERGE, ROOF_T, -0.06, SLOPE + eave, -ROOF_T / 2.0)
-    kit.block("Ridge_Cap", kit.ROOF, X0 - VERGE, X1 + VERGE, -0.11, 0.11,
+    kit.block("Ridge_Cap", kit.bare(kit.ROOF), X0 - VERGE, X1 + VERGE, -0.11, 0.11,
               RIDGE_Z - 0.10, RIDGE_Z + 0.06)
 
-    # Snow lies in patches with gaps between them and none of it touching the
-    # ridge: the roof is the darkest thing on the building and the snow is what
-    # interrupts it, not what replaces it. Same rule as the farmhouse.
-    for tag, sign, x0, x1, d0, d1 in (
-        ("F1", -1, -1.32, -0.58, 0.32, 0.98),
-        ("F2", -1, 0.05, 1.05, 0.55, 1.28),
-        ("B1", 1, -1.10, 0.08, 0.26, 0.92),
-    ):
-        kit.slope_y("Snow_" + tag, kit.SNOW, sign, 0.0, RIDGE_Z, RUN, RISE,
-                    x0, x1, SNOW_T, d0, d1, SNOW_T / 2.0 - kit.BITE)
+    # The settled mass, replacing three flat slabs. Shallower than the
+    # farmhouse's 0.24 because this roof's slope is 1.9 m against the house's
+    # 4.3 -- the same depth here would read as a pillow rather than as snow.
+    rest = {}
+    for sign, side, eave, edge in ((-1, "Front", FRONT_EAVE, (0.55, 0.42)),
+                                   (1, "Back", BACK_EAVE, (0.47, 0.62))):
+        rest.update(kit.gable_cap(
+            "Snow_" + side, sign, RIDGE_Z, RUN, RISE, X0 - VERGE, X1 + VERGE,
+            SLOPE + eave, edge, depth=0.15, over=0.09, sink=0.025,
+            roof_t=ROOF_T))
 
     # The two posts under the front eave, and the bay they make.
     for i, x in ((1, -1.28), (2, 1.28)):
@@ -126,6 +130,7 @@ def build():
     kit.block("Step", kit.SKIRT, -0.55, 0.55, Y0 - 0.46, Y0, 0.0, 0.14)
     # Drifted against the back wall, where the wind put it.
     kit.block("Drift", kit.SNOW, X0 - 0.22, 0.72, Y1 - 0.08, Y1 + 0.58, 0.0, 0.40)
+    return rest
 
 
 def main():
@@ -137,8 +142,11 @@ def main():
     renders = kit.argument("--renders", os.path.join(root, ".superpowers", "sdd", "wave1"))
 
     kit.reset()
-    build()
+    rest = build()
     obj = kit.finish("Tool_Shed", BUDGET, label="tool_shed")
+    # After finish(), which is the only moment the joined mesh and both states
+    # of the mass exist at once.
+    kit.add_snow_mass_key(obj, rest)
     low, high = kit.bbox(obj)
     print("tool_shed: %.2f x %.2f m on plan, ridge %.2f m, clearance under the "
           "front eave %.2f m" % (high[0] - low[0], high[1] - low[1], high[2],

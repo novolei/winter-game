@@ -113,6 +113,13 @@ import sys
 import bpy
 from mathutils import Euler, Vector
 
+# Importing propkit would otherwise drop a __pycache__ into the repo on every
+# run, which is generated output in a source tree and nobody's to review.
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import propkit as kit  # noqa: E402
+
 TRIANGLE_BUDGET = 1500
 
 # ---------------------------------------------------------------------------
@@ -143,6 +150,18 @@ GLASS_LIT = "PAL_WARM_3"
 SURROUND = "PAL_SNOW_1"
 SNOW = "PAL_SNOW_1"
 ICE = "PAL_SNOW_2"
+## The same near-black, for the parts a settled mass does not lie on. See
+## propkit's block above BARE for the whole argument.
+##
+##   the roof planes  they carry a `snow_cap`, and two white things on one roof
+##                    is the fault this build closes -- the owner's own words
+##                    for it were that the roof "resolves into rectangles"
+##   the antenna      0.06 m bars against a 1.33 m pattern, so a bar can only
+##                    take it in whole pieces or not at all, and an antenna
+##                    flickering between white and black pieces reads as a
+##                    broken mesh. The power wire's argument, one storey up.
+##   the flue         a hole that goes pale in bright weather stops being a hole
+ROOF_BARE = "PAL_STRUCT_4_BARE"
 PORCH_PAINT = "PAL_SNOW_2"
 INSIDE = "PAL_STRUCT_2"
 
@@ -171,7 +190,42 @@ WING_RIDGE_Z = WING_TOP + WING_RISE
 EAVE = 0.35                 # overhang past the wall on a sloping side
 VERGE = 0.30                # overhang past the wall at a gable end
 ROOF_T = 0.14
-SNOW_T = 0.17
+
+## ---------------------------------------------------------------------------
+## THE SETTLED MASS ON THE ROOFS
+## ---------------------------------------------------------------------------
+## propkit's `snow_cap` block carries the whole of the reasoning -- read that
+## first. These are this building's numbers.
+##
+## What was here until now was ten flat 0.17 m slabs, `Snow_Main_*`,
+## `Snow_Wing_*` and `Porch_Roof_Snow`, authored as *the* snow on a roof that
+## was always dark. They read perfectly for as long as that held. The day
+## `cel_flat.gdshader` started whitening the roof plane behind them their
+## silhouettes stopped reading and what survived was their cast shadows, their
+## stepped edges and the bare slate between them -- angular dark shapes on a
+## white field, which is what "the roof looks like it is rendering through
+## itself" actually was. They are gone, the roof planes now refuse the shader's
+## snow outright (see NO_SETTLED_SNOW), and the mass below is the only white
+## thing on this roof.
+##
+## SNOW_DEPTH is what the owner asked for and what a threshold cannot give: at
+## 0.24 m against a 1.8 m character the mass is a hand's span thick, which is
+## what a week of it looks like on a 33.7-degree pitch.
+SNOW_DEPTH = 0.28
+## The roll. 0.20 puts the widest point of the bulge 0.20 m out from where the
+## top face stops and 0.04 m above the roof plane -- low on the mass, which is
+## where surface tension puts it.
+SNOW_ROLL = 0.22
+## Past the eave at full settle. The lip hangs over the roof edge by 0.15 m,
+## which is the silhouette the whole exercise is for.
+SNOW_OVER = 0.15
+## Down-slope of the ridge the mass starts, so Art Bible rule 10's ridge line
+## still reads with two caps meeting either side of it.
+SNOW_RIDGE_GAP = 0.06
+## How deep the collapsed state sits inside the 0.14 m roof slab, and how much
+## deeper its eave end sits than its ridge end.
+SNOW_REST_SINK = -0.035
+SNOW_REST_TILT = -0.055
 
 ## How far a block that sits on another one sinks into it.
 ##
@@ -201,6 +255,10 @@ BALUSTER_STEP = 0.32
 # ---------------------------------------------------------------------------
 GROUPS = {}
 PART_COUNT = {}
+## Per group, the collapsed position of every settled-snow vertex in it, keyed
+## by the settled one. Consumed after the join, which is the only moment both
+## states and the final vertex indices exist at once.
+SNOW_REST = {}
 _MATERIALS = {}
 
 
@@ -209,12 +267,17 @@ def srgb_to_linear(c):
 
 
 def material(slot):
-    """One Blender material per palette slot, created on first use."""
+    """One Blender material per palette slot, created on first use.
+
+    A `_BARE` suffix is a second material with the same colour, for a part a
+    settled mass does not lie on -- see propkit's block above BARE.
+    """
     if slot in _MATERIALS:
         return _MATERIALS[slot]
-    if slot not in PALETTE:
+    base = slot[:-len(kit.BARE)] if slot.endswith(kit.BARE) else slot
+    if base not in PALETTE:
         raise SystemExit("build_farmhouse: %s is not a palette slot" % slot)
-    hexcode = PALETTE[slot]
+    hexcode = PALETTE[base]
     rgb = [srgb_to_linear(int(hexcode[i:i + 2], 16) / 255.0) for i in (0, 2, 4)]
     mat = bpy.data.materials.new(name=slot)
     mat.use_nodes = True
@@ -444,50 +507,193 @@ def build_trim():
     block("Trim_Wing_Left", F_LEFT, TRIM, WING_X0 - TRIM_OUT, WING_X0 + 0.10, WING_Y0 - TRIM_OUT, WING_Y1, TRIM_Z0, TRIM_Z1)
 
 
+def snow_cap(name, group, origin, down, along, d0, d1, a0, a1, edge, spans,
+             over=SNOW_OVER, depth=SNOW_DEPTH, roll=SNOW_ROLL):
+    """A settled-snow mass over one roof plane. See propkit's `snow_cap` block.
+
+    `edge` is where the leading edge sits, per vertex along the ridge, as a
+    fraction of the slope, in the COLLAPSED state -- so the mass creeps down in
+    lobes and the lobes close up as it fills. At full settle every one of them is
+    at the eave and past it.
+
+    `over` is 0 on a slope that ends against a wall rather than at an eave:
+    there is nothing there to hang over.
+    """
+    settled = kit.snow_cap_state(
+        depth=depth, radius=roll, over=over,
+        ridge_gap=SNOW_RIDGE_GAP, side=SNOW_OVER, edge=[1.0] * (spans + 1))
+    rest = kit.snow_cap_state(
+        depth=SNOW_REST_SINK, radius=0.015, over=-0.10,
+        ridge_gap=SNOW_RIDGE_GAP + 0.12, side=-0.16, edge=edge,
+        tilt=SNOW_REST_TILT)
+    if rest["deepest"] >= ROOF_T:
+        raise SystemExit("build_farmhouse: %s collapses %.3f m below the plane, "
+                         "through a %.3f m roof slab" % (name, rest["deepest"], ROOF_T))
+    verts, rest_verts, faces = kit.snow_cap_shape(
+        origin, down, along, d0, d1, a0, a1, settled, rest, spans)
+    emit(name, group, SNOW, verts, faces)
+    SNOW_REST.setdefault(group, {}).update(kit.rest_map(verts, rest_verts))
+
+
 def build_roof():
     main_run, main_rise = MAIN_X1, MAIN_RISE
     main_len = math.hypot(main_run, main_rise)
-    for sign, side in ((1, "Right"), (-1, "Left")):
-        slope_x("Roof_Main_" + side, F_ROOF, ROOF, sign, 0.0, MAIN_RIDGE_Z,
+    main_ang = math.atan2(main_rise, main_run)
+    for sign, side, lobes in ((1, "Right", (0.58, 0.44, 0.66, 0.50)),
+                              (-1, "Left", (0.47, 0.68, 0.42, 0.61))):
+        slope_x("Roof_Main_" + side, F_ROOF, ROOF_BARE, sign, 0.0, MAIN_RIDGE_Z,
                 main_run, main_rise, MAIN_Y0 - VERGE, MAIN_Y1 + VERGE,
                 ROOF_T, -0.08, main_len + EAVE, -ROOF_T / 2.0)
-    # Snow sits on the planes as separate blocks, not as roof thickness. Six
-    # patches with gaps between them and none of them touching the ridge, so
-    # the near-black roof and its ridge line still read: the roof is the
-    # darkest thing in the frame and the snow is what interrupts it.
-    for tag, sign, y0, y1, d0, d1 in (
-        ("R1", 1, 0.10, 2.30, 0.55, 3.10),
-        ("R2", 1, 2.75, 4.05, 1.40, 4.20),
-        ("R3", 1, 4.50, 6.15, 0.30, 2.40),
-        ("L1", -1, -0.15, 1.75, 0.90, 4.30),
-        ("L2", -1, 2.20, 3.90, 0.25, 2.10),
-        ("L3", -1, 4.35, 6.25, 1.30, 4.10),
-    ):
-        slope_x("Snow_Main_" + tag, F_ROOF, SNOW, sign, 0.0, MAIN_RIDGE_Z,
-                main_run, main_rise, y0, y1, SNOW_T, d0, d1, SNOW_T / 2.0 - BITE)
+        snow_cap(
+            "Snow_Main_" + side, F_ROOF,
+            (0.0, 0.0, MAIN_RIDGE_Z),
+            (sign * math.cos(main_ang), 0.0, -math.sin(main_ang)),
+            (0.0, sign, 0.0),
+            0.0, main_len + EAVE,
+            *((MAIN_Y0 - VERGE, MAIN_Y1 + VERGE) if sign > 0
+              else (-MAIN_Y1 - VERGE, -MAIN_Y0 + VERGE)),
+            edge=lobes, spans=3)
 
     wing_run, wing_rise = 1.80, WING_RISE
     wing_len = math.hypot(wing_run, wing_rise)
-    slope_y("Roof_Wing_Front", F_ROOF, ROOF, -1, WING_RIDGE_Y, WING_RIDGE_Z, wing_run, wing_rise,
+    wing_ang = math.atan2(wing_rise, wing_run)
+    slope_y("Roof_Wing_Front", F_ROOF, ROOF_BARE, -1, WING_RIDGE_Y, WING_RIDGE_Z, wing_run, wing_rise,
             WING_X0 - VERGE, WING_X1 + VERGE, ROOF_T, -0.08, wing_len + EAVE, -ROOF_T / 2.0)
-    slope_y("Roof_Wing_Back", F_ROOF, ROOF, 1, WING_RIDGE_Y, WING_RIDGE_Z, wing_run, wing_rise,
+    slope_y("Roof_Wing_Back", F_ROOF, ROOF_BARE, 1, WING_RIDGE_Y, WING_RIDGE_Z, wing_run, wing_rise,
             WING_X0 - VERGE, WING_X1 + VERGE, ROOF_T, -0.08, wing_len, -ROOF_T / 2.0)
-    slope_y("Snow_Wing_F1", F_ROOF, SNOW, -1, WING_RIDGE_Y, WING_RIDGE_Z, wing_run, wing_rise, -3.55, -1.35, SNOW_T, 0.30, 2.05, SNOW_T / 2.0 - BITE)
-    slope_y("Snow_Wing_F2", F_ROOF, SNOW, -1, WING_RIDGE_Y, WING_RIDGE_Z, wing_run, wing_rise, -0.95, 0.20, SNOW_T, 0.55, 1.70, SNOW_T / 2.0 - BITE)
-    slope_y("Snow_Wing_B1", F_ROOF, SNOW, 1, WING_RIDGE_Y, WING_RIDGE_Z, wing_run, wing_rise, -3.20, -0.45, SNOW_T, 0.40, 1.75, SNOW_T / 2.0 - BITE)
+    # `along` is -sign on X, so the run along the ridge is measured in the
+    # direction that keeps `down x along` pointing out of the roof -- which
+    # flips which end of the wing a0 is. propkit refuses a plane whose outward
+    # normal comes out pointing down, so this is checked rather than trusted.
+    for sign, side, reach, over, lobes in (
+        (-1, "Front", wing_len + EAVE, SNOW_OVER, (0.52, 0.45)),
+        (1, "Back", wing_len, 0.0, (0.60, 0.43)),
+    ):
+        snow_cap(
+            "Snow_Wing_" + side, F_ROOF,
+            (0.0, WING_RIDGE_Y, WING_RIDGE_Z),
+            (0.0, sign * math.cos(wing_ang), -math.sin(wing_ang)),
+            (-sign, 0.0, 0.0),
+            0.0, reach,
+            *((WING_X0 - VERGE, WING_X1 + VERGE) if sign < 0
+              else (-WING_X1 - VERGE, -WING_X0 + VERGE)),
+            edge=lobes, spans=1, over=over)
 
-    # The chimney straddles the ridge, directly above the stove. It is beacon
-    # one (GDD section 6): the first warm point in the valley, lit on day one.
-    block("Chimney_Stack", F_ROOF, "PAL_WARM_1", -0.45, 0.45, 4.90, 5.60, 4.00, 8.40)
-    block("Chimney_Cap", F_ROOF, ROOF, -0.55, 0.55, 4.80, 5.70, 8.40 - BITE, 8.55)
+    build_chimney()
 
     # The antenna is pure silhouette: thin crossed bars on the ridge.
-    block("Antenna_Mast", F_ROOF, ROOF, -0.03, 0.03, 1.17, 1.23, MAIN_RIDGE_Z - 0.20, MAIN_RIDGE_Z + 1.45)
-    block("Antenna_Boom", F_ROOF, ROOF, -0.03, 0.03, 0.75, 1.85, MAIN_RIDGE_Z + 1.38, MAIN_RIDGE_Z + 1.44)
+    block("Antenna_Mast", F_ROOF, ROOF_BARE, -0.03, 0.03, 1.17, 1.23, MAIN_RIDGE_Z - 0.20, MAIN_RIDGE_Z + 1.45)
+    block("Antenna_Boom", F_ROOF, ROOF_BARE, -0.03, 0.03, 0.75, 1.85, MAIN_RIDGE_Z + 1.38, MAIN_RIDGE_Z + 1.44)
     for i, (half, y) in enumerate(((0.52, 0.82), (0.44, 1.08), (0.36, 1.34), (0.28, 1.60))):
-        block("Antenna_Bar_%d" % (i + 1), F_ROOF, ROOF, -half, half, y - 0.03, y + 0.03, MAIN_RIDGE_Z + 1.385, MAIN_RIDGE_Z + 1.425)
+        block("Antenna_Bar_%d" % (i + 1), F_ROOF, ROOF_BARE, -half, half, y - 0.03, y + 0.03, MAIN_RIDGE_Z + 1.385, MAIN_RIDGE_Z + 1.425)
 
     block("Ceiling", F_ROOF, INSIDE, MAIN_X0 + T, MAIN_X1 - T, MAIN_Y0 + T, MAIN_Y1 - T, CEIL_Z, CEIL_TOP)
+
+
+## The chimney straddles the ridge, directly above the stove. It is beacon one
+## (GDD section 6): the first warm point in the valley, lit on day one -- so it
+## is the one part of this building the player looks at to know the house is
+## alive, and until now it was a closed block with a lid on it.
+##
+##     "屋顶上的烟囱：需要开一个洞 并在洞里出现袅袅炊烟，有烟火气才有生命力"
+##
+## THE CAP IS OPENED RATHER THAN VENTED UNDER. A real rain-capped chimney lets
+## the smoke out of the gap between the shaft and the lid, which is more truthful
+## and, at this camera, four pixels of shadow -- the owner asked to see INTO a
+## hole. So the lid becomes a RIM: the same slab, the same overhang, with the
+## flue cut straight through it.
+##
+## THE HOLE HAS TO BE A RECESS, NOT A DARK SQUARE. At the game's 45-degree
+## camera the near lip occludes the flue's floor for the first
+## `FLUE_HALF * 2 / tan(45) = 0.48 m` of depth, so anything shallower than that
+## shows its own floor and reads as a painted panel. FLUE_DEPTH is 0.75.
+CHIMNEY_X0, CHIMNEY_X1 = -0.45, 0.45
+CHIMNEY_Y0, CHIMNEY_Y1 = 4.90, 5.60
+CHIMNEY_TOP = 8.40
+CAP_Z0, CAP_Z1 = CHIMNEY_TOP - BITE, 8.55
+CAP_OUT = 0.10              # how far the rim stands proud of the shaft
+FLUE_X0, FLUE_X1 = -0.24, 0.24
+FLUE_Y0, FLUE_Y1 = 5.06, 5.44
+FLUE_DEPTH = 0.75
+
+
+def open_box(name, group, slot, x0, x1, y0, y1, z0, z1, inward=False):
+    """A box with no top face. Six quads become five.
+
+    `inward` reverses every winding, which is how the flue is built: Godot culls
+    back faces, so a shaft you are meant to see the INSIDE of has to be a solid
+    turned outside in. There is no other way to get a hole out of convex blocks.
+    """
+    v = [(x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0),
+         (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)]
+    faces = [(0, 3, 2, 1), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)]
+    if inward:
+        faces = [tuple(reversed(f)) for f in faces]
+    return emit(name, group, slot, v, faces)
+
+
+def rim(name, group, slot, ox0, ox1, oy0, oy1, ix0, ix1, iy0, iy1, z0, z1):
+    """A flat frame with a rectangular hole: 8 quads, no bottom, no inside."""
+    outer = [(ox0, oy0), (ox1, oy0), (ox1, oy1), (ox0, oy1)]
+    inner = [(ix0, iy0), (ix1, iy0), (ix1, iy1), (ix0, iy1)]
+    v = ([(p[0], p[1], z1) for p in outer] + [(p[0], p[1], z1) for p in inner]
+         + [(p[0], p[1], z0) for p in outer])
+    faces = []
+    for k in range(4):
+        n = (k + 1) % 4
+        faces.append((k, n, 4 + n, 4 + k))          # the frame's top
+        faces.append((k, 8 + k, 8 + n, n))          # its outer wall
+    return emit(name, group, slot, v, faces)
+
+
+def build_chimney():
+    # The shaft keeps its top face: the rim sits on it and the flue is sunk
+    # through it, so nothing of it is visible from above.
+    block("Chimney_Stack", F_ROOF, "PAL_WARM_1",
+          CHIMNEY_X0, CHIMNEY_X1, CHIMNEY_Y0, CHIMNEY_Y1, 4.00, CHIMNEY_TOP)
+
+    # The lid, with the flue cut through it. Four bars would have been the
+    # obvious build and cost 48 triangles against the slab's 12; this is 16,
+    # because the rim needs neither a bottom (it sits on the shaft) nor an
+    # inside (the flue below provides its own lining, and that lining runs a
+    # BITE proud of the rim's top so there is no seam to catch the light).
+    rim("Chimney_Rim", F_ROOF, ROOF,
+        CHIMNEY_X0 - CAP_OUT, CHIMNEY_X1 + CAP_OUT,
+        CHIMNEY_Y0 - CAP_OUT, CHIMNEY_Y1 + CAP_OUT,
+        FLUE_X0, FLUE_X1, FLUE_Y0, FLUE_Y1, CAP_Z0, CAP_Z1)
+
+    # The flue itself, turned outside in so what you see is its lining.
+    #
+    # ROOF_BARE, and that is the whole of why the mark exists on this building
+    # beyond the roof planes: the shaft's FLOOR faces the sky, so the settled
+    # snow term would find it and whiten it, and a chimney with a white disc at
+    # the bottom of it is not a chimney. The lining is the darkest structure
+    # tone, which `CelPainter.shade_for()` clamps to itself -- so the flue is the
+    # same near-black in the lit band and the shadow band, at every one of the
+    # six lighting presets, and cannot go pale in bright weather.
+    open_box("Chimney_Flue", F_ROOF, ROOF_BARE,
+             FLUE_X0, FLUE_X1, FLUE_Y0, FLUE_Y1,
+             CAP_Z1 - FLUE_DEPTH, CAP_Z1 + BITE, inward=True)
+
+
+def build_flue_mouth():
+    """An empty at the flue's mouth, for whoever hangs the smoke on it.
+
+    A node rather than a documented coordinate, because a coordinate has to be
+    copied and a node moves when this script does. It is NOT in any reveal
+    group: the groups are meshes the interior reveal fades, and a marker that
+    faded would take the smoke with it the moment the player stepped indoors --
+    at which point the house is still standing and still lit, seen from outside.
+
+    Blender +Z is Godot +Y, so in Godot this arrives at
+    (x, z, -y) = (0.00, 8.55, -5.25).
+    """
+    mouth = bpy.data.objects.new("Chimney_Flue_Mouth", None)
+    mouth.empty_display_type = "PLAIN_AXES"
+    mouth.empty_display_size = 0.25
+    mouth.location = ((FLUE_X0 + FLUE_X1) / 2.0, (FLUE_Y0 + FLUE_Y1) / 2.0, CAP_Z1)
+    bpy.context.scene.collection.objects.link(mouth)
+    return mouth
 
 
 def build_openings():
@@ -569,12 +775,24 @@ def build_porch():
     run = PORCH_Y1 - PORCH_EAVE_Y
     rise = PORCH_HIGH_Z - PORCH_LOW_Z
     length = math.hypot(run, rise)
-    slope_y("Porch_Roof", F_PORCH, ROOF, -1, PORCH_Y1, PORCH_HIGH_Z, run, rise,
+    slope_y("Porch_Roof", F_PORCH, ROOF_BARE, -1, PORCH_Y1, PORCH_HIGH_Z, run, rise,
             PORCH_X0 - 0.10, PORCH_X1 + 0.15, 0.12, 0.0, length, -0.06)
-    # Thick with snow, but short of the eave: the icicles need a dark strip of
-    # roof to hang off or they read as part of the snow.
-    slope_y("Porch_Roof_Snow", F_PORCH, SNOW, -1, PORCH_Y1, PORCH_HIGH_Z, run, rise,
-            PORCH_X0 + 0.15, PORCH_X1 - 0.05, 0.22, 0.20, length - 0.42, 0.11 - BITE)
+    # The mass on the porch roof stops SHORT of the eave even at full settle --
+    # `over` is negative. The icicles hang off that eave, and they need a dark
+    # strip of roof to hang from or they read as part of the snow rather than as
+    # what the snow is dripping into. Shallower than the main roof, too: this
+    # plane is 2.4 m long against the main roof's 4.3 and a mass at the house's
+    # depth would read as a pillow rather than as a roof.
+    porch_ang = math.atan2(rise, run)
+    snow_cap(
+        "Porch_Roof_Snow", F_PORCH,
+        (0.0, PORCH_Y1, PORCH_HIGH_Z),
+        (0.0, -math.cos(porch_ang), -math.sin(porch_ang)),
+        (1.0, 0.0, 0.0),
+        0.0, length,
+        PORCH_X0 - 0.05, PORCH_X1 + 0.10,
+        edge=(0.48, 0.58), spans=1,
+        over=-0.34, depth=0.17, roll=0.14)
 
     # A row of icicles along the porch eave. Tapered spikes, nothing more.
     for i in range(9):
@@ -824,14 +1042,25 @@ def main():
     build_openings()
     balusters = build_porch()
     build_interior()
+    # After every part, and outside GROUPS: it is an empty, so it joins nothing
+    # and is counted in no budget.
+    build_flue_mouth()
 
     parts = sum(PART_COUNT.values())
     order = [SHELL, F_ROOF, F_FRONT, F_PORCH, F_LEFT, F_DIVIDER, F_DOOR, PORCH, ROOM, FURN]
     joined = [join_group(name, GROUPS[name]) for name in order]
     for obj in joined:
         project_uvs(obj)
-    # After the UVs, never before: project_uvs reads vertex coordinates as world
-    # metres, and moving the mesh first would slide the door's siding stripes.
+    # After the UVs, never before, for two different reasons. project_uvs reads
+    # vertex coordinates as world metres, so moving the door's mesh first would
+    # slide its siding stripes; and the snow key SINKS the caps to their
+    # collapsed positions, which would put the mass's UVs half a metre inside
+    # the roof.
+    for name, obj in zip(order, joined):
+        key = kit.add_snow_mass_key(obj, SNOW_REST.get(name, {}))
+        if key is not None:
+            print("build_farmhouse:   %-20s carries '%s' over %d vertices"
+                  % (name, key.name, len(SNOW_REST[name])))
     set_origin(GROUPS[F_DOOR][0], DOOR_HINGE)
     GROUPS.clear()
     for obj in joined:
@@ -861,8 +1090,25 @@ def main():
         export_normals=True,
         export_texcoords=True,
         export_animations=False,
+        # The settled-snow mass. `export_morph_normal` is off by default --
+        # see propkit.export_glb() for why it must not be left that way.
+        export_morph=True,
+        export_morph_normal=True,
     )
     print("build_farmhouse: wrote %s" % glb_path)
+
+    # AFTER the export, and only for the stills: the .glb carries the collapsed
+    # state as its base mesh and the settled one as a morph target, which is
+    # right for the game and useless to look at -- a render at rest shows a roof
+    # with no snow on it, because the mass is inside the roof slab where it
+    # belongs at cover 0. The acceptance renders are for judging the settled
+    # shape, so they are shot at full settle.
+    for obj in joined:
+        if obj.data.shape_keys is None:
+            continue
+        for key in obj.data.shape_keys.key_blocks:
+            if key.name == kit.SNOW_MASS_KEY:
+                key.value = 1.0
 
     if not has_flag("--no-render"):
         do_renders(render_dir)

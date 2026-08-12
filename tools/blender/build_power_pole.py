@@ -74,7 +74,18 @@ BUDGET = 200
 SHAFT = "PAL_STRUCT_2"     # dark, but not the near-black of the hardware
 HEAD = "PAL_SNOW_5"        # the weathered cap the reference shows
 ARM = "PAL_STRUCT_3"
-HARDWARE = "PAL_STRUCT_4"  # insulators and the wire itself: rule 7's near-black
+## Insulators and the wire itself: rule 7's near-black, and `_BARE`.
+##
+## THE WIRE IS THE REASON THE MARK EXISTS. `cel_flat.gdshader`'s settled snow is
+## a 1.33 m pattern and this wire is 0.07 m square -- one to two pixels at the
+## game camera. A hairline cannot carry a pattern; it can only break into
+## dashes, and a wire breaking into dashes reads as a MESH COMING APART. Measured
+## on the shipped scene: the line is solid at cover 0.362 and dotted at 0.620,
+## with the same camera and the same framing, and it starts going at cover 0.14.
+##
+## Snow does lie on a power line in life. It cannot be drawn at one pixel, and
+## the honest reading at this framing is that the line does not take it.
+HARDWARE = kit.bare("PAL_STRUCT_4")
 CAN = "PAL_SNOW_5"
 
 BURIED = -0.45             # the butt starts below ground: the tube has no cap

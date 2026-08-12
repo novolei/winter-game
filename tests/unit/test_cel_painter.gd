@@ -186,3 +186,165 @@ func test_the_register_does_not_keep_a_dropped_material_alive() -> void:
 		CelPainterScript.live_material_count(), before,
 		"the register is still holding a material whose painter is gone"
 	)
+
+
+## ---------------------------------------------------------------------------
+## THE SURFACES A SETTLED MASS DOES NOT LIE ON
+## ---------------------------------------------------------------------------
+## The wire, the insulators, the antenna, the roof planes and every tree in the
+## wood are all PAL_STRUCT_4, so no rule keyed on colour can separate them. The
+## build script says which is which in the material NAME, and this is the half
+## of that contract that lives in the engine. Break it and two things regress at
+## once: the power line goes dotted again (a 1.33 m pattern on a two-pixel wire),
+## and the roof planes whiten behind their own modelled snow -- which is the
+## defect the owner reported as the roof "resolving into rectangles".
+
+func test_a_bare_slot_takes_no_snow_however_covered_the_world_is() -> void:
+	var normal := _painter.material_for(_bible.structure_tones[3])
+	var bare := _painter.material_for(_bible.structure_tones[3], true)
+	assert_almost_eq(float(normal.get_shader_parameter("snow_receptivity")), 1.0, 0.0001)
+	assert_almost_eq(float(bare.get_shader_parameter("snow_receptivity")), 0.0, 0.0001)
+
+
+## Two materials, not one with a flag written over it. The roof planes and the
+## trees are the same twelfth of the palette and only one of them refuses snow,
+## so sharing would let whichever surface was painted last decide for both.
+func test_a_bare_slot_is_its_own_material() -> void:
+	var normal := _painter.material_for(_bible.structure_tones[3])
+	var bare := _painter.material_for(_bible.structure_tones[3], true)
+	assert_true(normal != bare, "the bare slot must not share the plain slot's material")
+	assert_eq(bare.get_shader_parameter("lit_color"), _bible.structure_tones[3])
+	assert_eq(bare.get_shader_parameter("shade_color"), _painter.shade_for(_bible.structure_tones[3]))
+
+
+## The walk has to READ the mark, not just be able to honour one. This is the
+## step that failed silently in the first attempt at this feature -- the data was
+## in the model and nothing looked at it.
+func test_painting_reads_the_bare_mark_off_the_material_name() -> void:
+	var mesh := BoxMesh.new()
+	var arriving := StandardMaterial3D.new()
+	arriving.albedo_color = _bible.structure_tones[3]
+	arriving.resource_name = "PAL_STRUCT_4_BARE"
+	mesh.surface_set_material(0, arriving)
+	var instance := MeshInstance3D.new()
+	instance.mesh = mesh
+	var holder := Node3D.new()
+	holder.add_child(instance)
+
+	_painter.paint(holder)
+
+	var applied := instance.get_surface_override_material(0) as ShaderMaterial
+	assert_not_null(applied)
+	if applied != null:
+		assert_almost_eq(
+			float(applied.get_shader_parameter("snow_receptivity")), 0.0, 0.0001,
+			"a surface whose palette slot is marked %s must refuse the settled snow"
+				% CelPainterScript.BARE_SLOT_MARK
+		)
+	holder.free()
+
+
+## ---------------------------------------------------------------------------
+## THE SETTLED MASS
+## ---------------------------------------------------------------------------
+## Roof snow is not body snow. Body snow is powder caught in cloth and a noise
+## threshold draws it well; roof snow is a mass that slumps, bulges at its edges
+## and shows a cross-section at every boundary. A threshold has no thickness, so
+## the mass is modelled geometry shipped as a blend shape and driven from here.
+
+func test_a_bare_world_has_no_mass_and_a_buried_one_has_all_of_it() -> void:
+	assert_almost_eq(CelPainterScript.snow_mass(0.0), 0.0, 0.0001, "a bare world must show no mass at all")
+	assert_almost_eq(CelPainterScript.snow_mass(1.0), 1.0, 0.0001, "the deepest weather must settle the mass fully")
+
+
+## 切记突变: the owner's one hard requirement on the whole accumulation. The mass
+## is the most visible thing the cover drives, so a step anywhere in this mapping
+## is a roof that changes between two frames.
+func test_the_mass_never_jumps() -> void:
+	var previous := CelPainterScript.snow_mass(0.0)
+	var biggest := 0.0
+	for step in range(1, 201):
+		var mass := CelPainterScript.snow_mass(step / 200.0)
+		assert_true(mass >= previous - 0.0001, "the mass went backwards at cover %.3f" % (step / 200.0))
+		biggest = maxf(biggest, mass - previous)
+		previous = mass
+	# A linear ramp over the same span would move 0.0053 per step; anything much
+	# above that is a corner rather than a curve.
+	assert_true(biggest < 0.012, "the mass moves %.4f in one 0.005 step of cover, which is a jump" % biggest)
+
+
+func test_a_mesh_that_ships_a_mass_is_driven_by_the_weather() -> void:
+	var instance := _mass_instance()
+	var holder := Node3D.new()
+	holder.add_child(instance)
+
+	_painter.paint(holder)
+	CelPainterScript.set_snow_cover(0.0)
+	assert_almost_eq(instance.get_blend_shape_value(0), 0.0, 0.0001, "a bare world left the roof carrying snow")
+	CelPainterScript.set_snow_cover(0.62)
+	assert_almost_eq(
+		instance.get_blend_shape_value(0), CelPainterScript.snow_mass(0.62), 0.0001,
+		"the broadcast did not reach the mass"
+	)
+
+	CelPainterScript.set_snow_cover(0.0)
+	holder.free()
+
+
+## A building placed mid-run has to arrive carrying the weather that is already
+## outside -- the same claim the materials make, and the one that is easy to miss
+## because a scene built at cover 0 never shows it.
+func test_a_mass_adopted_after_the_snow_arrived_catches_up_at_once() -> void:
+	CelPainterScript.set_snow_cover(0.80)
+	var instance := _mass_instance()
+	var holder := Node3D.new()
+	holder.add_child(instance)
+
+	_painter.paint(holder)
+	assert_almost_eq(
+		instance.get_blend_shape_value(0), CelPainterScript.snow_mass(0.80), 0.0001,
+		"a building placed in deep winter arrived with a bare roof"
+	)
+
+	CelPainterScript.set_snow_cover(0.0)
+	holder.free()
+
+
+## The register holds weak references for the same reason the materials' does,
+## and for a sharper one: a MeshInstance3D is a Node the tree frees the moment a
+## building is removed, so a strong reference here is a demolished shed that
+## stays in memory and a broadcast that writes to it.
+func test_the_mass_register_does_not_keep_a_freed_instance_alive() -> void:
+	var before := CelPainterScript.live_mass_count()
+	var holder := Node3D.new()
+	holder.add_child(_mass_instance())
+	_painter.paint(holder)
+	assert_true(
+		CelPainterScript.live_mass_count() > before,
+		"a mesh carrying a mass did not register, so the weather would never reach it"
+	)
+	holder.free()
+	CelPainterScript.set_snow_cover(0.0)
+	assert_eq(
+		CelPainterScript.live_mass_count(), before,
+		"the register is still holding a mesh whose building is gone"
+	)
+
+
+## A triangle with one blend shape named the way the build scripts name theirs.
+## Deliberately NOT the farmhouse: this is the contract, and a unit test that
+## loads a 1,400-triangle building to check it would go red for reasons that have
+## nothing to do with the claim.
+func _mass_instance() -> MeshInstance3D:
+	var mesh := ArrayMesh.new()
+	mesh.add_blend_shape(CelPainterScript.SNOW_MASS_SHAPE)
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = PackedVector3Array([Vector3.ZERO, Vector3.RIGHT, Vector3.UP])
+	var settled := []
+	settled.resize(Mesh.ARRAY_MAX)
+	settled[Mesh.ARRAY_VERTEX] = PackedVector3Array([Vector3.UP, Vector3.RIGHT, Vector3.UP])
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays, [settled])
+	var instance := MeshInstance3D.new()
+	instance.mesh = mesh
+	return instance

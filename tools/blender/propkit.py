@@ -102,6 +102,53 @@ TIMBER = "PAL_STRUCT_4"        # trees, poles, wires -- rule 7's near-black
 ## much and neither renderer has a decision to make.
 BITE = 0.03
 
+## ---------------------------------------------------------------------------
+## THE SNOW A PART REFUSES, and why it rides in the material NAME
+## ---------------------------------------------------------------------------
+## `assets/shaders/cel_flat.gdshader` paints a settled mass onto every solid in
+## the world that faces the sky, keyed off nothing but the surface normal and one
+## world scalar. That is right for a fence rail and a branch and wrong for two
+## kinds of surface:
+##
+##   * a HAIRLINE. The shader's pattern is 1.33 m across; a power wire is one to
+##     two pixels at the game camera. A wire cannot carry a pattern, it can only
+##     break into dashes, and a wire breaking into dashes reads as a mesh coming
+##     apart. Measured: the line goes dotted from cover 0.14.
+##   * a ROOF PLANE that has a `snow_cap` on it. Two white things on one roof is
+##     the fault this whole mechanism exists to close -- the cap's silhouette
+##     stops reading the moment the plane behind it is white too, and what the
+##     eye picks out instead is the cap's stepped edges and cast shadows. The
+##     owner's words for it were "the roof resolves into rectangles".
+##
+## Neither is a fact about a palette COLOUR, so `CelPainter.receptivity_for()`
+## cannot express it: the wire, the insulators, the antenna, the roof planes and
+## every tree in the wood are all `PAL_STRUCT_4`. It is a fact about the PART.
+##
+## So the part says so in the one channel this pipeline is already built on --
+## **the material name.** `PAL_STRUCT_4` becomes `PAL_STRUCT_4_BARE`, the palette
+## resolves it to exactly the same colour (`palette_import_materials.gd` reads
+## the digits and stops at the underscore), and `CelPainter` gives it
+## `snow_receptivity = 0`. No new channel, no new gate, and a name is the thing
+## the docstring above already calls the contract.
+##
+## WHY NOT VERTEX COLOUR, which is where this started. It works -- until it
+## doesn't. Measured on Blender 5.2 exporting this very building: a mark of 0
+## written to every vertex of a part survived `join()` intact (dumped from
+## Blender immediately before the export call, values `[0.0, 1.0]`), and came out
+## of the .glb as **all white** for every primitive in which the mark was
+## UNIFORM, while surviving correctly in the one primitive where black and white
+## vertices were mixed. Two primitives of `FH_Fade_Porch` lost it; the mixed one
+## in `FH_Fade_Roof` kept it. So the exporter is entitled to rewrite a constant
+## colour attribute, and a data channel an exporter may optimise is not a data
+## channel. A material name it will not touch.
+BARE = "_BARE"
+
+
+def bare(slot):
+    """The same palette slot, for a part a settled mass does not lie on."""
+    return slot + BARE
+
+
 _MATERIALS = {}
 _PARTS = []
 
@@ -127,12 +174,18 @@ def srgb_to_linear(c):
 
 
 def material(slot):
-    """One Blender material per palette slot, created on first use."""
+    """One Blender material per palette slot, created on first use.
+
+    A `_BARE` suffix is a different material with the same colour -- see the
+    block above BARE. It has to be a separate material because that is the only
+    way one part of a joined mesh can carry a property another part does not.
+    """
     if slot in _MATERIALS:
         return _MATERIALS[slot]
-    if slot not in PALETTE:
+    base = slot[:-len(BARE)] if slot.endswith(BARE) else slot
+    if base not in PALETTE:
         raise SystemExit("propkit: %s is not a palette slot" % slot)
-    hexcode = PALETTE[slot]
+    hexcode = PALETTE[base]
     rgb = [srgb_to_linear(int(hexcode[i:i + 2], 16) / 255.0) for i in (0, 2, 4)]
     mat = bpy.data.materials.new(name=slot)
     mat.use_nodes = True
@@ -257,6 +310,294 @@ def spike(name, slot, x, y, z_top, length, width):
              (x, y, z_top - length)]
     faces = [(0, 1, 2, 3), (0, 4, 1), (1, 4, 2), (2, 4, 3), (3, 4, 0)]
     return emit(name, slot, verts, faces)
+
+
+# ---------------------------------------------------------------------------
+# SETTLED SNOW -- the mass that lies on a roof
+# ---------------------------------------------------------------------------
+# **Roof snow and body snow are different materials and must not share a look.**
+# Write that down here, because it is the thing somebody will flatten later.
+#
+#   * BODY snow is powder caught in cloth. Noise-broken patches with ragged
+#     edges. That is `src/entities/snow_load.gd` and its crust shader, and it is
+#     correct there.
+#   * ROOF snow is a settled MASS. It slumps under its own weight, its edges
+#     roll off and bulge, and it reads smooth and swelling -- the opposite of
+#     ragged. At every boundary it shows a CROSS-SECTION, and that cross-section
+#     is where the thickness lives. At an eave it overhangs.
+#
+# A noise threshold cannot draw the second one. A threshold has no thickness: it
+# can only decide, per pixel, which side of a line the pixel is on, and both
+# sides are the same flat plane. The roof snow that shipped before this was ten
+# flat 0.17 m slabs of it, and the day the shader learned to whiten the roof
+# plane behind them their silhouettes stopped reading -- what the eye picked out
+# instead was their cast shadows and their stepped edges, which is a roof that
+# looks like it is coming apart.
+#
+# So the mass is GEOMETRY, and the arc at its edge is a real silhouette:
+#
+#       ridge                                              eave
+#   ______________________________________
+#  /  top face, `depth` above the plane    \___
+# |                                            \__      <- the roll, bulging
+# |                                               |        outward, widest near
+# =================================================        its base
+#                                        |<- over ->|
+#
+# WHY IT IS NOT GROWN BY DISPLACING THE ROOF'S OWN VERTICES. Every model in this
+# project is split-vertex flat-shaded, so pushing a shared corner along "the"
+# normal tears every hard edge it belongs to. This is a SEPARATELY GENERATED
+# SHELL -- its own closed solid, its own vertices -- so nothing it does can crack
+# the roof it lies on.
+#
+# WHY IT GROWS AT ALL, and this is the part that is not optional. A cap authored
+# at one fixed size is a white shape that is there from the first frame, on a
+# roof whose own coverage moves all week: exactly the fault above, rebuilt. So
+# the cap is authored TWICE -- collapsed and settled -- and shipped as a blend
+# shape named `snow_mass`. `src/rendering/cel_painter.gd` drives it from the same
+# world scalar that drives everything else, so the mass thickens, its leading
+# edge creeps down the slope, and its lip finally rolls out past the eave, all as
+# one continuous function of the weather. Collapsed, it is a small well-formed
+# slab sunk inside the roof solid: invisible, and with its normals still pointing
+# the way the settled one's do, so the half-blended state is not half nonsense.
+SNOW_MASS_KEY = "snow_mass"
+
+## The roll, in four rings. `(inset, drop)` are fractions of the rim radius:
+## inset from the cap's outer extent, drop below the top face. The arc is swept
+## to 0, 55 and 110 degrees, then the base tucks back under.
+##
+## **PAST 90 DEGREES ON PURPOSE, and this is the difference between reading and
+## not reading.** A quarter-round stopping at 90 gives the lip three facets that
+## all face upward, and the game's camera looks DOWN at 45 degrees -- so all
+## three land in the same band of a two-band cel light and the roll comes out as
+## a flat extension of the top face with no cross-section at all. Measured at the
+## eave, at game framing, before this changed: one tone across the whole lip.
+##
+## Carrying the last facet to 110 gives it a normal that is horizontal and
+## slightly undercut, so it is a genuinely different surface from the top -- it
+## takes its own Lambert, it can fall into the shadow band, and it is the
+## CROSS-SECTION the thickness is read from. It also puts the widest point of the
+## bulge just below the roof plane, which is where surface tension puts it: a
+## settled mass is fattest near its base and rolls under at the very edge.
+##
+## Three segments and no more, because of the same lighting: a fourth buys a step
+## that lands in a band the eye has already seen, and costs 4 * (2 * spans + 2)
+## triangles on a building spending 1,420 of 1,500.
+_CAP_RINGS = (
+    (1.00000, 0.00000),
+    (0.18085, 0.42642),   # 55 degrees
+    (0.06031, 1.34202),   # 110 -- horizontal and past it, the undercut
+    (1.00000, None),      # the base: `base` height rather than a drop
+)
+
+
+def snow_cap_state(depth, radius, over, ridge_gap, side, edge, base=None, tilt=0.0):
+    """One end of the mass's travel.
+
+    depth      how far the top face stands off the roof plane
+    radius     the rim's radius -- how far in from the outer extent the top
+               face stops, and how far the roll bulges out past it
+    over       how far past the eave the outer extent reaches
+    ridge_gap  how far DOWN-slope of the ridge the cap starts. Positive leaves a
+               dark line along the ridge, which Art Bible rule 10 wants kept.
+    side       how far past the verges the outer extent reaches
+    edge       `spans + 1` fractions of the slope, one per vertex along the eave
+               edge: where the leading edge sits. Authored rather than derived,
+               so a partly-settled mass creeps down in lobes instead of as a
+               ruled line, and the lobes close up as it fills.
+    base       where the underside sits, relative to the roof plane. Derived by
+               default, and derived rather than typed because the arc now sweeps
+               PAST horizontal: its lowest ring is below the top face by
+               1.342 * radius, and a base typed above that turns the last band of
+               faces inside out. `_check_outward` catches it, but only after
+               somebody has typed a number and re-run Blender -- so the number
+               computes itself and the caller says how thick the mass is instead.
+    tilt       extra height added at the eave end and none at the ridge. Negative
+               on the collapsed state so the mass emerges from the ridge downward
+               rather than surfacing all at once -- two planes crossing over the
+               whole of a roof in one frame is a z-fight, and it would be the one
+               frame somebody screenshots.
+    """
+    lowest = depth - _CAP_RINGS[-2][1] * radius
+    if base is None:
+        base = lowest - max(0.02, radius * 0.3)
+    elif base >= lowest:
+        raise SystemExit("propkit: a snow cap's base at %.3f is not below its "
+                         "lowest arc ring at %.3f" % (base, lowest))
+    return {
+        "depth": depth, "radius": radius, "over": over, "ridge_gap": ridge_gap,
+        "side": side, "edge": tuple(edge), "base": base, "tilt": tilt,
+        # How far below the roof plane the whole state reaches, so a caller can
+        # check it against the thickness of the slab it has to hide inside.
+        "deepest": -(base + min(0.0, tilt)),
+    }
+
+
+def _cap_ring(origin, down, along, out, d0, d1, a0, a1, spans, state, inset, drop):
+    """One closed loop of the cap, wound counter-clockwise seen from outside."""
+    span_d = d1 - d0
+    lo_d = d0 + state["ridge_gap"] + inset
+    lo_a = a0 - state["side"] + inset
+    hi_a = a1 + state["side"] - inset
+    edge = state["edge"]
+
+    def eave(j):
+        return d0 + edge[j] * span_d + state["over"] - inset
+
+    def at(d, a):
+        height = (state["base"] if drop is None else state["depth"] - drop)
+        height += state["tilt"] * (d - d0) / span_d
+        return origin + down * d + along * a + out * height
+
+    def across(j):
+        return lo_a + (hi_a - lo_a) * j / spans
+
+    points = [at(lo_d, lo_a)]
+    for j in range(spans + 1):
+        points.append(at(eave(j), across(j)))
+    points.append(at(lo_d, hi_a))
+    for j in range(spans - 1, 0, -1):
+        points.append(at(lo_d, across(j)))
+    return points
+
+
+def snow_cap_shape(origin, down, along, d0, d1, a0, a1, settled, rest, spans=1):
+    """(settled vertices, collapsed vertices, faces) for one roof plane's mass.
+
+    `origin` is a point on the ridge line, `down` runs down the slope and `along`
+    runs down the ridge; `d0..d1` is the slope's extent measured from `origin`
+    and `a0..a1` the run along the ridge. The outward normal is `down x along`,
+    which is checked rather than assumed -- a cap wound inside-out does not look
+    wrong, it looks absent.
+    """
+    down = Vector(down).normalized()
+    along = Vector(along).normalized()
+    out = down.cross(along)
+    if out.z <= 0.0:
+        raise SystemExit("propkit: snow_cap_shape got a plane whose outward "
+                         "normal points down -- swap the sign of `along`")
+
+    verts = {"settled": [], "rest": []}
+    for key, state in (("settled", settled), ("rest", rest)):
+        for inset_f, drop_f in _CAP_RINGS:
+            verts[key] += _cap_ring(
+                Vector(origin), down, along, out, d0, d1, a0, a1, spans, state,
+                inset_f * state["radius"],
+                None if drop_f is None else drop_f * state["radius"])
+
+    ring = 2 * spans + 2
+    faces = [tuple(range(ring))]
+    for k in range(len(_CAP_RINGS) - 1):
+        for i in range(ring):
+            j = (i + 1) % ring
+            faces.append((k * ring + i, (k + 1) * ring + i,
+                          (k + 1) * ring + j, k * ring + j))
+    # NO BOTTOM FACE, for the same reason `tube()` has no end caps: the base
+    # ring is tucked a rim radius back inside the roof's own outline and sits
+    # `base` below the plane, so it is enclosed by the roof slab and there is no
+    # angle from which the hole can be seen. On the hero building that is 24
+    # triangles of a 1500 budget spent on nothing.
+    _check_outward(verts["settled"], faces)
+    _check_outward(verts["rest"], faces)
+    return verts["settled"], verts["rest"], faces
+
+
+def _check_outward(verts, faces):
+    """Every face wound so its normal leaves the solid.
+
+    Worth the six lines because of how this fails: Godot culls back faces, so a
+    cap wound inside-out does not look wrong, it looks ABSENT -- and the two
+    states are built by the same code from different numbers, so one of them
+    flipping while the other does not is a thing that can happen.
+    """
+    centre = sum(verts, Vector((0.0, 0.0, 0.0))) / len(verts)
+    for face in faces:
+        a, b, c = verts[face[0]], verts[face[1]], verts[face[2]]
+        normal = (b - a).cross(c - a)
+        if normal.dot(a - centre) <= 0.0:
+            raise SystemExit("propkit: a snow cap face is wound inside out")
+
+
+def add_snow_mass_key(obj, rest_by_point):
+    """Ship the settled state as a blend shape and sink the mesh to its rest.
+
+    `rest_by_point` maps a rounded settled position to its collapsed position.
+    Matched by POSITION rather than by index because the caps have been through
+    `join()` by then and a join concatenates in an order nobody should depend on;
+    the count is asserted, so a miss is a build failure with a number on it
+    rather than a cap that never grows.
+    """
+    if not rest_by_point:
+        return None
+    mesh = obj.data
+    obj.shape_key_add(name="Basis", from_mix=False)
+    key = obj.shape_key_add(name=SNOW_MASS_KEY, from_mix=False)
+    basis = obj.data.shape_keys.key_blocks["Basis"]
+    matched = 0
+    for index, vertex in enumerate(mesh.vertices):
+        found = rest_by_point.get(_point_key(vertex.co))
+        if found is None:
+            continue
+        key.data[index].co = Vector(vertex.co)
+        basis.data[index].co = Vector(found)
+        vertex.co = Vector(found)
+        matched += 1
+    if matched != len(rest_by_point):
+        raise SystemExit("propkit: %s matched %d of %d snow-cap vertices"
+                         % (obj.name, matched, len(rest_by_point)))
+    mesh.update()
+    return key
+
+
+def _point_key(point):
+    return (round(point[0], 5), round(point[1], 5), round(point[2], 5))
+
+
+def rest_map(settled, rest):
+    """The position map `add_snow_mass_key` wants, for one cap."""
+    return dict(zip((_point_key(p) for p in settled), rest))
+
+
+def snow_cap(name, origin, down, along, d0, d1, a0, a1, settled, rest, spans=1):
+    """A settled-snow cap as a prop part, returning its rest-position map."""
+    verts, rest_verts, faces = snow_cap_shape(
+        origin, down, along, d0, d1, a0, a1, settled, rest, spans)
+    emit(name, SNOW, verts, faces)
+    return rest_map(verts, rest_verts)
+
+
+def gable_cap(name, sign, ridge_z, run, rise, x0, x1, reach, edge,
+              depth, over, sink, roof_t, spans=1, ridge_y=0.0):
+    """The settled mass over one plane of a `slope_y` gable roof.
+
+    The outbuildings' roofs are all this shape, so their build scripts are two
+    calls rather than two copies of the reasoning.
+
+    `sink` is how far below the roof plane the COLLAPSED state's ridge end sits.
+    It has to be less than the slab is thick or the mass is visible at cover 0,
+    which is checked here rather than looked for in a frame. The eave end sits
+    deeper again, so the mass emerges from the ridge downward instead of
+    surfacing all at once -- a whole roof plane crossing another in one frame is
+    a z-fight, and it would be the frame somebody screenshots.
+    """
+    roll = depth * 0.8
+    angle = math.atan2(rise, run)
+    settled = snow_cap_state(depth=depth, radius=roll, over=over,
+                             ridge_gap=depth * 0.3, side=over,
+                             edge=[1.0] * (spans + 1))
+    rest = snow_cap_state(depth=-sink, radius=roll * 0.15, over=-roll * 0.6,
+                          ridge_gap=depth * 0.3 + roll, side=-roll * 0.9,
+                          edge=edge, tilt=-sink * 1.1)
+    if rest["deepest"] >= roof_t:
+        raise SystemExit("propkit: %s collapses %.3f m below the plane, which is "
+                         "through a %.3f m roof slab -- it would be visible at "
+                         "cover 0" % (name, rest["deepest"], roof_t))
+    return snow_cap(
+        name, (0.0, ridge_y, ridge_z),
+        (0.0, sign * math.cos(angle), -math.sin(angle)), (-sign, 0.0, 0.0),
+        0.0, reach,
+        *((x0, x1) if sign < 0 else (-x1, -x0)),
+        settled=settled, rest=rest, spans=spans)
 
 
 def frame(direction, roll=0.0):
@@ -443,6 +784,11 @@ def export_glb(path):
         export_normals=True,
         export_texcoords=True,
         export_animations=False,
+        # The settled-snow mass. `export_morph_normal` is OFF by default -- the
+        # exporter will not compute morph normals unasked -- and without it a
+        # half-settled cap is lit by the collapsed state's normals.
+        export_morph=True,
+        export_morph_normal=True,
     )
     print("propkit: wrote %s" % path)
 

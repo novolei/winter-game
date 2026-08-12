@@ -56,7 +56,6 @@ SLOPE = math.hypot(RUN, RISE)   # because a small roof needs a steep one to read
 VERGE = 0.18
 EAVE = 0.34
 ROOF_T = 0.10
-SNOW_T = 0.13
 
 
 def build():
@@ -69,19 +68,25 @@ def build():
     kit.prism_y("Gable_Left", kit.SIDING, Y0, Y1, 0.0, EAVE_Z, RIDGE_Z, X0, X0 + T)
     kit.prism_y("Gable_Right", kit.SIDING, Y0, Y1, 0.0, EAVE_Z, RIDGE_Z, X1 - T, X1)
 
+    # `_BARE`: the planes and the ridge carry a settled mass now, and a plane
+    # that whitens behind its own snow is the fault this build closes -- see
+    # propkit's block above BARE.
     for sign, side in ((-1, "Front"), (1, "Back")):
-        kit.slope_y("Roof_" + side, kit.ROOF, sign, 0.0, RIDGE_Z, RUN, RISE,
+        kit.slope_y("Roof_" + side, kit.bare(kit.ROOF), sign, 0.0, RIDGE_Z, RUN, RISE,
                     X0 - VERGE, X1 + VERGE, ROOF_T, -0.05, SLOPE + EAVE,
                     -ROOF_T / 2.0)
-    kit.block("Ridge_Cap", kit.ROOF, X0 - VERGE, X1 + VERGE, -0.09, 0.09,
+    kit.block("Ridge_Cap", kit.bare(kit.ROOF), X0 - VERGE, X1 + VERGE, -0.09, 0.09,
               RIDGE_Z - 0.09, RIDGE_Z + 0.05)
 
-    for tag, sign, x0, x1, d0, d1 in (
-        ("F1", -1, -0.78, -0.02, 0.24, 0.78),
-        ("B1", 1, -0.18, 0.72, 0.28, 0.86),
-    ):
-        kit.slope_y("Snow_" + tag, kit.SNOW, sign, 0.0, RIDGE_Z, RUN, RISE,
-                    x0, x1, SNOW_T, d0, d1, SNOW_T / 2.0 - kit.BITE)
+    # The settled mass, replacing two flat slabs. The shallowest on the
+    # farmstead: this roof's slope is 1.17 m, so the mass is a hand's thickness
+    # rather than a hand's span.
+    rest = {}
+    for sign, side, edge in ((-1, "Front", (0.58, 0.44)), (1, "Back", (0.46, 0.60))):
+        rest.update(kit.gable_cap(
+            "Snow_" + side, sign, RIDGE_Z, RUN, RISE, X0 - VERGE, X1 + VERGE,
+            SLOPE + EAVE, edge, depth=0.13, over=0.08, sink=0.022,
+            roof_t=ROOF_T))
 
     # Two icicles, because two is enough to say "it has been cold for weeks"
     # and seven would make this compete with the shed.
@@ -97,7 +102,11 @@ def build():
 
     # The stake beside it. It is in the reference, and it is the thing that says
     # somebody has to find this in a whiteout.
-    kit.block("Stake", kit.ROOF, 1.52, 1.60, -0.28, -0.20, 0.0, 1.55)
+    # A 0.08 m post: a hairline against a 1.33 m snow pattern, so it takes
+    # the pattern in whole pieces or not at all. `_BARE`, for the wire's
+    # reason -- see propkit's block above BARE.
+    kit.block("Stake", kit.bare(kit.ROOF), 1.52, 1.60, -0.28, -0.20, 0.0, 1.55)
+    return rest
     kit.block("Stake_Flag", "PAL_WARM_2", 1.50, 1.62, -0.36, -0.12, 1.34, 1.52)
     kit.block("Drift", kit.SNOW, X0 - 0.22, 0.55, Y1 - 0.08, Y1 + 0.58, 0.0, 0.38)
 
@@ -111,8 +120,11 @@ def main():
     renders = kit.argument("--renders", os.path.join(root, ".superpowers", "sdd", "wave1"))
 
     kit.reset()
-    build()
+    rest = build()
     obj = kit.finish("Well_House", BUDGET, label="well_house")
+    # After finish(), the only moment the joined mesh and both states of the
+    # mass exist at once.
+    kit.add_snow_mass_key(obj, rest)
     low, high = kit.bbox(obj)
     print("well_house: %.2f x %.2f m on plan, ridge %.2f m"
           % (high[0] - low[0], high[1] - low[1], high[2]))

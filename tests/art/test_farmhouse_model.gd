@@ -150,3 +150,125 @@ func test_the_whole_building_is_within_the_hero_budget() -> void:
 		total <= HERO_BUDGET,
 		"the farmhouse is %d triangles, over the %d hero budget" % [total, HERO_BUDGET]
 	)
+
+
+## ---------------------------------------------------------------------------
+## THE SETTLED MASS ON THE ROOF
+## ---------------------------------------------------------------------------
+## Roof snow is not body snow. Body snow is powder caught in cloth, and a noise
+## threshold in a shader draws it well. Roof snow is a settled MASS: it slumps
+## under its own weight, its edges roll off and bulge, and at every boundary it
+## shows a cross-section -- which is where its thickness lives. A threshold has
+## no thickness, so the mass is modelled, and it travels between a collapsed
+## state hidden inside the roof slab and a fully settled one whose lip overhangs
+## the eave.
+##
+## Two halves of that contract are checked here because neither is visible
+## anywhere else until somebody looks at a frame:
+##
+##   1. the mass ships as a blend shape with the name CelPainter drives;
+##   2. the roof PLANES refuse the shader's own snow. Until they did, the plane
+##      whitened behind the mass and the mass's silhouette stopped reading -- the
+##      owner's words for it, from play, were that the roof "resolves into
+##      rectangles".
+const SNOW_MASS_SHAPE := "snow_mass"
+const BARE_SLOT_MARK := "_BARE"
+
+## Both groups that carry roof planes. FH_Fade_Porch is easy to forget and is
+## the one that broke first.
+const MASS_GROUPS: Array[String] = ["FH_Fade_Roof", "FH_Fade_Porch"]
+
+
+func _model() -> Node:
+	var packed := ResourceLoader.load(MODEL_PATH, "", ResourceLoader.CACHE_MODE_IGNORE)
+	if not (packed is PackedScene):
+		return null
+	return (packed as PackedScene).instantiate()
+
+
+func _find(root: Node, wanted: String) -> Node:
+	if root == null:
+		return null
+	if root.name == wanted:
+		return root
+	for child in root.get_children():
+		var found := _find(child, wanted)
+		if found != null:
+			return found
+	return null
+
+
+func test_the_roof_groups_ship_a_settled_snow_mass() -> void:
+	var root := _model()
+	assert_not_null(root, "%s did not instantiate" % MODEL_PATH)
+	if root == null:
+		return
+	for group in MASS_GROUPS:
+		var instance := _find(root, group) as MeshInstance3D
+		assert_not_null(instance, "%s is not in the model" % group)
+		if instance == null or instance.mesh == null:
+			continue
+		var names := PackedStringArray()
+		for index in range(instance.mesh.get_blend_shape_count()):
+			names.append(instance.mesh.get_blend_shape_name(index))
+		assert_true(
+			names.has(SNOW_MASS_SHAPE),
+			"%s must ship the '%s' blend shape CelPainter drives; it has [%s]"
+				% [group, SNOW_MASS_SHAPE, ", ".join(names)]
+		)
+	root.free()
+
+
+func test_the_roof_planes_refuse_the_shader_snow() -> void:
+	var root := _model()
+	assert_not_null(root, "%s did not instantiate" % MODEL_PATH)
+	if root == null:
+		return
+	for group in MASS_GROUPS:
+		var instance := _find(root, group) as MeshInstance3D
+		if instance == null or instance.mesh == null:
+			continue
+		var bare := 0
+		var slots := PackedStringArray()
+		for surface in range(instance.mesh.get_surface_count()):
+			var material := instance.mesh.surface_get_material(surface)
+			var slot := "" if material == null else material.resource_name
+			slots.append(slot)
+			if slot.contains(BARE_SLOT_MARK):
+				bare += 1
+		assert_true(
+			bare > 0,
+			"%s carries a modelled snow mass, so its roof planes must be on a %s palette slot or they whiten behind it; slots are [%s]"
+				% [group, BARE_SLOT_MARK, ", ".join(slots)]
+		)
+	root.free()
+
+
+## The chimney is beacon one (GDD section 6) and it is now open: the cap is a rim
+## and the flue goes through it into the dark. A separate system hangs the smoke
+## on this marker, so its NAME is a contract -- and a marker is used rather than a
+## documented coordinate because a coordinate has to be copied by hand and a node
+## moves when tools/blender/build_farmhouse.py does.
+##
+## Deliberately outside every reveal group: those are meshes the interior reveal
+## fades, and a marker that faded would take the smoke with it the moment the
+## player stepped indoors -- at which point the house is still standing and still
+## being looked at from outside.
+func test_the_flue_mouth_is_in_the_model_for_the_smoke_to_hang_on() -> void:
+	var root := _model()
+	assert_not_null(root, "%s did not instantiate" % MODEL_PATH)
+	if root == null:
+		return
+	var mouth := _find(root, "Chimney_Flue_Mouth") as Node3D
+	assert_not_null(mouth, "the smoke has nothing to parent to: no Chimney_Flue_Mouth in %s" % MODEL_PATH)
+	if mouth != null:
+		# Above the ridge (7.40 m) and on the chimney, not at the model origin.
+		assert_true(
+			mouth.position.y > 8.0,
+			"the flue mouth is at %s, which is not at the top of the chimney" % mouth.position
+		)
+		assert_true(
+			not (mouth is VisualInstance3D),
+			"the flue mouth must be a marker, not geometry -- it would be drawn"
+		)
+	root.free()

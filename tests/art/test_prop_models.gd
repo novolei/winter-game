@@ -170,3 +170,48 @@ func test_every_tree_is_one_flat_near_black() -> void:
 				(material as StandardMaterial3D).albedo_color, expected,
 				"rule 7 makes a tree #131C30 -- the palette's structure_tones[3]; %s is %s" % [path, (material as StandardMaterial3D).albedo_color]
 			)
+
+
+## ---------------------------------------------------------------------------
+## THE WIRE TAKES NO SNOW
+## ---------------------------------------------------------------------------
+## `assets/shaders/cel_flat.gdshader` settles snow on everything facing the sky
+## with a 1.33 m pattern. This wire is 0.07 m square -- one to two pixels at the
+## game camera -- so it cannot carry a pattern; it can only break into pieces,
+## and a wire breaking into pieces reads as a MESH COMING APART. Measured on the
+## shipped scene at one fixed camera: the line is solid at cover 0.362 and dotted
+## at 0.620, and it begins going at 0.14.
+##
+## Snow does lie on a power line in life. It cannot be drawn at one pixel, and
+## the honest reading at this framing is that the line does not take it. The wire
+## says so in its palette slot name, which CelPainter turns into
+## `snow_receptivity = 0`.
+const WIRE_MODEL := "res://assets/models/props/power_wire.glb"
+const BARE_SLOT_MARK := "_BARE"
+
+
+func test_the_power_wire_refuses_the_settled_snow() -> void:
+	var packed := ResourceLoader.load(WIRE_MODEL, "", ResourceLoader.CACHE_MODE_IGNORE)
+	assert_true(packed is PackedScene, "%s must import as a PackedScene" % WIRE_MODEL)
+	if not (packed is PackedScene):
+		return
+	var root: Node = (packed as PackedScene).instantiate()
+	var slots := PackedStringArray()
+	var pending: Array[Node] = [root]
+	while not pending.is_empty():
+		var node: Node = pending.pop_back()
+		var instance := node as MeshInstance3D
+		if instance != null and instance.mesh != null:
+			for surface in range(instance.mesh.get_surface_count()):
+				var material := instance.mesh.surface_get_material(surface)
+				slots.append("" if material == null else material.resource_name)
+		for child in node.get_children():
+			pending.append(child)
+	assert_true(slots.size() > 0, "%s holds no surface at all" % WIRE_MODEL)
+	for slot in slots:
+		assert_true(
+			slot.contains(BARE_SLOT_MARK),
+			"every surface of the wire must be on a %s palette slot or the line goes dotted; found '%s'"
+				% [BARE_SLOT_MARK, slot]
+		)
+	root.free()
