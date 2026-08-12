@@ -62,6 +62,7 @@ var _breaths: Array[Breath] = []
 var _placed: Array[Vector3] = []
 var _base_colour := Color.WHITE
 var _outline_colour := Color.BLACK
+var _emission := 1.0
 var _width := 0.0
 
 # --- composition ------------------------------------------------------------
@@ -69,7 +70,8 @@ var _width := 0.0
 ## Lays the line out and gives every glyph its own breath. Safe to call again;
 ## it replaces what was there.
 func compose(text: String, font: Font, tokens: UITokens,
-		font_size := DEFAULT_FONT_SIZE, pixel_size := DEFAULT_PIXEL_SIZE) -> void:
+		font_size := DEFAULT_FONT_SIZE, pixel_size := DEFAULT_PIXEL_SIZE,
+		emission := 1.0) -> void:
 	for glyph in _glyphs:
 		glyph.queue_free()
 	_glyphs.clear()
@@ -79,7 +81,18 @@ func compose(text: String, font: Font, tokens: UITokens,
 	if text == "" or font == null:
 		return
 
-	_base_colour = tokens.life_warm if tokens != null else Color.WHITE
+	var warm := tokens.life_warm if tokens != null else Color.WHITE
+	# MULTIPLIED PAST 1.0 SO IT CAN BLOOM. Godot only glows what exceeds the
+	# environment's HDR threshold, so amber at its palette value -- which peaks at
+	# exactly 1.0 in red -- sits on the line and blooms barely at all. Pushing it
+	# over is what turns a hard alpha edge into light, and it is also the only
+	# softening available: Label3D draws its glyph with no blur of any kind.
+	#
+	# The colour is still the palette's; this scales it, it does not replace it.
+	_emission = maxf(emission, 0.0)
+	_base_colour = Color(warm.r * _emission, warm.g * _emission, warm.b * _emission, 1.0)
+	# The outline is NOT boosted. It is there to hold the letter apart from snow,
+	# and a glowing dark rim is a contradiction.
 	_outline_colour = tokens.scrim_veil if tokens != null else Color.BLACK
 
 	# Prefix measurement rather than per-character advances, so kerning survives:
@@ -128,7 +141,10 @@ func compose(text: String, font: Font, tokens: UITokens,
 		# snow at roughly 70% lightness and warm-on-white is the one pairing in
 		# the palette with no contrast to spare. Taken from the darkest structure
 		# tone rather than from black, so it is still the twelve.
-		glyph.outline_size = maxi(int(round(float(font_size) * 0.07)), 1)
+		# Thinner than the first pass's 7%. With the glow doing the separating, a
+		# heavy rim stops reading as an edge and starts reading as a second,
+		# darker letter behind the first one.
+		glyph.outline_size = maxi(int(round(float(font_size) * 0.035)), 1)
 		glyph.outline_modulate = _transparent(_outline_colour)
 		# Centred on the line's own origin, so placing an inscription in the
 		# world is placing its middle rather than its left edge.

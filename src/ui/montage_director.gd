@@ -47,6 +47,8 @@ var _shot_index := -1
 var _playing := false
 var _inscription: Inscription = null
 var _written := false
+var _film: MontageFilm = null
+var _attributes: CameraAttributesPractical = null
 
 # --- wiring ------------------------------------------------------------------
 
@@ -94,6 +96,15 @@ func play(montage: Montage) -> bool:
 func stop() -> void:
 	_playing = false
 	_clear_inscription()
+	_clear_film()
+
+## The film goes with the montage. Left behind it would grade the game.
+func _clear_film() -> void:
+	if _film == null:
+		return
+	remove_child(_film)
+	_film.free()
+	_film = null
 
 func advance(delta: float) -> void:
 	if not _playing or _montage == null:
@@ -114,6 +125,9 @@ func advance(delta: float) -> void:
 		_enter_shots_up_to(index)
 	_apply_camera(located[1])
 	_drive_text(located[1])
+	_pull_focus()
+	if _film != null:
+		_film.apply(current_shot().grade if current_shot() != null else null, _elapsed)
 
 ## Enters every shot between the current one and `target`, in order.
 ##
@@ -172,6 +186,7 @@ func _enter_shot(index: int) -> void:
 	_written = false
 	var shot := current_shot()
 	if shot != null:
+		_apply_grade(shot.grade)
 		_emit(EVENT_SHOT_STARTED, {"index": index, "preset": shot.lighting_preset})
 
 func _apply_camera(local_time: float) -> void:
@@ -204,7 +219,12 @@ func _write(shot: MontageShot) -> void:
 	var line := Inscription.new()
 	add_child(line)
 	line.transform = shot.text_transform
-	line.compose(shot.text, _fonts.display, _tokens, shot.text_font_size, shot.text_pixel_size)
+	# The shot's own weight, not section 2.2's screen weight -- see
+	# MontageShot.text_weight_cjk for why type standing in the valley needs mass
+	# that type on a scrim does not.
+	var face: Font = _fonts.display_at(shot.text_weight_latin, shot.text_weight_cjk)
+	var emission: float = shot.grade.text_emission if shot.grade != null else 1.0
+	line.compose(shot.text, face, _tokens, shot.text_font_size, shot.text_pixel_size, emission)
 	line.scatter_along(shot.wind, shot.scatter_metres, shot.scatter_spin)
 	line.seek(0.0)
 	_inscription = line
@@ -231,8 +251,86 @@ func _clear_inscription() -> void:
 	_inscription.free()
 	_inscription = null
 
+## Puts the far blur just behind the line, every frame.
+##
+## THE FOCUS IS MEASURED, NOT AUTHORED. The camera is moving in every shot that
+## carries a line, so any authored focus distance is wrong on the second frame --
+## and wrong in the direction that softens the words, which are the one thing in
+## the picture that has to stay sharp.
+func _pull_focus() -> void:
+	if _attributes == null or _camera == null:
+		return
+	var shot := current_shot()
+	if shot == null or shot.grade == null or not shot.grade.dof_enabled:
+		return
+	var focus := _camera.global_position.distance_to(shot.text_transform.origin) 		if _camera.is_inside_tree() else _camera.position.distance_to(shot.text_transform.origin)
+	_attributes.dof_blur_far_distance = maxf(focus + shot.grade.focus_padding, 0.1)
+
+## Camera3D.environment and Camera3D.attributes are OVERRIDES: they last exactly
+## as long as the montage camera does, and the world's own environment resumes
+## when it goes. Nothing has to be restored, so nothing can be restored wrongly.
+func _apply_grade(grade: MontageGrade) -> void:
+	if grade == null or _camera == null:
+		return
+
+	if _attributes == null:
+		_attributes = CameraAttributesPractical.new()
+	_attributes.dof_blur_far_enabled = grade.dof_enabled
+	_attributes.dof_blur_far_transition = grade.dof_far_transition
+	_attributes.dof_blur_near_enabled = grade.dof_near_enabled
+	_attributes.dof_blur_near_distance = grade.dof_near_distance
+	_attributes.dof_blur_near_transition = grade.dof_near_transition
+	_attributes.dof_blur_amount = grade.dof_amount
+	if _camera is Camera3D:
+		(_camera as Camera3D).attributes = _attributes
+
+	if _camera is Camera3D:
+		var environment := _montage_environment()
+		environment.fog_enabled = grade.fog_enabled
+		environment.fog_light_color = grade.fog_colour
+		environment.fog_density = grade.fog_density
+		environment.fog_aerial_perspective = grade.fog_aerial_perspective
+		environment.fog_sky_affect = grade.fog_sky_affect
+		environment.fog_height = grade.fog_height
+		environment.fog_height_density = grade.fog_height_density
+		environment.glow_enabled = grade.glow_enabled
+		environment.glow_bloom = grade.glow_bloom
+		environment.glow_hdr_threshold = grade.glow_hdr_threshold
+		environment.glow_strength = grade.glow_strength
+		environment.glow_intensity = grade.glow_intensity
+		(_camera as Camera3D).environment = environment
+
+	if _film == null and is_inside_tree():
+		_film = MontageFilm.new()
+		_film.name = "Film"
+		add_child(_film)
+		_film.build()
+
+## The montage's environment, built from the world's own so the sky, the ambient
+## and the tonemap all survive -- this grade ADDS air and glow, it does not
+## replace the look the lighting director spent six presets establishing.
+func _montage_environment() -> Environment:
+	if _camera is Camera3D and (_camera as Camera3D).environment != null:
+		return (_camera as Camera3D).environment
+	var world := _find_world_environment(get_tree().root if is_inside_tree() else null)
+	if world != null and world.environment != null:
+		return world.environment.duplicate() as Environment
+	return Environment.new()
+
+func _find_world_environment(node: Node) -> WorldEnvironment:
+	if node == null:
+		return null
+	if node is WorldEnvironment:
+		return node as WorldEnvironment
+	for child in node.get_children():
+		var found := _find_world_environment(child)
+		if found != null:
+			return found
+	return null
+
 func _finish() -> void:
 	_clear_inscription()
+	_clear_film()
 	_playing = false
 	_emit(EVENT_FINISHED, _montage.id if _montage != null else &"")
 

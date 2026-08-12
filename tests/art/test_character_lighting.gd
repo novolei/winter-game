@@ -56,14 +56,35 @@ func _fill() -> Color:
 
 ## THE PREMISE. Ambient is a character-only control only for as long as every
 ## other shader refuses it.
+## SCOPED TO SPATIAL SHADERS, and the scoping is the premise rather than a
+## loophole in it.
+##
+## `ambient_light_disabled` is a render_mode that only `shader_type spatial`
+## has. A canvas_item shader cannot declare it -- the line is a compile error
+## there -- and does not need to: ambient light does not reach a canvas item at
+## all, so it refuses the fill by construction rather than by declaration.
+##
+## Unscoped, this gate asserted a proxy (does the file contain a string) instead
+## of the property it exists to protect (can this shader receive the character
+## fill). The first canvas_item shader in the project failed it while satisfying
+## the premise completely -- assets/shaders/montage_film.gdshader, the montage's
+## grain and vignette pass.
+##
+## The anti-vacuity guard moves with the scoping. Counting all shaders would let
+## the spatial set fall to zero unnoticed while the total stayed healthy, which
+## is exactly the shape of silent-skip this project has closed four times.
 func test_every_shader_in_the_project_still_disables_ambient() -> void:
 	var shaders := AssetScannerScript.find_files(SHADER_ROOT, [".gdshader"])
-	assert_true(
-		shaders.size() >= 2,
-		"found %d shaders under %s; this gate means nothing if it inspected none"
-			% [shaders.size(), SHADER_ROOT]
-	)
+	var spatial: Array[String] = []
 	for path in shaders:
+		if FileAccess.get_file_as_string(path).contains("shader_type spatial"):
+			spatial.append(path)
+	assert_true(
+		spatial.size() >= 2,
+		"found %d spatial shaders among %d under %s; this gate means nothing if it inspected none"
+			% [spatial.size(), shaders.size(), SHADER_ROOT]
+	)
+	for path in spatial:
 		var text := FileAccess.get_file_as_string(path)
 		assert_true(
 			text.contains("ambient_light_disabled"),

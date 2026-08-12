@@ -1,10 +1,16 @@
 [gd_resource type="Resource" script_class="Montage" format=3]
 
-[ext_resource type="Script" path="res://src/definitions/montage.gd" id="1_om4w0"]
-[ext_resource type="Script" path="res://src/definitions/montage_shot.gd" id="2_emu74"]
+[ext_resource type="Script" path="res://src/definitions/montage.gd" id="1_emu74"]
+[ext_resource type="Script" path="res://src/definitions/montage_shot.gd" id="2_lgg7j"]
+[ext_resource type="Script" path="res://src/definitions/montage_grade.gd" id="3_0via1"]
 
-[sub_resource type="Resource" id="Resource_lgg7j"]
-script = ExtResource("2_emu74")
+[sub_resource type="Resource" id="Resource_1rwcy"]
+script = ExtResource("3_0via1")
+fog_colour = Color(0.49803922, 0.627451, 0.7882353, 1)
+vignette_colour = Color(0.07450981, 0.10980392, 0.1882353, 1)
+
+[sub_resource type="Resource" id="Resource_o1gdg"]
+script = ExtResource("2_lgg7j")
 duration = 7.5
 camera_from = Transform3D(0.76193935, -0.23056895, 0.605216, 0, 0.9344824, 0.35600942, -0.64764845, -0.27125758, 0.71201885, 47, 22, 28)
 camera_to = Transform3D(0.76250917, -0.22434753, 0.6068344, 0, 0.937953, 0.34676254, -0.6469774, -0.2644096, 0.71519774, 41, 18, 21)
@@ -13,12 +19,13 @@ fov_to = 44.0
 text = "雪已经下了七天。"
 text_transform = Transform3D(0.9687369, 0, 0.2480903, 0, 1, 0, -0.2480903, 0, 0.9687369, 37.92176, 17.059858, 17.319717)
 text_font_size = 96
-text_pixel_size = 0.012970063828626812
+text_pixel_size = 0.009432773693546772
 scatter_metres = 2.4
 lighting_preset = &"nightfall"
+grade = SubResource("Resource_1rwcy")
 
-[sub_resource type="Resource" id="Resource_0via1"]
-script = ExtResource("2_emu74")
+[sub_resource type="Resource" id="Resource_k8guo"]
+script = ExtResource("2_lgg7j")
 duration = 7.5
 camera_from = Transform3D(0.77096176, -0.14548688, 0.62004155, 0, 0.9735588, 0.22843637, -0.6368814, -0.1761157, 0.7505766, 32, 9, 11)
 camera_to = Transform3D(0.7719302, -0.12726721, 0.6228377, 0, 0.9797555, 0.20019783, -0.63570726, -0.15453875, 0.7563029, 27, 6.5, 5)
@@ -26,12 +33,13 @@ fov_from = 42.0
 text = "他们说会有直升机。"
 text_transform = Transform3D(0.9534033, 0, 0.30169895, 0, 1, 0, -0.30169898, 0, 0.95340323, 25.799583, 6.815636, 3.494234)
 text_font_size = 96
-text_pixel_size = 0.006950624502698887
+text_pixel_size = 0.005054999638326463
 scatter_metres = 1.6
 lighting_preset = &"nightfall"
+grade = SubResource("Resource_1rwcy")
 
-[sub_resource type="Resource" id="Resource_1rwcy"]
-script = ExtResource("2_emu74")
+[sub_resource type="Resource" id="Resource_k1n1c"]
+script = ExtResource("2_lgg7j")
 camera_from = Transform3D(0.80640495, -0.09415898, 0.5838194, 0, 0.98724246, 0.15922347, -0.59136367, -0.1283986, 0.7961173, 24, 5, 3)
 camera_to = Transform3D(0.8087361, -0.07716506, 0.5830879, 0, 0.9913567, 0.13119479, -0.5881717, -0.10610196, 0.8017459, 21, 3.8, -1)
 fov_from = 38.0
@@ -39,11 +47,12 @@ fov_to = 34.0
 text = "他们要看得见你。"
 text_transform = Transform3D(0.94967824, 0, 0.31322733, 0, 0.99999994, 0, -0.31322736, 0, 0.9496782, 19.913265, 3.8854356, -2.5728211)
 text_font_size = 96
-text_pixel_size = 0.004909856708019301
+text_pixel_size = 0.0035708048785594916
 scatter_metres = 1.12
 lighting_preset = &"nightfall"
+grade = SubResource("Resource_1rwcy")
 
 [resource]
-script = ExtResource("1_om4w0")
+script = ExtResource("1_emu74")
 id = &"opening"
-shots = Array[ExtResource("2_emu74")]([SubResource("Resource_lgg7j"), SubResource("Resource_0via1"), SubResource("Resource_1rwcy")])
+shots = Array[ExtResource("2_lgg7j")]([SubResource("Resource_o1gdg"), SubResource("Resource_k8guo"), SubResource("Resource_k1n1c")])

@@ -28,10 +28,13 @@ extends SceneTree
 const OUT_DIR := "res://data/montage"
 const FARMHOUSE := Vector3(13.0, 0.0, -12.0)
 
-## How much of the frame's width a line should cover. Under a third and it reads
-## as a caption sitting in the scene; past a half and it stops being part of the
-## picture and becomes a title card with a photograph behind it.
-const LINE_FRACTION := 0.44
+## How much of the frame's width a line should cover.
+##
+## Dropped from 0.44 with the weight increase, and the two go together: a heavy
+## face at 0.44 is a title card with a photograph behind it, while a light face
+## at 0.32 disappears into the snow. Small and heavy is the pairing that reads as
+## something standing in the valley rather than something laid over it.
+const LINE_FRACTION := 0.32
 
 ## The frame the sizes are solved against. 16:9; a wider window reveals more
 ## valley either side rather than enlarging the line (System Map section 8).
@@ -42,9 +45,16 @@ const ASPECT := 16.0 / 9.0
 ## large enough that the glyph texture is not the limit at the closest shot.
 const FONT_SIZE := 96
 
+var _grade: MontageGrade = null
+
 func _initialize() -> void:
 	var ShotScript := load("res://src/definitions/montage_shot.gd")
 	var MontageScript := load("res://src/definitions/montage.gd")
+	_grade = _build_grade()
+	if _grade == null:
+		printerr("generate_montages: no palette, so no grade")
+		quit(1)
+		return
 
 	var shots: Array[MontageShot] = []
 
@@ -135,7 +145,29 @@ func _shot(ShotScript, duration: float, from: Vector3, to: Vector3,
 	shot.scatter_metres = maxf(metres_ahead * 0.16, 0.9)
 	shot.scatter_spin = 0.9
 	shot.lighting_preset = &"nightfall"
+	shot.grade = _grade
+	shot.text_weight_latin = 500
+	shot.text_weight_cjk = 600
 	return shot
+
+
+## The look, with both of its colours READ OUT OF THE PALETTE rather than
+## written here (briefing constraint 6). A vignette to black and a fog tinted by
+## eye would each put a thirteenth colour in the frame -- at the edges of every
+## montage, and across its whole distance.
+func _build_grade() -> MontageGrade:
+	var bible = load("res://data/palette/color_bible.tres")
+	if bible == null or bible.snow_tones.size() < 5 or bible.structure_tones.size() < 4:
+		return null
+	var grade := MontageGrade.new()
+	# Fog in the second snow tone: the air is made of the same stuff the ground
+	# is, one step down so the distance recedes rather than glows.
+	grade.fog_colour = bible.snow_tones[1]
+	# Vignette toward the darkest structure tone -- the same value section 2.1
+	# gives scrim/veil, so the montage darkens toward what the interface darkens
+	# toward.
+	grade.vignette_colour = bible.structure_tones[3]
+	return grade
 
 
 ## Solves the world scale so the line covers `LINE_FRACTION` of the frame width

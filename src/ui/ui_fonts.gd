@@ -41,6 +41,11 @@ var interface_cjk: FontVariation = null
 
 var instrument: FontVariation = null
 
+## Kept so display_at() can rebuild a chain at another weight without being
+## handed the tokens again.
+var _tokens_latin_path := ""
+var _tokens_cjk_path := ""
+
 ## Assembles every chain from the paths and weights in `tokens`. Safe to call
 ## again; it replaces what was there.
 ##
@@ -57,8 +62,12 @@ func build(tokens: UITokens) -> void:
 	interface_latin_only = null
 	interface_cjk = null
 	instrument = null
+	_tokens_latin_path = ""
+	_tokens_cjk_path = ""
 	if tokens == null:
 		return
+	_tokens_latin_path = tokens.display_latin_path
+	_tokens_cjk_path = tokens.display_cjk_path
 
 	display_latin_only = _variation(tokens.display_latin_path, tokens.display_latin_weight)
 	display_cjk = _variation(tokens.display_cjk_path, tokens.display_cjk_weight)
@@ -79,6 +88,31 @@ func build(tokens: UITokens) -> void:
 
 func is_ready() -> bool:
 	return display != null and interface != null and instrument != null
+
+## A display chain at an arbitrary weight, for type that does not stand on the
+## screen.
+##
+## Section 2.2 sets the display family at its lightest -- Noto Serif SC 200,
+## which is the floor of its axis -- and that is right for type on a scrim, where
+## the background is controlled and the thinness reads as air. It is wrong for
+## SPATIAL typography: a line standing in the valley has a whole snow field
+## behind it at 62% of white and no scrim at all, and at 200 it washes out into
+## the ground it is standing on. Weight is what buys it presence when nothing
+## else can.
+##
+## Same ordering rule as the main chains -- Latin base, CJK fallback -- for the
+## same reason, which build() spells out at length.
+func display_at(latin_weight: int, cjk_weight: int) -> FontVariation:
+	if _tokens_latin_path == "" or _tokens_cjk_path == "":
+		return display
+	var cjk := _variation(_tokens_cjk_path, cjk_weight)
+	var chain := _variation(_tokens_latin_path, latin_weight)
+	if chain == null:
+		return cjk
+	if cjk != null:
+		chain.fallbacks = [cjk]
+	return chain
+
 
 ## The size a family should be set at, for a design-pixel size in section 2.2's
 ## ladder. Sizes are authored against 1080 and scale with the short edge, the

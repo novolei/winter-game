@@ -57,6 +57,16 @@ extends Resource
 @export var text_font_size := 64
 @export var text_pixel_size := 0.0045
 
+## HEAVIER THAN SECTION 2.2's DISPLAY WEIGHT, deliberately. On the screen the
+## display family is set at Noto Serif SC 200 and reads as air, because it sits
+## on a controlled scrim. A line standing in the valley has a snow field behind
+## it at 62% of white and no scrim at all -- at 200 it washes out into the ground
+## it is standing on. Weight is the only thing that buys presence out there, and
+## it buys it at a SMALLER size, which is also what stops the line becoming a
+## title card with a photograph behind it.
+@export var text_weight_latin := 500
+@export var text_weight_cjk := 600
+
 ## When in the shot the writing begins.
 @export var text_start := 0.6
 
@@ -67,6 +77,10 @@ extends Resource
 
 ## Which of the six looks this shot is lit by. Empty leaves the lighting alone.
 @export var lighting_preset: StringName = &""
+
+## Depth of field, air and film. Null leaves the camera ungraded, which is what
+## a debugging pass wants and what the game itself always gets.
+@export var grade: MontageGrade = null
 
 func has_text() -> bool:
 	return text.strip_edges() != ""
