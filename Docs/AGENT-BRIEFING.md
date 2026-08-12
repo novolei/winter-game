@@ -392,3 +392,16 @@ So, when a capture is evidence:
 - **Sample the same pixels and print the numbers.** Two frames that "look" different are a hypothesis, not a finding.
 
 The regression was imaginary. The defect the bisect *did* find was real, older than every commit under suspicion, and invisible to the eye: `track_depth` was set such that the steepest flank the shader could produce tilted 21.5 degrees against a sun 21.5 degrees up — **exactly zero margin**, so a mark reached the cel threshold and never crossed it. Every line in the snow was carried by tone with no shadow beneath it. Measurement found in one pass what looking had failed to find in three.
+
+### Do not put load-bearing documentation in a `.tscn`
+
+The Godot editor **strips comment lines from a scene file every time it saves it.** On this project that has already eaten 51 authored comment lines from `scenes/main.tscn` in one sitting, and agents keep writing more into the same place.
+
+It is not a bug you can work around by restoring them — a live editor session will do it again within the hour, and nobody sees it happen because git shows it as an ordinary diff on a file several agents are touching.
+
+**So: explanation belongs in the `.gd` files.** A node's reason for existing goes in the script attached to it, or in the script that builds it. A scene file may carry a name and a structure; it may not carry an argument.
+
+Two working rules that follow:
+
+- **Keep edits to `scenes/main.tscn` minimal and late.** Instance what you must, place it, and stop. It is the single most contested file in this repository — several agents and a human's editor all write to it.
+- **If you find comments have vanished around your change, say so and leave them.** Do not restore them blindly: you cannot tell your loss from another agent's in-flight work, and re-adding text the editor will eat again is not a fix.
