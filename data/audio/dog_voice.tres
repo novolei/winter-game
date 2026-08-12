@@ -1,0 +1,61 @@
+[gd_resource type="Resource" script_class="AnimalVoiceMap" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/animal_call.gd" id="1_c35xq"]
+[ext_resource type="Script" path="res://src/definitions/animal_voice_map.gd" id="2_61upg"]
+
+[sub_resource type="Resource" id="Resource_hgns1"]
+script = ExtResource("1_c35xq")
+call_id = &"dog.bark"
+stream_paths = Array[String](["res://assets/audio/wildlife/dog/dog_bark_01.wav", "res://assets/audio/wildlife/dog/dog_bark_02.wav", "res://assets/audio/wildlife/dog/dog_bark_03.wav"])
+takes = Array[StringName]([&"bark"])
+pitch_spread = 0.07
+carry_m = 60.0
+repeat_min = 2
+repeat_max = 4
+gap_min = 0.28
+gap_max = 0.55
+cooldown_s = 1.2
+notes = "Three cuts, 91-93% of their energy in 800-2000 Hz. Triggered by the `bark` take."
+
+[sub_resource type="Resource" id="Resource_wal0d"]
+script = ExtResource("1_c35xq")
+call_id = &"dog.growl"
+takes = Array[StringName]([&"growl"])
+gain_db = -2.0
+pitch_spread = 0.03
+carry_m = 14.0
+unit_size = 3.0
+cooldown_s = 3.2
+notes = "DECLARED AND SILENT. dog_raw.mp3 holds no growl: 60-250 Hz never exceeds 10.5 dB over its own floor. Drop a file in and this row is the only change."
+
+[sub_resource type="Resource" id="Resource_toq3f"]
+script = ExtResource("1_c35xq")
+call_id = &"dog.whine"
+stream_paths = Array[String](["res://assets/audio/wildlife/dog/dog_whine_01.wav", "res://assets/audio/wildlife/dog/dog_whine_02.wav", "res://assets/audio/wildlife/dog/dog_whine_03.wav"])
+gain_db = -3.0
+carry_m = 35.0
+unit_size = 7.0
+repeat_max = 2
+gap_min = 0.45
+gap_max = 0.95
+cooldown_s = 2.0
+notes = "Sustained 723-848 Hz, periodicity 0.94-0.96. No animation take exists; call it."
+
+[sub_resource type="Resource" id="Resource_p7rms"]
+script = ExtResource("1_c35xq")
+call_id = &"dog.whimper"
+stream_paths = Array[String](["res://assets/audio/wildlife/dog/dog_whimper_01.wav", "res://assets/audio/wildlife/dog/dog_whimper_02.wav"])
+gain_db = -4.0
+pitch_spread = 0.04
+carry_m = 45.0
+unit_size = 10.0
+repeat_min = 2
+repeat_max = 3
+gap_min = 0.8
+gap_max = 1.8
+cooldown_s = 2.5
+notes = "Quiet (peak 0.139/0.157), 649 and 668 Hz, slow rise and fall. The rescue scene's beacon."
+
+[resource]
+script = ExtResource("2_61upg")
+calls = Array[ExtResource("1_c35xq")]([SubResource("Resource_hgns1"), SubResource("Resource_wal0d"), SubResource("Resource_toq3f"), SubResource("Resource_p7rms")])
