@@ -153,10 +153,15 @@ func test_no_crow_arrives_at_night() -> void:
 	assert_eq(_flock.crow_count(), 0, "crows arrived in the dark; the owner asked for daylight only")
 
 
+## The timer, not the landing: four seconds is enough for a flock to have SET OFF.
+## Since the return work the birds fly in from thirty metres out, so a test that
+## waited four seconds for them to be standing on the wire would be waiting for
+## the approach rather than for the decision. `land_now()` is what the tests below
+## use when they want birds already down.
 func test_a_flock_arrives_in_daylight() -> void:
 	_flock.attach()
 	_run(4.0)
-	assert_true(_flock.crow_count() >= 1, "no crow arrived in a whole daylight minute")
+	assert_true(_flock.crow_count() >= 1, "no crow set off for the wire in four daylight seconds")
 	assert_true(
 		_flock.crow_count() <= _flock.most,
 		"%d crows arrived, more than the %d bound" % [_flock.crow_count(), _flock.most]
@@ -165,7 +170,7 @@ func test_a_flock_arrives_in_daylight() -> void:
 
 func test_two_crows_never_land_in_the_same_place() -> void:
 	_flock.attach()
-	_run(4.0)
+	_flock.land_now()
 	var seen: Dictionary = {}
 	for crow in _birds():
 		var key := (crow as Crow).where().snapped(Vector3(0.01, 0.01, 0.01))
@@ -179,7 +184,7 @@ func test_two_crows_never_land_in_the_same_place() -> void:
 ## bug rather than as weather.
 func test_nightfall_sends_them_up_rather_than_deleting_them() -> void:
 	_flock.attach()
-	_run(4.0)
+	_flock.land_now()
 	var landed := _flock.crow_count()
 	assert_true(landed >= 1, "nothing landed, so this test checked nothing")
 	_bus.emit_event(CrowFlock.EVENT_NIGHT_STARTED, 1)
@@ -198,7 +203,7 @@ func test_nightfall_sends_them_up_rather_than_deleting_them() -> void:
 
 func test_a_body_outside_the_flush_radius_leaves_them_alone() -> void:
 	_flock.attach()
-	_run(4.0)
+	_flock.land_now()
 	assert_true(_flock.perched_count() >= 1, "nothing landed, so this test checked nothing")
 	_watched.position = Vector3(0.0, 0.0, 4.0) + Vector3(_flock.flush_radius_m + 6.0, 0.0, 0.0)
 	_run(1.0)
@@ -207,7 +212,7 @@ func test_a_body_outside_the_flush_radius_leaves_them_alone() -> void:
 
 func test_a_body_inside_the_flush_radius_puts_them_up() -> void:
 	_flock.attach()
-	_run(4.0)
+	_flock.land_now()
 	assert_true(_flock.perched_count() >= 1, "nothing landed, so this test checked nothing")
 	_watched.position = Vector3(0.0, 0.0, 4.0)
 	_run(2.0)
@@ -216,7 +221,7 @@ func test_a_body_inside_the_flush_radius_puts_them_up() -> void:
 
 func test_the_scatter_is_published_once_and_says_how_many() -> void:
 	_flock.attach()
-	_run(4.0)
+	_flock.land_now()
 	var landed := _flock.crow_count()
 	_watched.position = Vector3(0.0, 0.0, 4.0)
 	_run(2.0)
@@ -246,7 +251,7 @@ func test_they_leave_on_different_bearings() -> void:
 	_flock.fewest = 5
 	_flock.most = 5
 	_flock.attach()
-	_run(4.0)
+	_flock.land_now()
 	var crows := _birds()
 	assert_eq(crows.size(), 5, "expected five birds for this test, got %d" % crows.size())
 	_flock.scatter(CrowFlock.CAUSE_PLAYER)
@@ -269,7 +274,7 @@ func test_the_burst_is_staggered_rather_than_simultaneous() -> void:
 	_flock.fewest = 5
 	_flock.most = 5
 	_flock.attach()
-	_run(4.0)
+	_flock.land_now()
 	assert_eq(_flock.perched_count(), 5, "expected five perched birds, got %d" % _flock.perched_count())
 	_flock.scatter(CrowFlock.CAUSE_PLAYER)
 	# Counted by STATE rather than by position: the stagger is the delay before
@@ -289,7 +294,7 @@ func test_the_burst_is_staggered_rather_than_simultaneous() -> void:
 
 func test_a_bird_that_has_gone_is_freed() -> void:
 	_flock.attach()
-	_run(4.0)
+	_flock.land_now()
 	assert_true(_flock.crow_count() >= 1, "nothing landed, so this test checked nothing")
 	_flock.scatter(CrowFlock.CAUSE_PLAYER)
 	_run(20.0)
@@ -302,7 +307,7 @@ func test_a_bird_that_has_gone_is_freed() -> void:
 ## fifty metres from.
 func test_scattering_an_empty_wire_does_nothing() -> void:
 	_flock.attach()
-	_run(4.0)
+	_flock.land_now()
 	_flock.scatter(CrowFlock.CAUSE_PLAYER)
 	assert_eq(_flock.scatter(CrowFlock.CAUSE_PLAYER), 0, "a second scatter re-flushed birds already in the air")
 	assert_eq(
@@ -314,19 +319,47 @@ func test_scattering_an_empty_wire_does_nothing() -> void:
 # --- one bird's own timeline ---------------------------------------------------
 
 
-func test_a_crow_holds_its_perch_through_the_launch_and_then_goes() -> void:
+## THE TAKE-OFF, WHICH USED TO BE A TRANSLATION.
+##
+## This asserted `travelled() == 0` through the whole launch, on the grounds that
+## the take's baked root motion and this code must not both be driving the bird.
+## That still holds -- and it is now the HORIZONTAL half of it that says so,
+## because the launch deliberately drives the vertical: the bird crouches, beats,
+## and comes up off the wire before it has any forward speed at all.
+##
+## The climb is the take's own 0.30 m, restored in code because `CrowAnimations`
+## flattens the root track. A launch that moved the bird sideways would mean the
+## forward push had leaked back into the lift, which is the exact thing the
+## owner's note is about.
+func test_a_crow_rises_off_the_wire_before_it_has_any_forward_speed() -> void:
 	var crow := Crow.new()
-	crow.perch_on(Vector3(0.0, 6.0, 0.0), Vector3(0.0, 0.0, -1.0))
+	var perch := Vector3(0.0, 6.0, 0.0)
+	crow.perch_on(perch, Vector3(0.0, 0.0, -1.0))
 	assert_true(crow.is_perched(), "a crow that has just been placed is perched")
+	assert_true(crow.has_feet_down(), "a perched crow is not standing on anything")
 	crow.scatter(Vector3(0.0, 0.4, -1.0).normalized(), 0.0)
 	# Through the wait and the whole of the launch take.
 	var left := crow.launch_seconds
+	var lifted_yet := false
 	while left > 0.0:
 		crow.advance(FRAME)
 		left -= FRAME
+		if not crow.has_feet_down() and not lifted_yet:
+			lifted_yet = true
+			assert_true(
+				crow.where().y - perch.y < 0.02,
+				"the bird was already %.3f m up on the frame its feet left the wire" % (crow.where().y - perch.y)
+			)
+	assert_true(lifted_yet, "the feet never left the wire during the launch")
+	var risen := crow.where() - perch
 	assert_almost_eq(
-		crow.travelled(), 0.0, 0.001,
-		"the crow moved during the launch take -- the take's own root motion and this code are both driving it"
+		Vector2(risen.x, risen.z).length(), 0.0, 0.001,
+		"the crow travelled %.3f m sideways during the launch -- the lift has forward speed in it" % \
+			Vector2(risen.x, risen.z).length()
+	)
+	assert_almost_eq(
+		risen.y, crow.launch_climb_m, 0.02,
+		"the crow rose %.3f m off the wire, not the take's own %.3f m" % [risen.y, crow.launch_climb_m]
 	)
 	var flying := 1.0
 	while flying > 0.0:
@@ -334,6 +367,7 @@ func test_a_crow_holds_its_perch_through_the_launch_and_then_goes() -> void:
 		flying -= FRAME
 	assert_true(crow.travelled() > 1.0, "a second after the launch the crow has gone nowhere")
 	assert_false(crow.is_perched(), "the crow is still reporting itself perched in mid air")
+	assert_false(crow.has_feet_down(), "the crow in mid air still says its feet are down")
 	crow.free()
 
 

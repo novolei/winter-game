@@ -93,7 +93,7 @@ func _run(seconds: float) -> void:
 
 
 func _land_a_flock() -> int:
-	var landed := _flock.arrive_now()
+	var landed := _flock.land_now()
 	# Past `stagger_seconds`, which is the guard that stops a flock being flushed
 	# on the frame it lands.
 	_run(0.3)

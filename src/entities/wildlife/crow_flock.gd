@@ -119,6 +119,33 @@ const CAUSE_GUST := &"gust"
 @export var quiet_min_seconds := 40.0
 @export var quiet_max_seconds := 110.0
 
+## THE RETURN, after HE put them up.
+##
+##   白天的时候乌鸦会被玩家惊飞，飞起盘旋一段时间后乌鸦还会回到随机的一个可以落脚的地方
+##
+## Shorter than the ordinary quiet, and it is a different thing: an ordinary
+## quiet is "no crows just now", and this is the SAME disturbance resolving. A
+## flock that never came back would mean the player empties the valley on day one
+## and the wires are bare for the remaining six.
+##
+## Twenty to thirty-six seconds, strictly inside the ordinary quiet's floor. Long enough that it is not a bounce -- he
+## will usually have walked on, and the arrival is a thing that happens behind
+## him rather than a thing he caused twice. Short enough that a single
+## afternoon's walk past the pole and back finds the wire occupied again, which
+## is what makes the valley read as recovering rather than as depleting.
+##
+## Only after a PLAYER startle. Nightfall means they are gone until morning (and
+## `_night` blocks landing anyway) and a gust means they are waiting out the wind
+## (and `_blowing` blocks it), so neither wants this timer.
+@export var return_min_seconds := 20.0
+@export var return_max_seconds := 36.0
+
+## Where a returning flock enters from: how far out, and how high above the perch
+## it is coming back to. Far enough to be off the widest framing stop when it
+## appears, so birds fly INTO the picture rather than appearing in it.
+@export var arrival_distance_m := 30.0
+@export var arrival_height_m := 7.0
+
 ## The very first flock does not arrive on frame one. A world that is already
 ## populated the instant it appears reads as a set being dressed.
 @export var first_arrival_seconds := 6.0
@@ -145,6 +172,37 @@ const CAUSE_GUST := &"gust"
 ## never gets to flush one. Higher and `wind_rising` stops reaching it at all.
 @export var gust_scatter_strength := 0.75
 @export var gust_release_strength := 0.62
+
+## THE MILL, which is the beat that sells a burst.
+##
+## Crows do not leave on a heading. They come off the wire, wheel while they
+## decide, and only then commit -- and the hesitation is the difference between a
+## flock and five particles that were each given a velocity. So every bird is
+## handed a turn rate and a duration, and flies an arc for that long before it
+## straightens onto the bearing the fan gave it.
+##
+## THE SIGN IS DRAWN ONCE PER BURST, not once per bird. Birds mill together; a
+## flock with three going clockwise and two anticlockwise is a collision, not a
+## wheel. The MAGNITUDE is jittered per bird by `wheel_jitter`, which is what
+## keeps it from reading as a rigid formation.
+##
+## The rate bounds are a radius decision in disguise: the arc a bird traces is
+## `mill_speed / rate`, so at Crow's 5 m/s these are wheels 1.9 m to 3.8 m
+## across, against 10.5 m of frame height at the tight stop. Tighter than 1.9 m
+## and it is a barrel roll; wider than about 4 m and the bird leaves the frame
+## before the circle closes and the wheel never reads at all.
+@export var wheel_rate_min := 1.3
+@export var wheel_rate_max := 2.7
+@export var wheel_jitter := 0.2
+
+## How long each bird hesitates before committing. THE "决定航向前犹豫多久" axis.
+##
+## Bounded above by the shot: the Art Bible's ruling gives the startle close-up
+## two or three seconds, and a launch is 0.93 s of that, so a mill that ran
+## longer than about 1.7 s would still be undecided when the camera has already
+## gone home.
+@export var wheel_seconds_min := 0.75
+@export var wheel_seconds_max := 1.70
 
 ## The fan a wind-blown flock leaves on, against `spread_degrees` for a flock
 ## leaving something on the ground. Narrower on purpose: birds startled by a
@@ -181,6 +239,9 @@ var _wind := Vector3.ZERO
 ## Latched: true from the frame the wind passed `gust_scatter_strength` until it
 ## falls back below `gust_release_strength`.
 var _blowing := false
+## What emptied the wire last. Decides how long before they come back -- see
+## `return_min_seconds`.
+var _last_cause: StringName = CAUSE_NIGHTFALL
 
 
 func _ready() -> void:
@@ -273,7 +334,15 @@ func attach() -> void:
 			_clock = get_node_or_null("/root/WorldClock")
 		if _registry == null:
 			_registry = get_node_or_null("/root/ServiceRegistry")
-	_rng.seed = random_seed if random_seed != 0 else int(Time.get_ticks_usec())
+	# Hashed and shaken out rather than assigned. On 4.7.1 a freshly seeded
+	# RandomNumberGenerator's FOURTH `randf()` lands in 0.09..0.24 whatever the
+	# seed -- measured across six spread-out seeds, and written up in full in
+	# `src/rendering/startle_shot.gd`. Here that draw is a climb angle rather than
+	# anything load-bearing, but the cost of not doing it is a variation axis that
+	# is quietly narrower than its own exports say.
+	_rng.seed = hash(random_seed) if random_seed != 0 else int(Time.get_ticks_usec())
+	for _discard in range(8):
+		_rng.randf()
 	ask_the_clock()
 	if _bus == null or _subscribed:
 		return
@@ -305,6 +374,13 @@ func is_night() -> bool:
 
 func crow_count() -> int:
 	return _crows.size()
+
+
+## The birds currently out, in the order they landed. A copy, so a caller holding
+## it across a frame cannot be surprised by the flock freeing one under it --
+## which is what `_advance_crows` does the frame a bird passes `vanish_distance_m`.
+func crows() -> Array[Crow]:
+	return _crows.duplicate()
 
 
 func perched_count() -> int:
@@ -356,6 +432,12 @@ func advance(delta: float) -> void:
 		if not _night and not _blowing and _quiet <= 0.0 and not _anyone_near(_arrival_guard()):
 			_arrive()
 		return
+	# HE IS STILL STANDING THERE. A flock that landed and burst on the next frame
+	# is a loop the player can watch happen, and it reads as broken rather than as
+	# skittish -- so birds still on their way in think better of it and go, and the
+	# quiet timer starts again. Better a wire that stays empty while he loiters
+	# under it than a wire that cycles.
+	_call_off_the_landing()
 	_settled += delta
 	if _settled < stagger_seconds or perched_count() == 0:
 		return
@@ -396,8 +478,42 @@ func _advance_crows(delta: float) -> void:
 			continue
 		living.append(crow)
 	if living.size() != _crows.size() and living.is_empty():
-		_quiet = _rng.randf_range(quiet_min_seconds, quiet_max_seconds)
+		# THE RETURN IS SHORTER THAN THE QUIET, and which one applies is decided by
+		# what emptied the wire. See `return_min_seconds`.
+		_quiet = _rng.randf_range(return_min_seconds, return_max_seconds) \
+			if _last_cause == CAUSE_PLAYER \
+			else _rng.randf_range(quiet_min_seconds, quiet_max_seconds)
 	_crows = living
+
+
+## Any bird heading for a perch he is standing under turns round and leaves.
+##
+## THE QUESTION IS ABOUT THE PERCH, NOT ABOUT THE BIRD. Written first as
+## `_anyone_near(_arrival_guard())`, which asks how close he is to the CROWS --
+## and an inbound crow is thirty metres out on its way in, so the answer was
+## always no and the flock landed on his head anyway. What decides whether a
+## landing is a bad idea is where the bird is trying to GO.
+##
+## Per bird, so a flock coming down on two different wires only calls off the
+## half he is under. The rest carry on and land, which is what birds do.
+func _call_off_the_landing() -> int:
+	var watched := _watch()
+	if watched == null:
+		return 0
+	var at := _disturbance()
+	var gave_up := 0
+	for crow in _crows:
+		if not (crow.is_inbound() or crow.is_landing()):
+			continue
+		if _flat_gap(crow.target_perch(), at) > _arrival_guard():
+			continue
+		if crow.give_up():
+			gave_up += 1
+	if gave_up > 0:
+		# Not a startle: nothing was startled. The wire simply stays empty a while
+		# longer, and the ordinary quiet is the right length for that.
+		_last_cause = CAUSE_NIGHTFALL
+	return gave_up
 
 
 ## Put a flock out now, whatever the quiet timer says. Returns how many landed.
@@ -412,8 +528,29 @@ func arrive_now() -> int:
 	return _crows.size() - before
 
 
-## A flock lands. One to `most` birds, on perches drawn without replacement so
-## two never land in the same place.
+## Put a flock out and let it fly all the way in, however long that takes.
+##
+## For a test or a capture that wants birds ON the wire and does not want to
+## photograph the approach. Returns how many are perched.
+func land_now() -> int:
+	_arrive()
+	var frame := 1.0 / 60.0
+	var left := 12.0
+	while left > 0.0 and perched_count() < _crows.size():
+		_advance_crows(frame)
+		left -= frame
+	_settled = 0.0
+	return perched_count()
+
+
+## A flock arrives. One to `most` birds, on perches drawn without replacement so
+## two never land in the same place -- AND FLYING IN, rather than appearing
+## already sitting there.
+##
+## The perches are drawn fresh every time, which is the owner's "回到随机的一个
+## 可以落脚的地方": a flock does not reassemble in the arrangement it left, and
+## it need not be the same size, because both would read as a rewind rather than
+## as birds coming back.
 func _arrive() -> void:
 	var perches := available_perches()
 	if perches.is_empty():
@@ -424,14 +561,24 @@ func _arrive() -> void:
 	var wanted := mini(_rng.randi_range(maxi(fewest, 1), maxi(most, fewest)), perches.size())
 	var order := _shuffled(perches.size())
 	_settled = 0.0
+	# One bearing for the flock, jittered per bird. They come in together, from
+	# somewhere, rather than converging from every point of the compass.
+	var entry := _rng.randf_range(0.0, TAU)
+	var wheel_sign := 1.0 if _rng.randf() < 0.5 else -1.0
 	for index in range(wanted):
 		var perch: Dictionary = perches[order[index]]
 		var crow := _build_crow()
-		# `grip`, not `perch_on`: the bird takes hold of the DECLARATION that
-		# offered the perch, so it follows the wire when the wind moves it. A
-		# perch with no `anchor` -- a capture's, a test's -- degrades to a plain
-		# placement and the bird simply does not ride.
-		crow.grip(perch)
+		var bearing := entry + _rng.randf_range(-0.5, 0.5)
+		var from: Vector3 = (perch["at"] as Vector3) \
+			+ Vector3(cos(bearing), 0.0, sin(bearing)) * arrival_distance_m \
+			+ Vector3.UP * arrival_height_m
+		var rate := wheel_sign * _rng.randf_range(wheel_rate_min, wheel_rate_max) \
+			* (1.0 + _rng.randf_range(-wheel_jitter, wheel_jitter))
+		var circle := _rng.randf_range(wheel_seconds_min, wheel_seconds_max)
+		# The perch travels with the bird as a DECLARATION, not as a position: a
+		# wire that sways during the ten seconds of the approach is still the wire
+		# the bird has to land on. `Crow.approach` resolves it every frame.
+		crow.approach(perch, from, rate, circle)
 		_crows.append(crow)
 
 
@@ -457,8 +604,12 @@ func scatter(cause: StringName) -> int:
 	var away := _downwind() if blown else _away_from(centre, perched)
 	var spread := deg_to_rad(gust_spread_degrees if blown else spread_degrees)
 	var middle := (float(perched.size()) - 1.0) * 0.5
+	# One direction for the whole burst. See wheel_rate_min.
+	var wheel_sign := 1.0 if _rng.randf() < 0.5 else -1.0
+	var aloft := Vector3.ZERO
 	for index in range(perched.size()):
 		var crow := perched[index]
+		aloft += crow.where()
 		# Fanned across the spread by position in the burst and then jittered, so
 		# the shape is a fan rather than a random spray -- and no two are within a
 		# few degrees of each other, which is what a spray keeps producing.
@@ -466,9 +617,25 @@ func scatter(cause: StringName) -> int:
 			else (float(index) - middle) / middle * spread * 0.5
 		var jitter := _rng.randf_range(-1.0, 1.0) * spread * 0.12
 		var climb := deg_to_rad(_rng.randf_range(climb_min_degrees, climb_max_degrees))
-		crow.scatter(_heading(away, fan + jitter, climb), float(index) * stagger_seconds)
+		var rate := wheel_sign * _rng.randf_range(wheel_rate_min, wheel_rate_max) \
+			* (1.0 + _rng.randf_range(-wheel_jitter, wheel_jitter))
+		var mill := _rng.randf_range(wheel_seconds_min, wheel_seconds_max)
+		crow.scatter(
+			_heading(away, fan + jitter, climb),
+			float(index) * stagger_seconds,
+			rate,
+			mill
+		)
+	aloft /= float(perched.size())
+	_last_cause = cause
 	_emit(EVENT_SCATTERED, {
+		# WHERE THE FRIGHT WAS. The man, in the ordinary case.
 		"position": centre,
+		# WHERE THE BIRDS ARE, which is a different place and is the one a camera
+		# wanting to look at them needs. Added rather than replacing `position`
+		# because a Wave 5 listener asking "what is out there" wants the
+		# disturbance and a shot wants the subject.
+		"aloft": aloft,
 		"count": perched.size(),
 		"cause": cause,
 	})
@@ -540,21 +707,46 @@ func _disturbance() -> Vector3:
 	return watched.global_position if watched.is_inside_tree() else watched.position
 
 
+## Is he under them?
+##
+## FLAT, and this was a real defect measured on the shipped scene. The comparison
+## was a full 3D distance, and a crow is up a pole: the perches in `main.tscn`
+## sit between 5.09 m and 8.66 m up, so a man walking directly underneath is
+## already 4.19 m to 7.76 m away before he has moved an inch sideways. The
+## remaining horizontal reach of an eight-metre radius is therefore
+## `sqrt(8^2 - h^2)`, which is 6.8 m at the low end of the drop wire and
+## **1.95 m** at the top of the pole -- so a flock on the high perches was
+## essentially unflushable, and a man could walk right past under the wire with
+## nothing happening.
+##
+## Nothing reports it, which is why it survived: crows landing on a low perch
+## still burst, so the feature "works", and it is the SAME flock that sometimes
+## does not. It reads as the birds not having noticed him. Found while capturing
+## the startle shot -- one seed in three landed a flock high and no walk-through
+## could set it off.
+##
+## `flush_radius_m`'s own comment says the number is chosen against the tight
+## framing stop's 10.5 m of WORLD -- a horizontal quantity. This makes the
+## comparison the one the number was chosen for.
 func _anyone_near(radius: float) -> bool:
 	var watched := _watch()
 	if watched == null:
 		return false
 	var at := _disturbance()
 	for crow in _crows:
-		if crow.where().distance_to(at) <= radius:
+		if _flat_gap(crow.where(), at) <= radius:
 			return true
 	if not _crows.is_empty():
 		return false
 	# Nothing is out yet, so the question is about the perches themselves.
 	for perch in available_perches():
-		if (perch["at"] as Vector3).distance_to(at) <= radius:
+		if _flat_gap(perch["at"] as Vector3, at) <= radius:
 			return true
 	return false
+
+
+static func _flat_gap(a: Vector3, b: Vector3) -> float:
+	return Vector2(a.x - b.x, a.z - b.z).length()
 
 
 ## Birds do not land on a wire somebody is standing under. A little wider than

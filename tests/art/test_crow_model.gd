@@ -249,6 +249,166 @@ func test_the_crow_refuses_snow_through_the_painters_key_and_not_by_writing_on_i
 	crow.free()
 
 
+# --- which way the bird points ------------------------------------------------
+#
+# THE GATE THAT WAS MISSING, AND THE DEFECT IT WOULD HAVE CAUGHT.
+#
+# This crow arrived in a Unity `.unitypackage`. Unity is left-handed and its
+# models face +Z; Godot is right-handed and `look_at()` aims a node's -Z. A model
+# authored for Unity therefore points exactly backwards in Godot, and every
+# consumer that aims it from a velocity puts its tail where its beak should be.
+#
+# Wave 2 shipped `MODEL_YAW = 0.0` on a reading of the pose that came out with
+# the sign inverted, and rationalised the take's own +Z root travel away as "the
+# importer gives the Skeleton3D a half-turn of its own". Measured on 4.7.1: the
+# Skeleton3D sits at IDENTITY inside the Crow node -- no half-turn exists -- and
+# every instrument says +Z:
+#
+#   bind pose      BeakTop z = +0.1722, Tail Center z = -0.1389
+#   mesh vertices  the whole bird occupies z = -0.0035 .. +0.2902; the beak tip
+#                  is the furthest +Z vertex at z = +0.2794
+#   every take     (beak - tail).z is positive at every sample of perch, flap,
+#                  take_off, fly and glide
+#   root motion    Rav_TakeOff's CG climbs +0.30 m and travels +0.37 m ALONG +Z
+#
+# The facing axis and the take's own travel AGREE with each other. They agree on
+# Unity's forward. So this is the asset's orientation, not a consumer aiming it
+# wrongly, and the correction belongs once at the rig rather than at each use
+# site -- which is what `Crow.MODEL_YAW` is and always was for.
+#
+# Two instruments here rather than one, deliberately: bones and mesh are the two
+# halves of the delivery and a gate that read only one could be satisfied by an
+# asset whose skeleton was fixed and whose geometry was not.
+
+
+## Composes the transform from the model's own root down to its Skeleton3D by
+## hand. Out of a tree there is nobody to compose it for you and
+## `global_transform` silently answers with the identity -- the same trap
+## `PerchPoints.placement()` and `Crow._where()` are written around.
+func _skeleton_within(root: Node3D):
+	var found: Skeleton3D = null
+	for node in root.find_children("*", "Skeleton3D", true, false):
+		found = node as Skeleton3D
+		break
+	if found == null:
+		return null
+	return {"skeleton": found, "at": _within(root, found)}
+
+
+## The transform from `root`'s parent space down to `leaf`, INCLUDING root's own.
+##
+## Written first as a walk that stopped AT root and therefore left root's own
+## transform out -- which is precisely where MODEL_YAW lives, so the gate read
+## the same numbers before and after the fix and reported the fix had not worked.
+## An instrument that ignores the one transform under test is worse than no
+## instrument: it fails identically whatever you do.
+func _within(root: Node3D, leaf: Node3D) -> Transform3D:
+	var placed := Transform3D()
+	var walk: Node = leaf
+	while walk != null:
+		if walk is Node3D:
+			placed = (walk as Node3D).transform * placed
+		if walk == root:
+			break
+		walk = walk.get_parent()
+	return placed
+
+
+## The rig as `Crow._build_rig()` actually assembles it: the model instanced and
+## then yawed by MODEL_YAW. Everything below measures through this, so the gate
+## is testing the shipped constant and not a hand-written duplicate of it.
+func _posed_rig() -> Node3D:
+	var packed := ResourceLoader.load(CROW)
+	if not (packed is PackedScene):
+		return null
+	var rig := (packed as PackedScene).instantiate() as Node3D
+	if rig == null:
+		return null
+	if absf(CrowScript.MODEL_YAW) > 0.0001:
+		rig.rotate_y(CrowScript.MODEL_YAW)
+	return rig
+
+
+## The bind pose, with no take applied. The asset's own orientation, and the
+## reading that decides where the fix belongs.
+func test_the_bird_is_built_facing_the_way_look_at_points_it() -> void:
+	var rig := _posed_rig()
+	assert_not_null(rig, "the crow model did not instantiate")
+	if rig == null:
+		return
+	var held = _skeleton_within(rig)
+	assert_not_null(held, "the crow model carries no Skeleton3D")
+	if held == null:
+		rig.free()
+		return
+	var skeleton: Skeleton3D = held["skeleton"]
+	var into: Transform3D = held["at"]
+	var beak := skeleton.find_bone("BeakTop")
+	var tail := skeleton.find_bone("Tail Center")
+	assert_true(beak >= 0 and tail >= 0, "the rig has no BeakTop / Tail Center to measure against")
+	if beak < 0 or tail < 0:
+		rig.free()
+		return
+	var beak_at: Vector3 = (into * skeleton.get_bone_global_rest(beak)).origin
+	var tail_at: Vector3 = (into * skeleton.get_bone_global_rest(tail)).origin
+	assert_true(
+		beak_at.z < tail_at.z,
+		("the crow is built tail-first: beak z = %+.4f, tail z = %+.4f in the rig's own space. "
+			+ "look_at() aims -Z, so every departure flies backwards and every perched bird "
+			+ "faces the wrong way along its wire. MODEL_YAW is %.4f rad.") % [
+			beak_at.z, tail_at.z, CrowScript.MODEL_YAW]
+	)
+	# Not merely on the correct side of zero -- along the axis. A rig whose beak
+	# was a millimetre forward of its tail would pass a sign test and still read
+	# as a bird flying sideways.
+	var axis := (beak_at - tail_at)
+	assert_true(
+		-axis.z > absf(axis.x),
+		"the crow's body axis is %s -- more across the rig than along it" % str(axis.snappedf(0.001))
+	)
+	rig.free()
+
+
+## The same question asked of the GEOMETRY, with no bone consulted. The beak is
+## the furthest point along the bird's own length, so the extreme vertex on the
+## forward axis has to be at -Z once the rig is yawed.
+func test_the_birds_geometry_points_the_same_way_its_skeleton_does() -> void:
+	var rig := _posed_rig()
+	assert_not_null(rig, "the crow model did not instantiate")
+	if rig == null:
+		return
+	var most_forward := 1e9
+	var most_back := -1e9
+	var seen := 0
+	for node in rig.find_children("*", "MeshInstance3D", true, false):
+		var instance := node as MeshInstance3D
+		if instance.mesh == null:
+			continue
+		var placed := _within(rig, instance)
+		for surface in range(instance.mesh.get_surface_count()):
+			var arrays := instance.mesh.surface_get_arrays(surface)
+			# Trap 5: an unused slot comes back null.
+			var raw = arrays[Mesh.ARRAY_VERTEX]
+			if raw == null:
+				continue
+			for vertex in (raw as PackedVector3Array):
+				var at: Vector3 = placed * vertex
+				most_forward = minf(most_forward, at.z)
+				most_back = maxf(most_back, at.z)
+				seen += 1
+	assert_true(seen > 0, "no vertices were read out of the crow mesh")
+	if seen == 0:
+		rig.free()
+		return
+	assert_true(
+		absf(most_forward) > absf(most_back),
+		("the crow's geometry reaches %+.4f forward and %+.4f back: the long end of the bird "
+			+ "is behind the origin, which is Unity's +Z forward left uncorrected") % [
+			most_forward, most_back]
+	)
+	rig.free()
+
+
 ## Art Bible rule 12. The pack ships a yellow-beak variant and two near-white
 ## ones; the yellow would be the only warm thing in the sky, and warm is
 ## reserved for windows, fire, beacons, the truck and the scarf.

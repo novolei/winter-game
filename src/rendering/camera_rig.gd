@@ -128,10 +128,47 @@ var _framed_size := NAN
 
 var _framing_tween: Tween = null
 
+## ---------------------------------------------------------------------------
+## The lean, and why it is an OFFSET rather than a value
+## ---------------------------------------------------------------------------
+## Art Bible rule 1 says the camera never rotates, and its one approved exception
+## -- the crow startle close-up -- is granted on five conditions, of which the
+## fourth is that the shot must return to "逐位相同" framing: bit for bit where it
+## started, with the player unable to detect a shift.
+##
+## That condition is unsatisfiable for anything that WRITES the pitch and yaw,
+## because writing them means remembering them, and a remembered float that has
+## been through an ease is not the float it started as. So the shot does not
+## write the rotation at all. It writes an offset, `rotation` is `base + offset`
+## every time either changes, and the offset returning to exactly zero returns
+## the rotation to exactly `base_rotation()` -- which is recomputed from the two
+## exports rather than restored from a snapshot, so there is nothing to get
+## stale.
+##
+## Same shape as `_framing`, one level simpler: the frame's SIZE has a full
+## ModifierStack because several systems will want a say in it; its ANGLE has one
+## approved caller in the whole game and rule 1 says it should stay that way.
+var _lean := Vector3.ZERO
+
+## Where the frame is aimed, over and above the player's own head.
+##
+## The look-up needs this and the rotation cannot supply it. Pitching the rig
+## turns the world about the rig's origin, and the rig's origin is the player --
+## so a pure rotation leaves him pinned at the centre of the frame with the sky
+## swinging around him, and the birds, which are eight metres up a pole, sail off
+## the top. Raising the aim point is what puts them in the picture.
+##
+## This one is a FOLLOW target rather than a written transform: `_process`
+## already eases `global_position` toward the player at `follow_speed`, so an
+## offset pushed through the same lerp arrives with the same lag as everything
+## else and needs no easing of its own. It also means the return is the ordinary
+## follow doing its ordinary job, not a special case.
+var _aim_offset := Vector3.ZERO
+
 
 func _ready() -> void:
 	_camera = get_node_or_null("Camera3D") as Camera3D
-	rotation = Vector3(deg_to_rad(-pitch_degrees), deg_to_rad(yaw_degrees), 0.0)
+	_apply_lean()
 	# Both of these before the camera guard, and neither is optional. Which stop
 	# the rig is on and where the frame currently sits are RIG state, not camera
 	# state: a rig assembled without a Camera3D still has to carry them, or the
@@ -171,7 +208,7 @@ func _process(delta: float) -> void:
 	_resolve()
 	if _target == null:
 		return
-	var wanted := _target.global_position + Vector3(0.0, target_height, 0.0)
+	var wanted := _target.global_position + Vector3(0.0, target_height, 0.0) + _aim_offset
 	# Exponential smoothing, frame-rate independent: the fraction of the gap
 	# closed per second is what is fixed, not the fraction closed per frame.
 	var blend := 1.0 - exp(-follow_speed * delta)
@@ -192,7 +229,62 @@ func snap_to_target() -> void:
 	_resolve()
 	if _target == null:
 		return
-	global_position = _target.global_position + Vector3(0.0, target_height, 0.0)
+	global_position = _target.global_position + Vector3(0.0, target_height, 0.0) + _aim_offset
+
+
+## ---------------------------------------------------------------------------
+## The lean -- rule 1's one approved exception
+## ---------------------------------------------------------------------------
+
+
+## The angle the rig sits at with nothing acting on it, recomputed from the two
+## exports rather than remembered. That is what makes the return exact: there is
+## no stored value to drift, and `set_lean(Vector3.ZERO)` puts the rig back on
+## the identical bits it was on before anything touched it.
+func base_rotation() -> Vector3:
+	return Vector3(deg_to_rad(-pitch_degrees), deg_to_rad(yaw_degrees), 0.0)
+
+
+## Radians, added to the base. `x` tilts the camera up (the base pitch is
+## negative, so a positive lean brings the view toward the horizon and the sky);
+## `y` swings it round. Zero is the shipped framing, exactly.
+func set_lean(offset: Vector3) -> void:
+	if not (is_finite(offset.x) and is_finite(offset.y) and is_finite(offset.z)):
+		return
+	_lean = offset
+	_apply_lean()
+
+
+func lean() -> Vector3:
+	return _lean
+
+
+## Metres, added to the follow target. See `_aim_offset`.
+func set_aim_offset(offset: Vector3) -> void:
+	if not (is_finite(offset.x) and is_finite(offset.y) and is_finite(offset.z)):
+		return
+	_aim_offset = offset
+
+
+func aim_offset() -> Vector3:
+	return _aim_offset
+
+
+## Whether anything is currently leaning the frame. For a test, and for a system
+## that must not start a second shot over the first.
+func is_leaning() -> bool:
+	return _lean != Vector3.ZERO or _aim_offset != Vector3.ZERO
+
+
+func _apply_lean() -> void:
+	# The branch is not an optimisation, it is the CONTRACT. Adding a zero vector
+	# happens to be exact for finite floats, but writing it as a separate path is
+	# what makes "returns to exactly the framing it left" something a reader can
+	# check by looking rather than something they have to know about IEEE 754.
+	if _lean == Vector3.ZERO:
+		rotation = base_rotation()
+		return
+	rotation = base_rotation() + _lean
 
 
 ## ---------------------------------------------------------------------------
@@ -307,6 +399,22 @@ func set_framing_index(index: int, wrapped := false) -> void:
 ## writing orthographic_size by hand.
 func refresh_framing() -> void:
 	_retarget(false)
+
+
+## The same, but NOW and with no tween.
+##
+## For a modifier whose value is being driven every frame. `_retarget` starts a
+## `framing_notch_seconds` ease, which is right for a control answering a mouse
+## wheel and wrong for a caller that is already doing its own easing -- a tween
+## created per frame never gets past its first step, so the frame crawls behind
+## the value and then snaps when the driving stops. Killing the tween is part of
+## it: a notch taken mid-shot would otherwise keep pulling the size somewhere
+## else underneath.
+func settle_framing() -> void:
+	if _framing_tween != null and _framing_tween.is_valid():
+		_framing_tween.kill()
+	_framing_tween = null
+	apply_framed_size(framing_target())
 
 
 func push_framing_modifier(mod: Modifier) -> void:

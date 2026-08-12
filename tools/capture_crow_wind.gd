@@ -178,7 +178,7 @@ func _start() -> void:
 	_frame_at(_stop)
 	_aim()
 	_flock.set_perches(_near_perches())
-	print("capture_crow_wind: %d birds landed" % _flock.arrive_now())
+	print("capture_crow_wind: %d birds landed" % _flock.land_now())
 	for crow in _crows():
 		_landed[crow.get_instance_id()] = crow.where()
 

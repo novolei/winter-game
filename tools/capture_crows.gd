@@ -99,7 +99,7 @@ func _run() -> void:
 	_report_perches()
 	_flock.set_perches(_near_perches())
 	# Not by waiting out the quiet timer: see CrowFlock.arrive_now().
-	print("capture_crows: %d birds landed" % _flock.arrive_now())
+	print("capture_crows: %d birds landed" % _flock.land_now())
 	await _wait(0.4)
 
 	for stop in STOPS:

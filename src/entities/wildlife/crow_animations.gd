@@ -92,6 +92,7 @@ const FLAP := &"flap"
 const TAKE_OFF := &"take_off"
 const FLY := &"fly"
 const GLIDE := &"glide"
+const LAND := &"land"
 
 ## [source file, first frame, last frame, name in the library, loops, in place].
 ##
@@ -123,6 +124,22 @@ const FRAMES: Array = [
 	[FLY_FILE, 82, 106, FLY, true, true],
 	# Rav_Fly_Glide -- wings out, no beat.
 	[FLY_FILE, 163, 195, GLIDE, true, true],
+	# Rav_Land -- the OTHER half of `Raven Land TakeOff.FBX`, which Wave 2 sliced
+	# the first 29 frames out of and left the rest of. The file's name says it
+	# ships both and it does; MEASURED on the CG bone's height, the long take is
+	# two clips joined at frame 30 with a hard cut:
+	#
+	#   0..29   rest 0.121 -> crouch 0.058 (f9) -> climb 0.422 (f29)   the take-off
+	#   32..99  0.193 held with wingbeats to f60 -> drop to 0.096 (f72)
+	#           -> settle -> rest 0.120 (f95)                          THE LANDING
+	#
+	# So the flare is frames 33..60 and the drop onto the perch is 60..72, which
+	# is 40 to 58 per cent of the way through the slice below. `Crow.LAND_FLARE`
+	# is that 0.58, and it is why the bird's feet touch the wire when the take's
+	# own body drops rather than a moment either side of it.
+	#
+	# IN PLACE for the same reason every flown take is: the code owns the metres.
+	[TAKEOFF_FILE, 33, 99, LAND, false, true],
 ]
 
 

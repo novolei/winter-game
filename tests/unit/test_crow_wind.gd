@@ -134,7 +134,15 @@ func test_a_bird_in_the_air_is_no_longer_tied_to_the_wire() -> void:
 		crow.ride(0.0)
 		crow.advance(FRAME)
 		left -= FRAME
-	assert_eq(crow.state(), Crow.State.BEATING, "1.5 s of frames should have put the bird past its launch")
+	# `is_flying()` rather than a named state. Written first as `== BEATING`, which
+	# stopped being true the day the mill was added between the launch and the
+	# commit -- and the question this test is asking has nothing to do with which
+	# of the airborne states the bird is in.
+	assert_true(
+		crow.is_flying(),
+		"1.5 s of frames should have put the bird past its launch, and it is in state %d" % crow.state()
+	)
+	assert_false(crow.has_feet_down(), "a bird 1.5 s into its departure still has its feet on the wire")
 	var flying := crow.where()
 	_wire.position += FULL_TRAVEL
 	crow.ride(0.0)

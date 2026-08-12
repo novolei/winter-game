@@ -31,15 +31,53 @@ extends Node3D
 ##             birds that all leave on the same frame reads as one object being
 ##             deleted; a fifth of a second between them reads as a ripple down
 ##             the wire, which is what actually happens.
-##   LAUNCH    `take_off`, which is 29 frames just under a second. The bird holds
-##             its perch through it -- the take was flattened to one root key by
-##             CrowAnimations precisely so that this file decides when it leaves,
-##             and it leaves at the end of the launch rather than at the start of
-##             it.
-##   BEAT      `fly`, accelerating along the heading. Wings working, which is
-##             what a bird does when it is getting out.
+##   LAUNCH    `take_off`, which is 29 frames just under a second, and THE BEAT
+##             THE OWNER ASKED FOR. It is two halves: a crouch with the feet
+##             still closed on the wire, and then the body RISING STRAIGHT UP
+##             with no forward speed at all. See `_lift_off()` -- a bird that
+##             translates away from a wire is a decal being slid; a bird that
+##             gathers, beats and comes up off the wire before it goes anywhere
+##             is a bird.
+##   WHEEL     `fly`, milling. The heading turns steadily about the vertical, so
+##             the bird flies an arc rather than a line, and it does this for a
+##             drawn number of seconds before it commits to anywhere. Crows do
+##             not leave on a heading; they burst, mill, and THEN commit, and the
+##             hesitation is what separates a flock from five particles with
+##             velocities.
+##   BEAT      `fly`, committed: the heading stops turning and the bird swings
+##             onto its departure line and gathers cruise speed.
 ##   GLIDE     `glide`, at speed. A bird that flapped all the way to the horizon
 ##             would read as a wind-up toy.
+##
+## ---------------------------------------------------------------------------
+## THE RETURN, WHICH IS WHAT MAKES THE VALLEY A PLACE AND NOT A SET OF PROPS
+## ---------------------------------------------------------------------------
+##   白天的时候乌鸦会被玩家惊飞，飞起盘旋一段时间后乌鸦还会回到随机的一个可以落脚的地方
+##
+## A flock that leaves and never comes back means the wires are bare from day one
+## onward: the player disturbs the valley once and it stays disturbed. Being able
+## to disturb something that then settles back is the difference between a world
+## and a set of one-shot props.
+##
+##   INBOUND   `fly`, coming in from outside the frame on a curving line -- the
+##             same `_mill` the departure uses, so the arrival circles once
+##             before it commits, exactly as the departure hesitates before it
+##             does. It aims at a point ABOVE the perch, not at the perch: a bird
+##             flies to over the wire and then comes down onto it.
+##   LANDING   `land`, and this is the beat nobody bothers with. See LAND_FLARE:
+##             the take is a flare with the wings out, then a drop, then a settle,
+##             and the code's own descent is timed so the feet touch the wire on
+##             the frame the take's own body drops.
+##
+## Then PERCHED, gripping whatever it landed on -- which is drawn fresh, so a
+## flock does not reassemble in the arrangement it left. That would read as a
+## rewind.
+##
+## THE CAMERA DOES NOT COME BACK FOR THIS, deliberately. The startle earns its
+## lean because it is a surprise; a landing does not, and a second camera move
+## inside a minute would spend the exception the Art Bible granted. The return
+## happens in the ordinary framing and the player may well miss it. Something
+## happening whether or not he is watching is the point.
 ##
 ## Then it is GONE, and the flock frees it. Nothing fades: the camera is
 ## ORTHOGRAPHIC (Art Bible rule 1), so a bird flying away does not shrink -- it
@@ -110,45 +148,151 @@ const MODEL := preload("res://assets/models/characters/crow/crow.fbx")
 const PALETTE_FAMILY := "structure"
 const PALETTE_INDEX := 3
 
-## The rig arrives facing Godot's own forward, so nothing is turned here.
+## Half a turn, because the delivery faces UNITY's forward and this is Godot.
 ##
-## MEASURED, and worth writing down because the obvious reading of the data is
-## the wrong one. `Rav_TakeOff`'s root track drives the CG bone +Z as the bird
-## climbs, which says "the model flies +Z" -- and it does not. Godot's importer
-## gives the Skeleton3D node a half-turn of its own, so bone space and model
-## space disagree about Z, and a rotation applied on the strength of the track
-## values would have the bird leaving tail first at eight pixels, where nobody
-## would see it and everybody would believe it.
+## ---------------------------------------------------------------------------
+## THE HANDEDNESS BUG, AND WHY IT IS CORRECTED HERE AND NOT AT EACH USE SITE
+## ---------------------------------------------------------------------------
+## The crow arrived in a `.unitypackage`. Unity is left-handed and a model
+## authored for it faces **+Z**; Godot is right-handed and `look_at()` aims a
+## node's **-Z**. An asset brought across without a correction therefore points
+## exactly backwards, and every consumer that aims it from a velocity -- this
+## file's `_aim()`, and anything later that writes a basis -- puts its tail where
+## its beak should be. It is a whole class of bug, not one asset.
 ##
-## The pose is the evidence, not the track: with the perch take applied, BeakTop
-## sits at z = -0.151 and Tail Center at z = +0.111 in this node's own space. The
-## beak is at negative Z, which is where `look_at()` points.
-const MODEL_YAW := 0.0
+## MEASURED on 4.7.1, four instruments, all agreeing:
+##
+##   bind pose      BeakTop z = +0.1722, Tail Center z = -0.1389
+##   mesh vertices  the bird occupies z = -0.0035 .. +0.2902 with the beak tip
+##                  the furthest +Z vertex, at z = +0.2794 -- no bone consulted
+##   every take     (beak - tail).z is positive at every sample of perch, flap,
+##                  take_off, fly and glide
+##   root motion    `Rav_TakeOff`'s CG climbs +0.3009 m and travels +0.3656 m
+##                  ALONG +Z as the bird leaves
+##
+## The facing axis and the take's own travel agree with each other, and they
+## agree on Unity's forward. That is what says the defect is the ASSET's
+## orientation rather than a consumer aiming it wrongly -- so it is corrected
+## once, here, above every take and inherited by every future consumer of `Crow`,
+## rather than at each place a heading is used.
+##
+## Not at import: Godot's FBX importer has no root-rotation setting, so an
+## import-time fix would mean attaching an import script to a model that
+## `tests/art/test_crow_model.gd` asserts is deliberately NOT wired to one. This
+## constant is the single instantiation point (`_build_rig`), which is the same
+## "one place" for less machinery.
+##
+## ---------------------------------------------------------------------------
+## WHAT WAVE 2 SAW, BECAUSE THE MISTAKE IS INSTRUCTIVE
+## ---------------------------------------------------------------------------
+## Wave 2 read the same two bones and recorded them with the sign inverted
+## (BeakTop -0.151, Tail Center +0.111), then explained the take's +Z root travel
+## away as "the importer gives the Skeleton3D a half-turn of its own, so bone
+## space and model space disagree about Z". **There is no such half-turn.**
+## Measured: the Skeleton3D sits at the identity inside this node -- basis x, y, z
+## are (1,0,0), (0,1,0), (0,0,1) and its origin is zero. The evidence that would
+## have settled it was the agreement between the pose and the root motion, which
+## was read as a contradiction and reasoned away.
+##
+## It shipped because the symptom is invisible at the size the bird is drawn: at
+## the widest framing stop a crow is sixteen pixels, and sixteen pixels of bird
+## flying tail-first still reads as a bird. The owner only caught it once they
+## flew. The perched birds were reversed too, along their wires, and nobody saw
+## that at all. `tests/art/test_crow_model.gd` now measures both halves of the
+## delivery so the next re-import cannot lose it again.
+const MODEL_YAW := PI
 
 enum State {
 	PERCHED,
 	WAITING,
 	LAUNCHING,
+	WHEELING,
 	BEATING,
 	GLIDING,
 	GONE,
+	## Coming back. See "THE RETURN" in this file's header.
+	INBOUND,
+	LANDING,
 }
 
-## How long the launch take holds the bird on its perch. `Rav_TakeOff` is 29
-## frames at 30 fps.
+## How long the launch take runs. `Rav_TakeOff` is 29 frames at 30 fps.
 @export var launch_seconds := 29.0 / 30.0
 
-## How long the wings work before the bird sets them. Two seconds is about the
-## time it takes to clear the farmyard.
-@export var beat_seconds := 2.0
+## How much of the launch the feet are still closed on the wire.
+##
+## The take opens with the bird gathering -- head down, legs folding -- and only
+## then drives up. Lifting from frame one would be a bird levitating out of a
+## crouch it has not finished. A third of 0.93 s is 0.31 s of gather, which is
+## also long enough for the wings to have opened, and the wings-out silhouette is
+## about three times the perched one (measured in W3's gust frames). So the
+## moment the bird actually leaves the wire is the moment it is most legible,
+## which is the whole reason this beat is worth animating at all.
+@export var crouch_fraction := 0.34
 
-## Metres per second, off the wire and at cruise. A crow really does leave at
-## about this, and at the tight framing's 10.5 m of world it crosses the picture
-## in a little over a second -- which is the whole read: it is gone before you
-## have decided what it was.
-@export var launch_speed := 5.0
+## How far the bird rises off the wire during the second half of the launch.
+##
+## THE TAKE'S OWN NUMBER, not a chosen one: `Rav_TakeOff`'s CG bone climbs
+## 0.3009 m across its 29 frames. `CrowAnimations` flattens that root track to a
+## single key -- the code owns the trajectory or the take does, never both -- so
+## this is where the animator's climb comes back, driven by the file that owns
+## every metre.
+##
+## Vertical ONLY, deliberately. The take also travels 0.3656 m forward and that
+## part is NOT restored here: the owner's note is that the beat to sell is the
+## body rising *before* it has any forward speed. The forward push arrives with
+## the wheel, one state later.
+@export var launch_climb_m := 0.30
+
+## Metres per second: milling, and committed.
+##
+## `mill_speed` is deliberately well under cruise. A bird that leaves the wire at
+## cruise cannot turn tightly enough to read as circling -- the wheel radius is
+## speed over turn rate, so at 12 m/s and 2 rad/s it is a six-metre arc that
+## looks like a wide bank rather than a mill. At 5 m/s it is under three metres,
+## which at the tight framing stop's 10.5 m of frame is a shape the eye reads as
+## a circle.
+@export var mill_speed := 5.0
 @export var cruise_speed := 12.0
 @export var acceleration := 9.0
+
+## How long the wings work after it commits, before it sets them. Two seconds is
+## about the time it takes to clear the farmyard.
+@export var beat_seconds := 2.0
+
+## ---------------------------------------------------------------------------
+## The return
+## ---------------------------------------------------------------------------
+
+## How high above the perch a returning bird aims before it comes down. A crow
+## flies to over the wire and then lands on it; a crow that flew AT the wire
+## would arrive along it, which is a collision course with the thing it means to
+## stand on.
+@export var hover_m := 2.6
+
+## How close to that hover point it has to get before the landing take starts.
+@export var flare_distance_m := 3.4
+
+## How long the landing take runs. `Rav_Land` is 67 frames at 30 fps.
+@export var land_seconds := 67.0 / 30.0
+
+## How long an inbound bird is allowed to spend looking for its perch before it
+## simply commits. A bird whose steering overshot and is circling forever would
+## be a crow that never lands and never leaves.
+@export var inbound_limit_seconds := 9.0
+
+## WHERE IN THE LANDING TAKE THE FEET TOUCH.
+##
+## MEASURED off the take rather than chosen. `Rav_Land` holds its flare with the
+## wings working from frame 33 to about frame 60, then the body DROPS from 0.193
+## to 0.096 between frames 60 and 72, then settles. Across the 33..99 slice that
+## drop finishes 58 per cent of the way through -- so the code's own descent is
+## eased to arrive at exactly that moment, and the remaining 42 per cent is the
+## bird standing on the wire folding itself up.
+##
+## Get this wrong in either direction and it reads as one specific kind of wrong:
+## early, and the bird stands on the wire flapping at nothing; late, and it
+## finishes its landing in mid-air and then drops.
+const LAND_FLARE := 0.58
 
 ## How far it gets before it stops existing. Comfortably outside the widest
 ## framing stop, because an orthographic camera does not shrink it.
@@ -193,6 +337,21 @@ var _anchor_local := Vector3.ZERO
 var _anchor_local_facing := Vector3(0.0, 0.0, -1.0)
 var _anchor_seen := Transform3D()
 var _balancing := false
+## The mill. `_departure` is where it will end up; `_heading` is where it is
+## pointed right now, which during the wheel is turning at `_wheel_rate` rad/s
+## for `_wheel_seconds`. Both zero means no wheel at all and the bird goes
+## straight out, which is what every caller that does not ask for one gets.
+var _departure := Vector3(0.0, 0.4, -1.0).normalized()
+var _wheel_rate := 0.0
+var _wheel_seconds := 0.0
+var _wheeled := 0.0
+## The return. The perch it is coming back to, held as the DECLARATION it came
+## out of -- so a wire that sways while the bird is on its way in is still the
+## wire it lands on.
+var _target: Dictionary = {}
+var _land_from := Vector3.ZERO
+var _landed_for := 0.0
+var _inbound_for := 0.0
 
 
 func _ready() -> void:
@@ -254,6 +413,41 @@ func is_balancing() -> bool:
 	return _balancing
 
 
+## Milling -- off the wire and not yet committed to anywhere.
+func is_wheeling() -> bool:
+	return _state == State.WHEELING
+
+
+## Off the wire entirely, whatever it is doing up there.
+func is_flying() -> bool:
+	return _is_flying()
+
+
+## Whether its feet are still closed on something. True through the stagger and
+## through the CROUCH at the start of the launch, and false from the moment the
+## rise begins -- which is a different question from `is_on_the_wire()`, and the
+## difference is the whole of the take-off beat.
+func has_feet_down() -> bool:
+	return _feet_down()
+
+
+## Where it will end up, once it has finished making up its mind. The flock
+## decides it; `heading()` is where the bird is pointed right now, which during
+## the mill is somewhere else entirely.
+func departure() -> Vector3:
+	return _departure
+
+
+## Radians a second, signed, and for how long. Reported so a test can assert the
+## mill rather than watch for it.
+func wheel_rate() -> float:
+	return _wheel_rate
+
+
+func wheel_seconds() -> float:
+	return _wheel_seconds
+
+
 ## The declaration it is standing on, or null for a bird placed at a position.
 func anchor() -> PerchPoints:
 	return _anchor
@@ -312,14 +506,26 @@ func grip(perch: Dictionary) -> void:
 	_anchor_seen = _anchor.placement()
 
 
-## Go, in `heading`, `delay` seconds from now.
+## Go, in `heading`, `delay` seconds from now -- milling for `wheel_seconds`
+## first, turning at `wheel_rate` radians a second (signed: the sign is which way
+## round it circles).
+##
+## Both wheel arguments default to zero, which is no mill at all: the bird leaves
+## the launch already pointed at `heading` and flies straight out. Every caller
+## that does not ask for a wheel therefore gets exactly the departure this file
+## shipped before, which is what keeps the mill a decision the FLOCK makes rather
+## than something every test has to opt out of.
 ##
 ## Refuses a bird that is already leaving: a second call would restart the
 ## departure and the crow would drop back onto a wire it is no longer near.
-func scatter(heading: Vector3, delay := 0.0) -> bool:
+func scatter(heading: Vector3, delay := 0.0, wheel_rate := 0.0, wheel_seconds := 0.0) -> bool:
 	if _state != State.PERCHED:
 		return false
-	_heading = _normalised(heading, Vector3(0.0, 0.5, -1.0).normalized())
+	_departure = _normalised(heading, Vector3(0.0, 0.5, -1.0).normalized())
+	_heading = _departure
+	_wheel_rate = wheel_rate if is_finite(wheel_rate) else 0.0
+	_wheel_seconds = maxf(wheel_seconds, 0.0) if is_finite(wheel_seconds) else 0.0
+	_wheeled = 0.0
 	_wait = maxf(delay, 0.0)
 	_elapsed = 0.0
 	_from = _where()
@@ -332,6 +538,134 @@ func scatter(heading: Vector3, delay := 0.0) -> bool:
 	# launch, because the launch take starts from a bird that has already noticed.
 	_play(CrowAnimations.LOOK)
 	return true
+
+
+## Come back, to `perch`, entering the world at `from`.
+##
+## `wheel_rate` and `wheel_seconds` are the same two numbers the departure takes
+## and mean the same thing: the arrival curves in rather than flying a straight
+## line at the wire. A bird that came in on a ruler would read as a projectile.
+func approach(perch: Dictionary, from: Vector3, wheel_rate := 0.0, wheel_seconds := 0.0) -> bool:
+	if not perch.has("at"):
+		return false
+	_target = perch.duplicate()
+	_state = State.INBOUND
+	_anchor = null
+	_balancing = false
+	_velocity = Vector3.ZERO
+	_elapsed = 0.0
+	_inbound_for = 0.0
+	_landed_for = 0.0
+	_wheel_rate = wheel_rate if is_finite(wheel_rate) else 0.0
+	_wheel_seconds = maxf(wheel_seconds, 0.0) if is_finite(wheel_seconds) else 0.0
+	_wheeled = 0.0
+	_from = from
+	_place(from)
+	var toward := _hover_point() - from
+	_heading = _normalised(toward, Vector3(0.0, 0.0, -1.0))
+	_facing = _normalised(Vector3(toward.x, 0.0, toward.z), Vector3(0.0, 0.0, -1.0))
+	_departure = _heading
+	_aim(_facing)
+	_velocity = _heading * mill_speed
+	_play(CrowAnimations.FLY)
+	return true
+
+
+## Think better of it and leave, wherever it had got to. What a flock does when
+## the man is still standing under the wire it was coming back to -- a bird that
+## landed and burst on the next frame is a loop the player can see.
+func give_up() -> bool:
+	if _state != State.INBOUND and _state != State.LANDING:
+		return false
+	_target = {}
+	_anchor = null
+	_state = State.GLIDING
+	_elapsed = 0.0
+	_from = _where()
+	var away := _normalised(Vector3(_facing.x, 0.0, _facing.z), Vector3(0.0, 0.0, -1.0))
+	_heading = (away + Vector3.UP * 0.36).normalized()
+	_departure = _heading
+	_wheel_rate = 0.0
+	_wheel_seconds = 0.0
+	_play(CrowAnimations.GLIDE)
+	return true
+
+
+## On its way back, and not yet down.
+func is_inbound() -> bool:
+	return _state == State.INBOUND
+
+
+## Flaring onto a perch.
+func is_landing() -> bool:
+	return _state == State.LANDING
+
+
+## Where it is headed, or ZERO for a bird that is not coming back to anywhere.
+func target_perch() -> Vector3:
+	return _target.get("at", Vector3.ZERO) if not _target.is_empty() else Vector3.ZERO
+
+
+## The perch resolved on THIS frame. A wire sways while a bird is on its way in,
+## so a landing aimed at where the wire was when the flock decided to come back
+## would put the bird beside it -- the same defect `ride()` exists to fix, one
+## step earlier in the story.
+func _perch_now() -> Vector3:
+	var anchor := _target.get("anchor", null) as PerchPoints
+	if anchor != null and is_instance_valid(anchor):
+		return anchor.placement() * (_target.get("local", Vector3.ZERO) as Vector3)
+	return _target.get("at", Vector3.ZERO)
+
+
+func _hover_point() -> Vector3:
+	return _perch_now() + Vector3.UP * hover_m
+
+
+## One frame of coming in: curve, then steer at the hover point.
+func _fly_in(delta: float) -> void:
+	_inbound_for += delta
+	if _wheeled < _wheel_seconds:
+		_mill(delta)
+	else:
+		# Steer at the point above the perch, not at the perch.
+		_heading = _normalised(_hover_point() - _where(), _heading)
+	_travel(delta, mill_speed)
+
+
+func _close_enough_to_flare() -> bool:
+	if _wheeled < _wheel_seconds and _inbound_for < inbound_limit_seconds:
+		return false
+	return _where().distance_to(_hover_point()) <= flare_distance_m \
+		or _inbound_for >= inbound_limit_seconds
+
+
+func _start_landing() -> void:
+	_state = State.LANDING
+	_landed_for = 0.0
+	_land_from = _where()
+	_velocity = Vector3.ZERO
+	_facing = _normalised(
+		Vector3(_target.get("facing", _facing).x, 0.0, (_target.get("facing", _facing) as Vector3).z),
+		_facing
+	)
+	_aim(_facing)
+	_play(CrowAnimations.LAND)
+
+
+## One frame of the flare. Eased in, so the bird arrives slowing rather than
+## dropping at a constant rate, and it is ON the perch at LAND_FLARE -- the
+## instant the take's own body comes down.
+func _flare(delta: float) -> void:
+	_landed_for += delta
+	var touchdown := maxf(land_seconds * LAND_FLARE, 0.001)
+	var through := clampf(_landed_for / touchdown, 0.0, 1.0)
+	_place(_land_from.lerp(_perch_now(), smoothstep(0.0, 1.0, through)))
+	if _landed_for < land_seconds:
+		return
+	# Down, and holding on. `grip` re-reads the declaration, so from here the bird
+	# rides the wire like any other.
+	grip(_target)
+	_target = {}
 
 
 ## One frame of standing on something that is moving.
@@ -361,6 +695,13 @@ func ride(wind_strength := 0.0) -> void:
 ## the prop used to point.
 func _follow_the_anchor() -> void:
 	if _anchor == null or not is_instance_valid(_anchor):
+		return
+	# ONCE THE FEET ARE OFF, THE WIRE IS NOTHING TO DO WITH IT. `is_on_the_wire()`
+	# stays true through the whole launch take because the bird is still standing
+	# there for the first third of it -- but the last two thirds are the rise, and
+	# a bird being pulled back down onto the wire it just left is the rise cancelled
+	# every frame.
+	if not _feet_down():
 		return
 	var now := _anchor.placement()
 	if now.is_equal_approx(_anchor_seen):
@@ -412,24 +753,115 @@ func advance(delta: float) -> void:
 				_elapsed = 0.0
 				_play(CrowAnimations.TAKE_OFF)
 		State.LAUNCHING:
+			_lift_off(delta)
 			if _elapsed >= launch_seconds:
+				# The bird arrives at the wheel already climbing, and keeps that
+				# climb. Overwriting `_velocity` here -- which this file did, with
+				# `_facing * launch_speed` -- threw the rise away on the frame it
+				# finished and put a horizontal step in its place, so the lift and
+				# the flight were two motions with a seam rather than one arc.
+				_state = State.WHEELING
+				_elapsed = 0.0
+				# It leaves pointed the way it was standing, climbing. Whatever the
+				# flock decided is `_departure`, and it will not be pointed there
+				# until the mill has run.
+				_heading = _normalised(
+					Vector3(_facing.x, 0.0, _facing.z).normalized() + Vector3.UP * 0.45,
+					_departure
+				)
+				_play(CrowAnimations.FLY)
+		State.WHEELING:
+			_mill(delta)
+			_travel(delta, mill_speed)
+			if _wheeled >= _wheel_seconds:
 				_state = State.BEATING
 				_elapsed = 0.0
-				_velocity = _facing * launch_speed
-				_play(CrowAnimations.FLY)
+				# Committed. `_travel` swings the velocity onto it at `turn_rate`
+				# rather than snapping, so the moment of deciding reads as the arc
+				# opening out rather than as a corner.
+				_heading = _departure
 		State.BEATING:
-			_travel(delta)
+			_travel(delta, cruise_speed)
 			if _elapsed >= beat_seconds:
 				_state = State.GLIDING
 				_elapsed = 0.0
 				_play(CrowAnimations.GLIDE)
 		State.GLIDING:
-			_travel(delta)
-	# Only once it is actually flying. Asking a bird that is still on the wire how
-	# far it has come is asking a question whose answer is always zero, and one
-	# day somebody moves the perch and it stops being zero.
-	if (_state == State.BEATING or _state == State.GLIDING) and travelled() >= vanish_distance_m:
+			_travel(delta, cruise_speed)
+		State.INBOUND:
+			_fly_in(delta)
+			if _close_enough_to_flare():
+				_start_landing()
+		State.LANDING:
+			_flare(delta)
+	# Only once it is actually flying AWAY. An inbound bird has travelled a long
+	# way from where it entered and is not leaving; asking it the departure's
+	# question would delete it on the approach.
+	if _is_flying() and travelled() >= vanish_distance_m:
 		_state = State.GONE
+
+
+## Whether the feet are still closed on something. True on the perch, true
+## through the stagger, and true for the crouch at the start of the launch --
+## which is the whole reason this is a method and not `_state == PERCHED`.
+func _feet_down() -> bool:
+	if _state == State.PERCHED or _state == State.WAITING:
+		return true
+	if _state == State.LAUNCHING:
+		return _elapsed < launch_seconds * clampf(crouch_fraction, 0.0, 1.0)
+	# The tail of the landing take, after the feet have touched: the bird is
+	# standing on the wire folding itself up, and if the wind moves the wire it has
+	# to go with it.
+	if _state == State.LANDING:
+		return _landed_for >= land_seconds * LAND_FLARE
+	return false
+
+
+## Off the wire and going somewhere ELSE. Deliberately not "in the air": an
+## inbound bird is in the air and is the one thing here that must not be measured
+## against `vanish_distance_m`.
+func _is_flying() -> bool:
+	return _state == State.WHEELING or _state == State.BEATING or _state == State.GLIDING
+
+
+## THE BEAT THE OWNER ASKED FOR: the body coming up off the wire before it has
+## any forward speed.
+##
+## The first `crouch_fraction` of the take is the gather and the bird does not
+## move at all -- `_feet_down()` is true and `ride()` is still holding it on a
+## wire that may be swaying. After that it rises, and only rises: no component of
+## this is horizontal.
+##
+## The climb RAMPS rather than being constant, so the bird accelerates off the
+## wire instead of stepping off it. Ramping from zero over the lift window `T` at
+## a peak rate `v` covers `v*T/2`, so `v` is twice the height over the window --
+## which is where `launch_climb_m` turns into a speed. The bird therefore hands
+## the wheel a velocity that is already climbing at `v`, and nothing has to paper
+## over a seam because there is not one.
+func _lift_off(delta: float) -> void:
+	if _feet_down():
+		return
+	var crouch := launch_seconds * clampf(crouch_fraction, 0.0, 1.0)
+	var window := maxf(launch_seconds - crouch, 0.0001)
+	var through := clampf((_elapsed - crouch) / window, 0.0, 1.0)
+	var peak := 2.0 * launch_climb_m / window
+	_velocity = Vector3.UP * (peak * through)
+	_place(_where() + _velocity * delta)
+
+
+## One frame of the mill: turn the heading about the vertical.
+##
+## The HEADING is what turns, not the velocity. `_travel` then chases the heading
+## at `acceleration`, which is what bends the path into an arc instead of a
+## polyline -- a bird whose velocity was rotated directly would trace a perfect
+## circle, which is the one thing a wheeling flock never does.
+func _mill(delta: float) -> void:
+	if _wheel_seconds <= 0.0 or absf(_wheel_rate) < 0.0001:
+		_wheeled = _wheel_seconds
+		return
+	var step := minf(delta, _wheel_seconds - _wheeled)
+	_wheeled += delta
+	_heading = _heading.rotated(Vector3.UP, _wheel_rate * step).normalized()
 
 
 ## One frame of flight: swing onto the heading, gather speed, move.
@@ -438,8 +870,8 @@ func advance(delta: float) -> void:
 ## points where it is actually going. Aiming the node at the heading and letting
 ## the velocity catch up gives a crow flying sideways for the first half second,
 ## which at eight pixels reads as a glitch rather than as a bank.
-func _travel(delta: float) -> void:
-	var wanted := _heading * cruise_speed
+func _travel(delta: float, speed_target: float) -> void:
+	var wanted := _heading * speed_target
 	_velocity = _velocity.move_toward(wanted, acceleration * delta)
 	var speed := _velocity.length()
 	if speed > 0.001:
