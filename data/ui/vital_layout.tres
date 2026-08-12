@@ -5,53 +5,42 @@
 
 [sub_resource type="Resource" id="Resource_habya"]
 script = ExtResource("1_lcuf8")
-source = 1
-stat = &"daylight"
-label = "日"
-track_weight = 2.0
-ring_degrees = 0.0
-ring_anchor = 3
-glyph = &"day_sun"
-glyph_night = &"night_moon"
+stat = &"core_temperature"
+label = "体温"
+track_weight = 1.9
+ring_degrees = 110.0
 
 [sub_resource type="Resource" id="Resource_bge13"]
 script = ExtResource("1_lcuf8")
-stat = &"core_temperature"
-label = "体温"
+stat = &"hunger"
+label = "饥饿"
 order = 1
-ring_degrees = 110.0
+glyph = &"hunger"
 
 [sub_resource type="Resource" id="Resource_8m2qk"]
 script = ExtResource("1_lcuf8")
-stat = &"hunger"
-label = "饥饿"
+stat = &"thirst"
+label = "口渴"
 order = 2
-glyph = &"hunger"
+glyph = &"thirst"
 
 [sub_resource type="Resource" id="Resource_hg1ff"]
 script = ExtResource("1_lcuf8")
-stat = &"thirst"
-label = "口渴"
-order = 3
-glyph = &"thirst"
-
-[sub_resource type="Resource" id="Resource_bhsay"]
-script = ExtResource("1_lcuf8")
 stat = &"fatigue"
 label = "疲劳"
-order = 4
+order = 3
 glyph = &"fatigue"
 
-[sub_resource type="Resource" id="Resource_8ohb5"]
+[sub_resource type="Resource" id="Resource_bhsay"]
 script = ExtResource("1_lcuf8")
 stat = &"frostbite_hands"
 second_stat = &"frostbite_feet"
 label = "冻伤"
-order = 5
+order = 4
 ring_degrees = 34.0
 ring_anchor = 1
 glyph = &"frostbite_hands"
 
 [resource]
 script = ExtResource("2_bnwsx")
-readouts = Array[ExtResource("1_lcuf8")]([SubResource("Resource_habya"), SubResource("Resource_bge13"), SubResource("Resource_8m2qk"), SubResource("Resource_hg1ff"), SubResource("Resource_bhsay"), SubResource("Resource_8ohb5")])
+readouts = Array[ExtResource("1_lcuf8")]([SubResource("Resource_habya"), SubResource("Resource_bge13"), SubResource("Resource_8m2qk"), SubResource("Resource_hg1ff"), SubResource("Resource_bhsay")])

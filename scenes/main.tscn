@@ -38,8 +38,8 @@
 [ext_resource type="Script" path="res://src/systems/weather_system.gd" id="36_weather"]
 [ext_resource type="Script" path="res://src/systems/aurora_system.gd" id="37_aurora"]
 [ext_resource type="Script" path="res://src/ui/ui_layer.gd" id="40_uilayer"]
-[ext_resource type="Script" path="res://src/ui/vitals.gd" id="41_vitals"]
 [ext_resource type="Script" path="res://src/ui/threshold_surfacing.gd" id="42_surfacing"]
+[ext_resource type="Script" path="res://src/ui/time_prompt.gd" id="41_timeprompt"]
 [ext_resource type="Script" path="res://src/entities/wildlife/pigeon_flock.gd" id="40_pigeons"]
 [ext_resource type="Script" path="res://src/audio/ambience_director.gd" id="44_ambience"]
 
@@ -259,8 +259,8 @@ script = ExtResource("44_ambience")
 [node name="UI" type="CanvasLayer" parent="."]
 script = ExtResource("40_uilayer")
 
-[node name="Vitals" type="Control" parent="UI"]
-script = ExtResource("41_vitals")
-
 [node name="ThresholdSurfacing" type="Node" parent="UI"]
 script = ExtResource("42_surfacing")
+
+[node name="TimePrompt" type="Node" parent="UI"]
+script = ExtResource("41_timeprompt")

@@ -123,6 +123,16 @@ func time_scale() -> float:
 func live_count() -> int:
 	return _live.size()
 
+## The envelope an element is being driven by, or null if this layer does not
+## hold it. Published so a caller can assert what is ACTUALLY driving the picture
+## rather than rebuilding a Breath that describes it -- which would pass whether
+## or not the element had been surfaced the way its author meant.
+func breath_for(control: Control) -> Breath:
+	for entry in _live:
+		if entry["control"] == control:
+			return entry["breath"]
+	return null
+
 ## Takes everything at once, without a drift. For a cut -- an ending, a scene
 ## change -- where the interface should simply not be there any more.
 func clear() -> void:

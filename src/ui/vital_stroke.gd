@@ -25,15 +25,12 @@ extends Control
 ## (survival_system.gd's polarity note), so one direction serves all of them and
 ## a reading never has to be inverted by whoever looks at it.
 ##
-## The one-large-four-small ring geometry came from the owner's own reference and
-## survives the visual question, which is why it lives in front of the seam.
-##
 ## ---------------------------------------------------------------------------
 ## WHY THE ELEMENT MOVES ITSELF RATHER THAN BEING MOVED
 ## ---------------------------------------------------------------------------
 ## UILayer drives the elements it holds -- opacity, scale, position -- and it
-## holds the CLUSTER, not these. So the shiver of a critical reading is applied
-## here, to this element alone, and cannot fight the cluster's own envelope.
+## holds the NOTE, not the arc inside it. So the shiver of a critical reading is
+## applied here, to this element alone, and cannot fight the note's own envelope.
 
 ## THE SEAM. See the header. 「刻度」Engraved is the look the owner settled on;
 ## src/ui/frost.gd is the withdrawn one, parked behind the same interface.
@@ -76,28 +73,6 @@ var _home := Vector2.ZERO
 var _viewport := Vector2(1920.0, 1080.0)
 var _track_px := 0.0
 
-## True for the one reading that IS the body's heat. See VitalTone.
-var _is_heat := false
-
-## How bright the ground behind this reading is, 0..1. Half until the lighting
-## says otherwise, so a readout built before the world is lit is neither black
-## nor white.
-var _world := 0.5
-
-
-## Marks this reading as the body's own warmth, which is the only thing in the
-## interface allowed to be warm (rule 3, and VitalTone.heat_colour_for()).
-## Decided from data -- VitalLayout.frost_source -- not from the stat's name.
-func set_is_heat(value: bool) -> void:
-	_is_heat = value
-	_apply_reading_colour()
-	# The needle is the hierarchy, and the hierarchy is the heat reading -- the
-	# largest gauge is the only warm one and it is warmth (rule 3 turned into the
-	# design). So the one thing that carries a needle is the one thing that is
-	# warm, and neither is decided by name.
-	if _paint != null:
-		_paint.set_needle(value)
-
 
 func build(tokens: UITokens, row: VitalReadout, seed := 0.0) -> bool:
 	_tokens = tokens
@@ -135,21 +110,19 @@ func state() -> int:
 	return _state
 
 
-## The colour this reading is being drawn in, so the icon at its centre is tinted
-## with exactly what the arc around it is using and the two cannot disagree.
+## The colour this reading is being drawn in, so the icon beside it is tinted
+## with exactly what the arc is using and the two cannot disagree.
 func reading_colour() -> Color:
-	if _is_heat:
-		return VitalTone.warm_for(_tokens, _world)
-	return VitalTone.adapt(VitalTone.colour_for(_tokens, _state, false), _world)
+	return VitalTone.colour_for(_tokens, _state)
 
 
 ## Where this stroke stands and how long it is, in SCREEN pixels. The caller owns
 ## the layout; this owns everything inside its own bounds.
 ##
-## Vertical with no bow is the permanent reading in the margin; horizontal with a
-## bow is section 5.2's 52px 短弧. One element serves both, because they are the
-## same reading drawn at two lengths and a second implementation of "a survival
-## value as ice" would be a second set of thresholds waiting to disagree.
+## Horizontal with a bow is section 5.2's 52px 短弧; the vertical form is here
+## because place_ring() and this are two lengths of one element, and a second
+## implementation of "a survival value as a stroke" would be a second set of
+## thresholds waiting to disagree.
 func place(
 	home: Vector2,
 	track_px: float,
@@ -205,11 +178,8 @@ func set_reading(fraction: float, depleted: bool, recovering: bool) -> void:
 		_paint.set_target_emphasis(
 			0.0 if _state == VitalTone.State.STEADY else 1.0)
 		_apply_reading_colour()
-		# The recovery mark is suppressed on the heat gauge, which is already
-		# warm: a warm dot on a warm arc says nothing, and the gauge brightening
-		# from ember back to life/warm is a better statement of the same fact.
 		_paint.set_mark(
-			_recovering and not _depleted and not _is_heat,
+			_recovering and not _depleted,
 			VitalTone.recovery_dot_colour(_tokens))
 	_apply_weights()
 
@@ -279,9 +249,10 @@ func finish_growth() -> void:
 	queue_redraw()
 
 
-## NO _process(). Vitals drives every stroke from its own advance(), the way
-## MontageDirector drives its shots, and a stroke that also ticked itself would
-## run at DOUBLE SPEED whenever it happened to be inside a tree -- growing in
+## NO _process(). Whoever owns a stroke drives it from their own advance() -- a
+## note from ThresholdSurfacing, the way MontageDirector drives its shots -- and
+## a stroke that also ticked itself would run at DOUBLE SPEED whenever it
+## happened to be inside a tree -- growing in
 ## half the authored time, shivering at 24 Hz, and doing all of it only in the
 ## running game, never in a test or a capture. That is the shape of defect this
 ## project keeps paying for: correct where it is measured, wrong where it is
@@ -303,7 +274,14 @@ func _draw() -> void:
 
 # --- internals ---------------------------------------------------------------
 
-## A radial gauge, top-anchored in the corner cluster.
+## A radial gauge: the same reading, wrapped.
+##
+## SECTION 6.1'S, and nothing else's now. The permanent corner cluster was the
+## only caller and it has been deleted; this is kept because 6.1 -- Tab
+## 「看一眼自己」, the game's one place numbers appear -- is 断弧 around the
+## character and this is the element it will be made of. The layout data it needs
+## is already authored and tested (ring spans, the 14 degree gaps, the opening
+## that closes at the bottom).
 ##
 ## The reserve creeps around the ring from the top rather than a wedge sweeping
 ## round it. `markers` are where the model's own thresholds sit along the gauge,
@@ -342,26 +320,13 @@ func centre() -> Vector2:
 	return size * 0.5
 
 
-## How bright the world is, 0..1. The stroke keeps a fixed contrast step from it
-## rather than being a colour that happens to suit each preset.
-func set_world_value(value: float) -> void:
-	if is_equal_approx(_world, value):
-		return
-	_world = clampf(value, 0.0, 1.0)
-	_apply_reading_colour()
-	queue_redraw()
-
-
 func _apply_reading_colour() -> void:
 	if _paint == null:
 		return
-	# The TOKEN says what the reading means; the adaptation says how light or
-	# dark it has to be to be seen against today's weather. Hue is never touched,
-	# so the warm gauges stay warm through it (rule 3) with no branch here.
-	# One input, two behaviours: the charcoal's strength and the dial's warmth
-	# both come from how bright the world is. The dial keeps its hue family and
-	# falls in value, so it goes OUT at nightfall rather than turning cool --
-	# which would be saying the fire had gone out for a different reason.
+	# The TOKEN says what the reading means, and that is all it says. The world's
+	# brightness used to come in here too, lifting the mark's lightness on a dark
+	# frame -- that existed for a readout that was on screen at every hour, and it
+	# went with it. See the note at the foot of VitalTone.
 	_paint.set_reserve_colour(reading_colour())
 
 
@@ -378,7 +343,7 @@ func _apply_weights() -> void:
 	# calls for -- a reading in trouble is heavier, which is the only emphasis
 	# channel rule 3 leaves open.
 	var trough := _tokens.design_px(Engraved.RAIL_STROKE, _viewport)
-	var heavy: float = Engraved.LARGE_STROKE if _is_heat else Engraved.SMALL_STROKE
+	var heavy: float = Engraved.SMALL_STROKE
 	var fill := _tokens.design_px(
 		heavy * VitalTone.fill_design_px(_state) / VitalTone.FILL_DESIGN_PX, _viewport)
 	# Needles scale with the interface, not with the world: the frame's scale

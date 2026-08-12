@@ -16,13 +16,13 @@ extends Control
 ## written here.
 ##
 ## ---------------------------------------------------------------------------
-## A NOTE IS MADE OF THE SAME ICE AS THE PERMANENT READING
+## THE SHORT ARC IS THE SAME ELEMENT SECTION 6.1'S RING WILL BE MADE OF
 ## ---------------------------------------------------------------------------
-## The short arc is a VitalStroke with a bow on it -- literally the same element
-## the margin stack is built from, at a different length and a different
-## orientation. That is not thrift. A crossing announces a reading the player can
-## already see, and if the announcement were made of different stuff he would
-## have to learn the correspondence instead of seeing it.
+## It is a VitalStroke with a bow on it, at a different length and a different
+## orientation from the ring Tab draws around the character. That is not thrift.
+## A player who meets a reading here and then asks for it on Tab has to recognise
+## the same thing, and two implementations of "a survival value as a stroke"
+## would be two sets of thresholds waiting to disagree.
 ##
 ## ---------------------------------------------------------------------------
 ## THE ICON AND THE WORDS ARE NOT FROSTED, AND THAT IS DELIBERATE
@@ -196,6 +196,9 @@ func _draw() -> void:
 	# urgent" is not it.
 	var ink := VitalTone.colour_for(_tokens, _state)
 	if _state == VitalTone.State.EMPTY:
+		# Section 6.1's 已归零 -- 弧变成一段 1px 的空槽，不是红色，是空的 -- is about
+		# the ARC. The icon is how the player knows WHICH reading has gone, so it
+		# keeps its ink; an empty reading nobody can identify is not information.
 		ink = _tokens.ink_primary
 	if _icon != null:
 		draw_texture_rect(

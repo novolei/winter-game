@@ -59,7 +59,7 @@ func test_every_readout_answers_a_real_stat() -> void:
 	var known := _stat_ids()
 	var orphans: Array[String] = []
 	for row in _layout.readouts:
-		if row == null or row.source != VitalReadout.Source.STAT:
+		if row == null:
 			continue
 		if not known.has(row.stat):
 			orphans.append(String(row.stat))
@@ -67,34 +67,19 @@ func test_every_readout_answers_a_real_stat() -> void:
 			orphans.append(String(row.second_stat))
 	assert_eq(orphans.size(), 0, "readouts for stats nothing defines: %s" % "; ".join(orphans))
 
-## The day dial is the one reading that is not a survival stat. GDD section 3
-## makes `NIGHTFALL = GO HOME` a literal deadline, so the largest thing on the
-## interface is the clock that deadline runs on.
-func test_the_day_dial_is_not_a_survival_stat() -> void:
+## Every row is a survival stat now. The sixth used to be the day dial, sourced
+## from WorldClock, and it went with the permanent cluster -- so a row here that
+## the model cannot answer is a defect rather than a documented exception.
+func test_every_readout_is_a_survival_stat() -> void:
 	assert_not_null(_layout)
 	if _layout == null:
 		return
-	var dial := _layout.row_for(_layout.warm_source)
-	assert_not_null(dial, "there is no day dial row")
-	if dial == null:
-		return
-	assert_eq(dial.source, VitalReadout.Source.DAYLIGHT)
-	assert_eq(dial.order, 0, "the dial leads the cluster")
-	assert_false(_stat_ids().has(dial.stat),
-		"the dial must not collide with a stat id")
-
-## It swaps its icon at the phase change, and that swap IS the nightfall signal.
-func test_the_dial_has_a_face_for_each_phase() -> void:
-	assert_not_null(_layout)
-	if _layout == null:
-		return
-	var dial := _layout.row_for(_layout.warm_source)
-	assert_not_null(dial)
-	if dial == null:
-		return
-	assert_true(dial.glyph != &"" and dial.glyph_night != &"",
-		"the dial needs a day face and a night face")
-	assert_true(dial.glyph != dial.glyph_night)
+	var known := _stat_ids()
+	for row in _layout.ordered():
+		assert_true(known.has(row.stat),
+			"%s is a readout the survival model cannot answer" % row.stat)
+	assert_true(_layout.row_for(&"daylight") == null,
+		"the day dial is still here, and nothing draws it")
 
 ## GDD section 5: 冻伤是局部的. Two sites, two files in data/stats, ONE gauge --
 ## and it is its own reading rather than a consequence of core temperature,
@@ -111,14 +96,15 @@ func test_frostbite_is_one_reading_with_two_sites() -> void:
 			assert_true(_stat_ids().has(row.second_stat))
 	assert_eq(paired, 1, "exactly one reading has a second site")
 
-## Six gauges: the dial plus GDD section 5's five stats. The count the icons are
-## generated against, so it is asserted rather than assumed.
-func test_there_are_six_gauges() -> void:
+## GDD section 5 names five, and data/stats holds six files because frostbite is
+## two limbs. Asserted rather than assumed: the count is what everything reading
+## the body iterates over.
+func test_there_are_five_readings() -> void:
 	assert_not_null(_layout)
 	if _layout == null:
 		return
-	assert_eq(_layout.ordered().size(), 6)
-	assert_eq(_layout.stat_rows().size(), 5, "GDD section 5 names five stats")
+	assert_eq(_layout.ordered().size(), 5)
+	assert_eq(_stat_ids().size(), 6, "five readings over six stat files")
 
 func test_no_two_readouts_share_a_place_in_the_order() -> void:
 	assert_not_null(_layout)
@@ -134,10 +120,9 @@ func test_no_two_readouts_share_a_place_in_the_order() -> void:
 
 # --- what the readouts say ---------------------------------------------------
 
-## The permanent stack carries no text, so the label only ever appears on
-## section 5.2's note and on section 6.1's number column -- which are the two
-## moments the player learns which stroke is which. A blank one makes the stack
-## unlearnable.
+## The label only ever appears on section 5.2's note and on section 6.1's number
+## column -- the two moments the player learns which reading is which. A blank
+## one makes the vocabulary unlearnable.
 func test_every_readout_is_named_in_the_language_of_the_document() -> void:
 	assert_not_null(_layout)
 	if _layout == null:
@@ -172,9 +157,16 @@ func test_readouts_that_share_a_label_are_told_apart_by_a_limb() -> void:
 			limbs[row.limb] = true
 
 ## GDD section 5: 体温 is 主时钟, and section 6.1 gives it 110 degrees against
-## everyone else's 58 because 层级必须在视觉上说出来. The permanent stack owes the
-## same hierarchy, so its longest track has to be the ring's widest segment.
-func _unused_main_clock_check() -> void:
+## everyone else's 58 because 层级必须在视觉上说出来. Whatever draws these side
+## by side owes the same hierarchy, so the longest track has to be the ring's
+## widest segment.
+##
+## THIS WAS DISABLED AND IS NOW LIVE. It could not hold while the day dial was in
+## the table: the dial was the longest track and core temperature the widest
+## segment, so the two hierarchies genuinely disagreed and the check was parked
+## under a name the runner does not collect. The dial is gone, so it is a test
+## again.
+func test_the_hierarchy_is_the_same_in_both_readouts() -> void:
 	assert_not_null(_layout)
 	if _layout == null:
 		return
@@ -192,8 +184,8 @@ func _unused_main_clock_check() -> void:
 	assert_eq(widest.stat, longest.stat,
 		"the stack and the ring disagree about which reading is the main clock")
 
-## Section 6.1's Tab ring is drawn around the CHARACTER and the dial has no place
-## on it, so 体温 is still its 主时钟 at 110 degrees against everyone else's 58.
+## Section 6.1's Tab ring is drawn around the CHARACTER: 体温 is its 主时钟 at
+## 110 degrees against everyone else's 58.
 func test_the_tab_ring_still_gives_the_main_clock_its_hierarchy() -> void:
 	assert_not_null(_layout)
 	if _layout == null:
@@ -246,34 +238,31 @@ func test_the_ring_gap_is_the_documented_fourteen_degrees() -> void:
 ## Icons are found by stat id, so a new stat brings its own icon and no code
 ## learns its name. A missing one leaves section 5.2's note with no icon, which
 ## is quiet and wrong.
-## Icons are found by the row's GLYPH, not by its stat, so a reading can share a
-## pictograph and the dial can carry two. A missing file leaves a gauge with no
-## centre, which is quiet and wrong.
+## Icons are found by the row's GLYPH, not by its stat, so two readings may share
+## a pictograph. A missing file leaves section 5.2's note with no icon, which is
+## quiet and wrong.
 func test_every_readout_has_an_icon_on_disk() -> void:
 	assert_not_null(_layout)
 	if _layout == null:
 		return
 	var missing: Array[String] = []
 	for row in _layout.ordered():
-		for glyph in [row.glyph, row.glyph_night]:
-			if glyph == &"":
-				continue
-			var path := "%s/%s.png" % [ICON_DIRECTORY, glyph]
-			if not ResourceLoader.exists(path):
-				missing.append(path)
+		if row.glyph == &"":
+			missing.append(String(row.stat) + " (no glyph named)")
+			continue
+		var path := "%s/%s.png" % [ICON_DIRECTORY, row.glyph]
+		if not ResourceLoader.exists(path):
+			missing.append(path)
 	assert_eq(missing.size(), 0, "readouts with no icon: %s" % "; ".join(missing))
 
-## Rule 3 gives warm one meaning and the dial is warm because sunlight IS heat.
-## Named in data so nothing in src/ui decides it from a stat's name, and asserted
-## so a second warm reading cannot appear without this failing.
-func test_exactly_one_reading_is_allowed_to_be_warm() -> void:
+## Rule 3 gives warm exactly one meaning -- 热量的存在. There was a `warm_source`
+## here naming the day dial, on the grounds that sunlight is heat; the dial went
+## with the permanent cluster and no survival reading is heat, so the only warm
+## mark left in the breath layer is section 5.2's recovery dot.
+func test_no_reading_claims_to_be_warm() -> void:
 	assert_not_null(_layout)
 	if _layout == null:
 		return
-	assert_not_null(_layout.row_for(_layout.warm_source),
-		"warm_source names a reading that does not exist")
-	var warm := 0
-	for row in _layout.ordered():
-		if row.stat == _layout.warm_source:
-			warm += 1
-	assert_eq(warm, 1)
+	for property in _layout.get_property_list():
+		assert_true(String(property["name"]) != "warm_source",
+			"warm_source is back, and there is no reading in this table that is heat")

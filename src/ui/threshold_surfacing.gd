@@ -6,18 +6,20 @@ extends Node
 ## breathing border, and then lets them die.
 ##
 ## ---------------------------------------------------------------------------
-## EMERGENCE AND PERMANENCE ARE NOT ALTERNATIVES
+## THIS IS NOW THE WHOLE OF THE IN-RUN SURVIVAL INTERFACE
 ## ---------------------------------------------------------------------------
-## The margin stack (Vitals) makes a reading AVAILABLE. This makes a crossing
-## ANNOUNCE ITSELF. A player who is not looking at the margin -- which is most of
-## the time, because the third pillar wants his eyes in the valley -- learns
-## nothing from a level that quietly moved. He learns everything from 手指不听使唤了
-## appearing beside the reading that just thickened.
+## There was briefly a permanent corner cluster beside it, under an amendment to
+## rule 4. The owner looked at the finished thing and took the amendment back, so
+## rule 4 stands as written: 没有东西是常驻的，每个元素诞生时就带着自己的死期.
 ##
-## It is also the only place the strokes are ever named. The stack carries no
-## labels; the note carries the icon and the words. So the interface teaches its
-## own vocabulary at exactly the moment the vocabulary matters, and never at any
-## other time.
+## What survives is the half that was never the problem. A crossing ANNOUNCES
+## ITSELF: a player whose eyes are in the valley -- which is the third pillar
+## working -- learns nothing from a level that quietly moved, and everything from
+## 手指不听使唤了 arriving in the margin at the moment his fingers stop working.
+##
+## Section 0's test is what the permanent version failed and this one passes:
+## 这个元素消失之后，玩家是否仍然必须看世界？ Yes. It is gone in three and a half
+## seconds and the body is still out there.
 ##
 ## ---------------------------------------------------------------------------
 ## THE UI DECIDES NOTHING
@@ -73,8 +75,12 @@ const TOP_FRACTION := 0.38
 
 var _layer = null
 var _bus = null
-var _model = null
 var _copy: ThresholdCopyMap = null
+
+## The seam. Values and threshold states come from here rather than from a poll
+## written out again in this file -- see VitalReadings, and the note in its
+## header about two readers disagreeing about what "in trouble" means.
+var _readings := VitalReadings.new()
 var _layout: VitalLayout = null
 
 ## Notes waiting out their stagger: [{note, delay}].
@@ -101,13 +107,14 @@ func build() -> void:
 		_copy = ResourceLoader.load(COPY_PATH) as ThresholdCopyMap
 	if _layout == null and ResourceLoader.exists(LAYOUT_PATH):
 		_layout = ResourceLoader.load(LAYOUT_PATH) as VitalLayout
+	_readings.set_layout(_layout)
 	if is_inside_tree():
 		# get_node_or_null, NOT Engine.get_singleton -- a project [autoload] is a
 		# node under /root and never enters the singleton registry (trap 3).
 		if _bus == null:
 			set_event_bus(get_node_or_null("/root/EventBus"))
-		if _model == null:
-			_model = get_node_or_null("/root/SurvivalSystem")
+		if _readings.model() == null:
+			set_model(get_node_or_null("/root/SurvivalSystem"))
 
 
 func set_layer(layer) -> void:
@@ -115,7 +122,13 @@ func set_layer(layer) -> void:
 
 
 func set_model(model) -> void:
-	_model = model
+	_readings.set_model(model)
+
+
+## The seam, so a test can prove this file reads through it rather than around
+## it, and so a caller can share one reader with whatever else wants the body.
+func readings() -> VitalReadings:
+	return _readings
 
 
 func set_event_bus(bus) -> void:
@@ -220,12 +233,12 @@ func _queue(stat: StringName, text: String, depleted: bool) -> void:
 		# A stat with no layout row cannot be drawn and, more to the point,
 		# cannot be identified by the player. Silence beats an unlabelled mark.
 		return
-	var fraction := 1.0
-	var recovering := false
-	if _model != null and _model.has_stat(stat):
-		fraction = _model.fraction_of(stat)
-		recovering = _model.net_rate_of(stat) > 0.0
-		depleted = depleted or _model.is_depleted(stat)
+	# read_site, not read: this note names a place on the body -- 手指不听使唤了 --
+	# and the folded reading would put the other limb's number beside those words.
+	var reading := _readings.read_site(stat)
+	var fraction := float(reading["fraction"])
+	var recovering := bool(reading["recovering"])
+	depleted = depleted or bool(reading["depleted"])
 
 	var note: ThresholdNote = ThresholdNoteScript.new()
 	note.name = "Note_%s" % stat
@@ -251,24 +264,16 @@ func _release(note) -> void:
 	var viewport := _canvas_size()
 	var note_size: Vector2 = note.layout_for(viewport)
 	var gap := 0.0 if tokens == null else tokens.design_px(STACK_GAP_DESIGN_PX, viewport)
-	# 左侧呼吸边界内, but CLEAR OF THE PERMANENT READINGS, which stand in the same
-	# margin, and the notes are indented past them wherever they are.
+	# Section 5.2, exactly as written: 左侧呼吸边界内，垂直 38% 高度.
 	#
-	# This was real. The first capture with both systems live had six lines of
-	# copy laid straight across the six readings they were naming -- worse than
-	# either alone, because the words obscured the thing they exist to identify.
-	# The gauges have since moved to the top corner and the notes hang below
-	# them, so the clash is gone; the clearance is still computed rather than
-	# assumed, because the next person to move either one will not remember.
-	var edge := 0.0
-	var below := 0.0
-	if tokens != null:
-		edge = tokens.edge_pixels(viewport)
-		var cluster := Vitals.cluster_size(tokens, _layout, viewport)
-		below = edge + cluster.y + gap
+	# It used to be pushed down past whatever the permanent cluster occupied,
+	# because the first capture with both systems live had six lines of copy laid
+	# straight across the six readings they were naming. There is nothing in this
+	# margin any more, so the note stands where the document put it.
+	var edge := 0.0 if tokens == null else tokens.edge_pixels(viewport)
 
 	_purge()
-	var y := maxf(viewport.y * TOP_FRACTION, below)
+	var y := viewport.y * TOP_FRACTION
 	for live in _live:
 		y += live.size.y + gap
 	note.position = Vector2(edge, y)

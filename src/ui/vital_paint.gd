@@ -9,17 +9,17 @@ extends RefCounted
 ## ---------------------------------------------------------------------------
 ## The visual language for the readouts was chosen, built, and then withdrawn --
 ## the owner asked for something simpler than the frost that was on the screen.
-## The behaviour was never in question: reading the five stats, the permanent
-## presentation the amended rule 4 allows, the surge when a threshold breaks,
-## the Tab readout, the top-left anchoring, the one-large-four-small geometry.
+## Then the whole permanent presentation was withdrawn in its turn. Through both,
+## the BEHAVIOUR never moved: reading the stats, the state a value puts a reading
+## in, the surge when a threshold breaks, the words that announce it.
 ##
-## So the project needs the look to be a SWAP rather than a rewrite, and this
-## class is where the swap happens.
+## That is the case for the seam, made twice. This class is where a look is
+## swapped without a rewrite.
 ##
 ##   In front of the seam -- knows values, thresholds, states, geometry:
-##     VitalTone      what a reading MEANS at a given value
-##     VitalStroke    one reading: where it stands, how big, what it says
-##     Vitals         the corner cluster, the model, the events
+##     VitalTone       what a reading MEANS at a given value
+##     VitalReadings   the model and the layout, put together per reading
+##     VitalStroke     one reading: where it stands, how big, what it says
 ##     ThresholdSurfacing / ThresholdNote   section 5.2
 ##
 ##   Behind the seam -- knows pixels, and nothing else:
@@ -35,8 +35,8 @@ extends RefCounted
 ## ---------------------------------------------------------------------------
 ## No colour DECISIONS. The caller resolves a colour from VitalTone -- which
 ## reads the palette and obeys rule 3, including the one ruling that survives any
-## visual change: only the core-temperature gauge may be warm, and it is the
-## large one. An implementation is told what colour to use and never chooses.
+## visual change: the only warm mark in the breath layer is heat entering the
+## body. An implementation is told what colour to use and never chooses.
 ##
 ## No thresholds. The caller passes marker positions it read out of the model's
 ## own data.
@@ -80,9 +80,8 @@ func set_substrate(
 	pass
 
 
-## A radial gauge. The settled geometry: one large ring and four small, icons at
-## their centres, top-left corner. That came from the owner's own reference and
-## is not part of what was withdrawn.
+## A radial gauge. Section 6.1's 断弧 -- the corner cluster that also used this
+## has been deleted.
 func set_ring(
 	_rect_px: Vector2, _centre_px: Vector2, _radius_px: float,
 	_start_rad: float, _span_rad: float

@@ -3,10 +3,14 @@ extends TestCase
 ## Section 5.2 阈值浮现: a crossing announcing itself in the left breathing
 ## border, and then dying.
 ##
-## Permanence and emergence are not alternatives. The margin stack makes a
-## reading AVAILABLE; this makes a crossing ANNOUNCE ITSELF, and it is the only
-## place the strokes are ever named -- so the interface teaches its own
-## vocabulary at the moment the vocabulary matters and at no other time.
+## This is now the whole of the in-run survival interface. There was briefly a
+## permanent corner cluster beside it, under an amendment to rule 4; the owner
+## looked at the finished thing and took the amendment back.
+##
+## What survived is the half that was never the problem. A crossing ANNOUNCES
+## ITSELF, and this is the only place a reading is ever named -- so the interface
+## teaches its own vocabulary at the moment the vocabulary matters and at no
+## other time, and then takes it away again.
 
 const SurfacingScript := preload("res://src/ui/threshold_surfacing.gd")
 const UILayerScript := preload("res://src/ui/ui_layer.gd")
@@ -154,6 +158,13 @@ func test_notes_stack_downward_rather_than_overlapping() -> void:
 		"the stack must be a column, not a staircase")
 
 ## 左侧呼吸边界内，垂直 38% 高度.
+##
+## The first note used to be pushed further down when the permanent cluster stood
+## higher than this, because the first capture with both systems live had six
+## lines of copy laid straight across the six readings they were naming. There is
+## nothing in this margin any more, and the note stands exactly where the
+## document puts it -- which, as this test always said, is where it stood anyway
+## at 1080p. The clearance was insurance for a window shape that never happened.
 func test_the_first_note_stands_where_the_document_puts_it() -> void:
 	_cross(&"core_temperature", 0.5)
 	_surfacing.advance(0.01)
@@ -163,36 +174,15 @@ func test_the_first_note_stands_where_the_document_puts_it() -> void:
 		return
 	var canvas := Vector2(1920.0, 1080.0)
 	assert_almost_eq(note.position.y, canvas.y * ThresholdSurfacing.TOP_FRACTION, 0.001)
-	assert_true(note.position.x >= _layer.tokens().edge_pixels(canvas),
-		"a note must not break the breathing border")
+	assert_almost_eq(note.position.x, _layer.tokens().edge_pixels(canvas), 0.001,
+		"a note must stand against the left breathing border")
 	assert_true(note.position.x < canvas.x * 0.25,
 		"and it is still a margin element, not a banner")
 
-## The permanent readings stand in the same margin, so the notes are indented
-## past them. Written as a test because the collision is invisible in code and
-## obvious in a frame: the first capture with both systems live had six lines of
-## copy laid straight across the six readings they were naming.
-func test_a_note_never_lies_across_the_readings_it_names() -> void:
-	_cross(&"core_temperature", 0.5)
-	_surfacing.advance(0.01)
-	var note = _first_live()
-	assert_not_null(note)
-	if note == null:
-		return
-	var canvas := Vector2(1920.0, 1080.0)
-	var tokens := _layer.tokens()
-	var layout := ResourceLoader.load(ThresholdSurfacing.LAYOUT_PATH) as VitalLayout
-	var cluster := Vitals.cluster_size(tokens, layout, canvas)
-	var cluster_bottom: float = tokens.edge_pixels(canvas) + cluster.y
-	assert_true(note.position.y >= cluster_bottom,
-		"the note stands at y %.0f px, across the gauges that end at %.0f px"
-			% [note.position.y, cluster_bottom])
-
 # --- rule 4 still binds HERE -------------------------------------------------
 
-## The rule 4 exemption covers the five survival readings and nothing else. A
-## note is not one of them: it is born with a death on it and the layer carries
-## out the sentence.
+## Rule 4, whole again: 没有东西是常驻的，每个元素诞生时就带着自己的死期. A note
+## is born with a death on it and the layer carries out the sentence.
 func test_a_note_dies_on_its_own() -> void:
 	_cross(&"core_temperature", 0.5)
 	_surfacing.advance(0.01)

@@ -1,8 +1,8 @@
 class_name VitalReadout
 extends Resource
 
-## One survival reading's place in the interface: where it stands in the
-## permanent stack, what it is called, and what it becomes on section 6.1's ring.
+## One survival reading's place in the interface: what it is called, what
+## announces it, and what it becomes on section 6.1's ring.
 ##
 ## ---------------------------------------------------------------------------
 ## WHY LAYOUT IS DATA
@@ -16,27 +16,20 @@ extends Resource
 ## So nothing in src/ui counts the stats. It reads this table.
 ##
 ## ---------------------------------------------------------------------------
-## WHY THE PERMANENT STACK AND THE Tab RING SHARE ONE ROW
+## WHY THE NOTE AND THE Tab RING SHARE ONE ROW
 ## ---------------------------------------------------------------------------
 ## They are two views of one thing, and the failure mode of two tables is that
-## somebody reorders one. A stat that is second in the margin and fourth on the
-## ring is not a design decision, it is a bug that nobody will ever file.
+## somebody reorders one. A stat that is second in section 5.2's stack and fourth
+## on the ring is not a design decision, it is a bug that nobody will ever file.
 
 ## Where section 6.1's Tab readout hangs this reading. The ring carries the
 ## whole-body stats; frostbite is 局部 (GDD section 5) and grows on the
-## silhouette's own limbs instead -- 冻伤 不在环上. DIAL is the day dial, which is
-## a corner gauge and has no place on a ring drawn around the character at all.
-enum Anchor { RING, HANDS, FEET, DIAL }
-
-## Where a reading gets its value.
+## silhouette's own limbs instead -- 冻伤 不在环上.
 ##
-## Five of the six are survival stats. The sixth is the day dial, whose value is
-## how much daylight is left and which belongs to WorldClock -- so the source has
-## to be a field rather than an assumption, or the layout table could only ever
-## describe stats.
-enum Source { STAT, DAYLIGHT }
-
-@export var source: Source = Source.STAT
+## There was a fourth value, DIAL, for a day dial that stood in the deleted
+## permanent cluster and had no place on a ring drawn around the character. The
+## clock is section 5.10's time prompt now and hangs off nothing here.
+enum Anchor { RING, HANDS, FEET }
 
 @export var stat: StringName = &""
 
@@ -59,15 +52,15 @@ enum Source { STAT, DAYLIGHT }
 ## that share a `label` and differ in this.
 @export var limb: String = ""
 
-## Position in the permanent stack and around the ring, low first.
+## Position in the stack and around the ring, low first.
 @export var order: int = 0
 
-## Length of the permanent stroke, relative to the others.
+## Length of this reading's stroke, relative to the others.
 ##
 ## Section 6.1 gives core temperature 110 degrees against everyone else's 58 and
-## says why: 它是主时钟，是唯一致死的一条，层级必须在视觉上说出来. The permanent
-## stack owes the player the same hierarchy in the same proportion, which is what
-## this number is -- not a size somebody liked.
+## says why: 它是主时钟，是唯一致死的一条，层级必须在视觉上说出来. Any readout that
+## draws these side by side owes the player the same hierarchy in the same
+## proportion, which is what this number is -- not a size somebody liked.
 @export var track_weight: float = 1.0
 
 ## Section 6.1's arc span, in degrees.
@@ -88,9 +81,3 @@ enum Source { STAT, DAYLIGHT }
 ## Naming the glyph rather than the stat is what keeps constraint 4: a new stat
 ## picks an existing pictograph in data, and no code learns another noun.
 @export var glyph: StringName = &"core_temperature"
-
-## The day dial alone: the icon it swaps to after dark. Empty for everything
-## else. The swap IS the nightfall signal -- the largest thing on the interface
-## changing what it depicts, at the moment GDD section 3 calls a literal
-## deadline.
-@export var glyph_night: StringName = &""

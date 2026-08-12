@@ -1,7 +1,8 @@
 extends TestCase
 
-## The one state table both survival readouts read from -- the permanent stack
-## in the breathing margin and section 5.2's surfacing note.
+## The one state table every survival readout reads from -- section 5.2's
+## surfacing note today, section 6.1's Tab ring next, and anything in the world
+## that reacts to the man's condition after that.
 ##
 ## The design document states it twice, in 5.2 and in 6.1, and the two
 ## statements differ: 5.2 turns to alarm at 濒危（<0.15）, 6.1 turns at <0.25 and
@@ -109,144 +110,70 @@ func test_the_breathe_matches_the_tokens_amplitude() -> void:
 	assert_almost_eq(
 		VitalTone.breathe(_tokens, _tokens.breathe_seconds * 0.5),
 		1.0 - _tokens.breathe_amplitude, 0.0001)
-func test_the_world_value_matches_what_was_measured() -> void:
-	var PresetScript := preload("res://src/definitions/lighting_preset.gd")
-	var probe: LightingPreset = PresetScript.new()
-	for row in [[1.5, 0.093], [2.9, 0.474], [3.2, 0.526]]:
-		probe.ambient_energy = row[0]
-		assert_almost_eq(VitalTone.world_value(probe), row[1], 0.03,
-			"ambient %.1f no longer predicts the ground that was measured" % row[0])
+## Section 5.2's own table, restored. It briefly returned one charcoal for
+## everything, under a ruling the owner made about the permanent corner readouts
+## -- 整个 HUD 所有的元素都使用这个单一颜色. Those readouts were deleted, so the
+## ruling has no subject left, and these tests are what stop it drifting back in.
+func test_a_steady_reading_is_the_primary_ink() -> void:
+	assert_true(VitalTone.colour_for(_tokens, VitalTone.State.STEADY) == _tokens.ink_primary)
 
-func test_no_lighting_at_all_lands_in_the_middle() -> void:
-	assert_almost_eq(VitalTone.world_value(null), 0.5, 0.0001)
+## 濒危 -- 转 `alarm/blood`. Section 6.1 turns one step earlier than 5.2 and this
+## file holds the finer table, so ALARM turns too.
+func test_a_reading_in_trouble_turns_to_alarm_blood() -> void:
+	assert_true(VitalTone.colour_for(_tokens, VitalTone.State.ALARM) == _tokens.alarm_blood)
+	assert_true(VitalTone.colour_for(_tokens, VitalTone.State.CRITICAL) == _tokens.alarm_blood)
 
+## Section 6.1: 已归零 -- 弧变成一段 1px 的空槽。**不是红色，是空的**. So the
+## floor is the trough's own hairline rather than a dimmer red.
+func test_an_empty_reading_is_the_trough_and_not_a_dimmer_red() -> void:
+	assert_true(VitalTone.colour_for(_tokens, VitalTone.State.EMPTY)
+		== VitalTone.trough_colour_for(_tokens))
+	assert_true(VitalTone.colour_for(_tokens, VitalTone.State.EMPTY) != _tokens.alarm_blood)
 
-# --- one colour, and only its opacity moves -----------------------------------
-
-## 整个 HUD 所有的元素都使用这个单一颜色. Every state, every reading, one colour --
-## the state is said in form and weight instead, which is what rule 3 left
-## available and what the emphasis design already ran on.
-func test_every_state_is_the_same_colour() -> void:
+## RULE 3. 暖色在 UI 里只有一个含义：热量的存在. A reading being urgent is not
+## heat, however urgent it is, so no state may reach for a warm token.
+func test_no_state_is_ever_warm() -> void:
 	for state in [VitalTone.State.STEADY, VitalTone.State.ALARM,
 			VitalTone.State.CRITICAL, VitalTone.State.EMPTY]:
-		assert_true(VitalTone.colour_for(_tokens, state) == VitalTone.CHARCOAL,
-			"state %d reached for a second colour" % state)
-		assert_true(VitalTone.colour_for(_tokens, state, true) == VitalTone.CHARCOAL,
-			"the heat reading reached for a second colour in state %d" % state)
+		var colour := VitalTone.colour_for(_tokens, state)
+		assert_true(colour != _tokens.life_warm and colour != _tokens.life_ember,
+			"state %d reached for the colour of heat" % state)
 
-## The interface and the occluder fade are the same substance -- the game
-## stepping politely out of the player's way -- so they are the same value, and
-## a silent edit to either shows up here.
-func test_the_interface_is_the_colour_of_the_occluder_fade() -> void:
-	var fade := ResourceLoader.load("res://data/rendering/occluder_fade.tres")
-	assert_not_null(fade)
-	if fade == null:
-		return
-	var tint: Color = fade.tint
-	assert_almost_eq(VitalTone.CHARCOAL.r, tint.r, 0.004)
-	assert_almost_eq(VitalTone.CHARCOAL.g, tint.g, 0.004)
-	assert_almost_eq(VitalTone.CHARCOAL.b, tint.b, 0.004)
+## And the one thing that IS allowed to be warm, because heat entering the body
+## is literally 热量的存在 (section 5.2).
+func test_the_recovery_mark_is_the_one_legal_warm_use() -> void:
+	assert_true(VitalTone.recovery_dot_colour(_tokens) == _tokens.life_warm)
 
-## Charcoal on deep_night is dark on dark. The opacity is the only thing that
-## moves, and it lifts as the world darkens -- the minimum required for ONE
-## colour to survive all six presets.
-func test_the_mark_strengthens_as_the_world_darkens() -> void:
-	var on_night := VitalTone.adapt(VitalTone.CHARCOAL, 0.09).a
-	var on_whiteout := VitalTone.adapt(VitalTone.CHARCOAL, 0.52).a
-	assert_true(on_night > on_whiteout,
-		"a dark frame needs a stronger mark, not a weaker one")
-	assert_true(on_whiteout >= VitalTone.OPACITY_FLOOR - 0.001)
-	assert_true(on_night <= VitalTone.OPACITY_CEILING + 0.001)
+## Magenta with no tokens, matching UITokens.colour()'s convention: a readout
+## drawn with no design tokens loaded should be impossible to miss rather than
+## plausibly grey.
+func test_a_readout_with_no_tokens_is_impossible_to_miss() -> void:
+	assert_true(VitalTone.colour_for(null, VitalTone.State.STEADY) == Color.MAGENTA)
+	assert_true(VitalTone.recovery_dot_colour(null) == Color.MAGENTA)
 
-## ONE HUE, ONE IDENTITY -- BUT NOT ONE FIXED VALUE.
+## THE NIGHT LIFT IS GONE, AND THIS IS THE GUARD ON THAT.
 ##
-## Opacity alone cannot make charcoal legible on `deep_night`: charcoal sits at
-## relative luminance 0.009 and that ground at 0.093, so the ceiling at ANY
-## opacity is 2.42:1. The lightness therefore moves too, and only the lightness:
-## hue and saturation are never touched, which is what keeps it recognisably one
-## material across the six presets.
-func test_the_hue_never_changes_however_the_value_does() -> void:
-	for ground in [0.0, 0.2, 0.475, 0.52, 0.9]:
-		var mark := VitalTone.adapt(VitalTone.CHARCOAL, ground)
-		assert_almost_eq(mark.h, VitalTone.CHARCOAL.h, 0.01,
-			"the mark changed hue at ground %.2f" % ground)
-		assert_almost_eq(mark.s, VitalTone.CHARCOAL.s, 0.03,
-			"the mark changed saturation at ground %.2f" % ground)
-
-## On the bright weather the game spends most of its time in, the mark IS
-## charcoal -- dark, and close to the value it is named for.
-func test_on_bright_weather_the_mark_is_charcoal() -> void:
-	for ground in [0.474, 0.526]:
-		var lit := VitalTone.relative_luminance(VitalTone.adapt(VitalTone.CHARCOAL, ground))
-		assert_true(lit < 0.12, "at ground %.2f the mark should still be dark" % ground)
-
-## And on a frame too dark to be darker than, it goes the other way. Same rule,
-## opposite picture -- and it is the only thing that can be legible there.
-func test_on_a_dark_frame_the_mark_lifts_instead() -> void:
-	var night := VitalTone.relative_luminance(VitalTone.adapt(VitalTone.CHARCOAL, 0.093))
-	assert_true(night > 0.093,
-		"nothing can be usefully darker than a ground at 0.093, so it has to lift")
-	var ratio := (night + 0.05) / (0.093 + 0.05)
-	assert_true(ratio > 3.0, "the lift landed at only %.2f:1" % ratio)
-
-## The director hands out a BLENDED preset while a crossfade runs, so the
-## interface has to be a continuous function of it or there is a pop.
-func test_the_opacity_moves_continuously_through_a_crossfade() -> void:
-	var PresetScript := preload("res://src/definitions/lighting_preset.gd")
-	var blend: LightingPreset = PresetScript.new()
-	var last := -1.0
-	for step in range(21):
-		blend.ambient_energy = lerpf(1.5, 3.2, float(step) / 20.0)
-		var alpha := VitalTone.adapt(VitalTone.CHARCOAL, VitalTone.world_value(blend)).a
-		if last >= 0.0:
-			assert_true(absf(alpha - last) < 0.06,
-				"the mark jumped %.3f in a twentieth of a crossfade -- that is a pop"
-					% absf(alpha - last))
-		last = alpha
-
-## The one warm element, and it DRAINS. Warm means heat and sunlight is heat, so
-## the dial is warm while the sun is up and goes out as the light does.
-func test_the_day_dial_loses_its_warmth_as_the_light_goes() -> void:
-	var palette := ResourceLoader.load("res://data/palette/color_bible.tres") as ColorBible
-	assert_not_null(palette)
-	if palette == null:
+## A world-brightness adaptation used to lift the mark's lightness on a dark
+## frame, and a warm ramp used to drain the day dial. Both existed for ONE
+## element -- the permanent corner cluster, which had to survive every hour
+## because it was always there -- and both went with it. The measurements are
+## kept in .superpowers/sdd/wave3/task-w3-hud-report.md section 3.
+##
+## Asserted rather than merely deleted, because the cost of the adaptation was
+## that on `deep_night` the mark was no longer charcoal by value; anything
+## reintroducing it should have to say so out loud.
+func test_nothing_here_adapts_a_colour_to_the_weather() -> void:
+	# Read off disk rather than asked of the class: has_method() does not see a
+	# GDScript's static functions, so a version of this written the obvious way
+	# would pass whether they were there or not.
+	var file := FileAccess.open("res://src/ui/vital_tone.gd", FileAccess.READ)
+	assert_not_null(file)
+	if file == null:
 		return
-	assert_true(palette.is_warm(Color(VitalTone.warm_for(_tokens, 1.0), 1.0)),
-		"full daylight has to read as heat present")
-	var noon := VitalTone.relative_luminance(VitalTone.warm_for(_tokens, 1.0))
-	var dusk := VitalTone.relative_luminance(VitalTone.warm_for(_tokens, 0.5))
-	var night := VitalTone.relative_luminance(VitalTone.warm_for(_tokens, 0.0))
-	assert_true(noon > dusk and dusk > night,
-		"the dial has to fall in value as the day runs down (%.3f %.3f %.3f)"
-			% [noon, dusk, night])
-
-## It goes OUT rather than turning cool. A warm gauge that went blue at dusk
-## would be saying the fire had gone out for a different reason.
-func test_the_dial_never_turns_cool_while_it_still_has_warmth() -> void:
-	for world in [1.0, 0.9, 0.8, 0.7]:
-		var colour := VitalTone.warm_for(_tokens, world)
-		assert_true(colour.r >= colour.b,
-			"at world %.2f the dial had more blue than red in it" % world)
-
-## And it ends at the interface's own colour, so night is one HUD again.
-func test_at_nightfall_the_dial_is_the_same_colour_as_everything_else() -> void:
-	var night := VitalTone.warm_for(_tokens, 0.0)
-	assert_almost_eq(night.r, VitalTone.CHARCOAL.r, 0.004)
-	assert_almost_eq(night.g, VitalTone.CHARCOAL.g, 0.004)
-	assert_almost_eq(night.b, VitalTone.CHARCOAL.b, 0.004)
-
-## Two behaviours on ONE input, not two mechanisms: the warmth and the charcoal's
-## strength both come from the same blended preset, so both inherit the
-## director's crossfade and neither can pop while the other slides.
-func test_the_warmth_moves_continuously_through_a_crossfade() -> void:
-	var PresetScript := preload("res://src/definitions/lighting_preset.gd")
-	var blend: LightingPreset = PresetScript.new()
-	var last := -1.0
-	for step in range(21):
-		blend.ambient_energy = lerpf(1.5, 3.2, float(step) / 20.0)
-		var lit := VitalTone.relative_luminance(
-			VitalTone.warm_for(_tokens, VitalTone.world_value(blend)))
-		if last >= 0.0:
-			assert_true(absf(lit - last) < 0.09,
-				"the dial jumped %.3f in a twentieth of a crossfade" % absf(lit - last))
-		last = lit
+	var source := file.get_as_text()
+	file.close()
+	for gone in ["func adapt(", "func world_value(", "func warm_for(",
+			"func heat_colour_for(", "func opacity_for(", "func with_luminance(",
+			"func relative_luminance(", "CHARCOAL :="]:
+		assert_false(source.contains(gone),
+			"`%s` is back -- every readout is transient now and none of them needs it" % gone)
