@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="AssetScale" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/asset_scale.gd" id="1_21mtb"]
+
+[resource]
+script = ExtResource("1_21mtb")
+covers = "res://assets/models/characters/bear/bear.glb"
+reason = "A grizzly measures 2.0 m to 2.8 m nose to tail. The bone hull is a little inside the mesh, so the floor allows for that."
+smallest_m = 1.8
+largest_m = 3.2

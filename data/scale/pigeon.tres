@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="AssetScale" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/asset_scale.gd" id="1_go0a7"]
+
+[resource]
+script = ExtResource("1_go0a7")
+covers = "res://assets/models/characters/pigeon/pigeon.fbx"
+reason = "A rock dove's wingspan is 0.62 m to 0.72 m and its body 0.30 m to 0.35 m. Wings-spread bind pose, so the wingspan is the longest side."
+smallest_m = 0.55
+largest_m = 0.9

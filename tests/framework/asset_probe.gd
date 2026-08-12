@@ -159,6 +159,115 @@ static func unreadable_reason(material: Material, exempt_shaders: Array[String] 
 	return "is a %s, which neither art gate knows how to read" % material.get_class()
 
 
+## How big the asset at `path` actually is, in metres:
+##
+##     {
+##       "error":  String,   -- "" when the file loaded
+##       "size":   Vector3,  -- the whole asset's bind-pose bounding box
+##       "meshes": int,      -- how many meshes it was measured from
+##     }
+##
+## `size` is ZERO with no error for a file that holds no mesh at all -- an
+## animation-only FBX -- which is a real answer and not a failure.
+##
+## ---------------------------------------------------------------------------
+## WHY THIS ONE FUNCTION INSTANTIATES, WHEN NOTHING ELSE IN THIS FILE DOES
+## ---------------------------------------------------------------------------
+## Every other walk here reads a SceneState, because a size question is the one
+## question that cannot be answered from the resources alone. A mesh's own AABB
+## is in the mesh's own space; where that mesh sits inside the asset is on the
+## NODES, and a model built out of nine parts placed by nine node transforms
+## measures nothing like the largest of its nine boxes. Reading transforms out
+## of a SceneState is possible and was written first; it silently under-measures
+## any node that instances another scene, because that node stores only its
+## overrides and its geometry lives somewhere this walk never goes.
+##
+## So this one instantiates, composes the chain by hand, and frees on every
+## path. The obligation is real (briefing section 2.2) and is why it is a single
+## function with a single exit rather than a recursion with early returns.
+##
+## The AABB is the BIND POSE for a skinned mesh -- `Mesh.get_aabb()` never
+## moves, whatever take is playing. That is exactly what a scale gate wants: the
+## question is how big the asset was authored, not how far it reaches mid-flap.
+static func bounds(path: String) -> Dictionary:
+	var result := {
+		"error": "", "size": Vector3.ZERO, "meshes": 0,
+		"mesh_size": Vector3.ZERO, "bone_size": Vector3.ZERO, "bones": 0,
+	}
+	var resource := ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
+	if resource == null:
+		result["error"] = "could not be loaded at all -- it is missing, corrupt, or has never been imported"
+		return result
+	if resource is Mesh:
+		result["size"] = (resource as Mesh).get_aabb().size
+		result["mesh_size"] = result["size"]
+		result["meshes"] = 1
+		return result
+	var packed := resource as PackedScene
+	if packed == null:
+		return result
+	var scene := packed.instantiate()
+	var box := AABB()
+	var seen := 0
+	for node in scene.find_children("*", "MeshInstance3D", true, false):
+		var instance := node as MeshInstance3D
+		if instance.mesh == null:
+			continue
+		var here := _placed(scene, instance) * instance.mesh.get_aabb()
+		box = here if seen == 0 else box.merge(here)
+		seen += 1
+	var bones := AABB()
+	var boned := 0
+	for node in scene.find_children("*", "Skeleton3D", true, false):
+		var skeleton := node as Skeleton3D
+		var into := _placed(scene, skeleton)
+		for bone in range(skeleton.get_bone_count()):
+			var at := AABB(into * skeleton.get_bone_global_rest(bone).origin, Vector3.ZERO)
+			bones = at if boned == 0 else bones.merge(at)
+			boned += 1
+	scene.free()
+	result["mesh_size"] = box.size
+	result["bone_size"] = bones.size
+	result["bones"] = boned
+	# THE LARGER OF THE TWO, and this is not belt and braces -- it is the whole
+	# reason `bones` is measured at all. MEASURED on 4.7.1: `Mesh.get_aabb()` on
+	# the four Blender-exported characters returns a box in the SKIN's bind space,
+	# which the skeleton scales back up at runtime, so the bear reads 0.029 m and
+	# the wanderer 0.016 m -- the exact reading a 15 mm wolf produces, on four
+	# assets that are correct and shipped. The crow, which came through ufbx
+	# instead, reads its true 0.96 m from the same call.
+	#
+	# So neither instrument is trustworthy alone, and the two fail in opposite
+	# directions: a mesh box can be far too SMALL for a skinned asset, and a bone
+	# hull can only be too small for an unskinned one (where it is empty). The
+	# larger is therefore the honest floor -- and a floor is what this measurement
+	# is for, because the failure this gate exists to catch is a model that is
+	# silently too small. An over-reading trips a ceiling, which is loud and
+	# reviewable; an under-reading trips nothing at all.
+	result["size"] = box.size if box.size.length() >= bones.size.length() else bones.size
+	result["meshes"] = seen
+	return result
+
+
+## The transform from `root`'s own space down to `leaf`, root's own included.
+##
+## Written first as a walk that stopped AT root and therefore left root's own
+## transform out -- which is where an importer's `nodes/root_scale` lands, so
+## the instrument would have read the same size before and after the very defect
+## it exists to catch. Same mistake, and the same fix, as
+## `tests/art/test_crow_model.gd::_within`.
+static func _placed(root: Node, leaf: Node) -> Transform3D:
+	var placed := Transform3D()
+	var walk: Node = leaf
+	while walk != null:
+		if walk is Node3D:
+			placed = (walk as Node3D).transform * placed
+		if walk == root:
+			break
+		walk = walk.get_parent()
+	return placed
+
+
 static func _descend(label: String, value: Variant, result: Dictionary, seen: Dictionary, depth: int) -> void:
 	if depth > MAX_DEPTH:
 		return

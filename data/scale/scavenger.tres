@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="AssetScale" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/asset_scale.gd" id="1_63s5h"]
+
+[resource]
+script = ExtResource("1_63s5h")
+covers = "res://assets/models/characters/scavenger/scavenger.glb"
+reason = "A standing man whose bind pose holds his arms out, so the longest side is his reach rather than his height."
+smallest_m = 1.3
+largest_m = 2.6

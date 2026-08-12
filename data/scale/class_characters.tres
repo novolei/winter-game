@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="AssetScale" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/asset_scale.gd" id="1_s0g71"]
+
+[resource]
+script = ExtResource("1_s0g71")
+covers = "res://assets/models/characters"
+reason = "Anything rigged and alive, from a squirrel at 0.16 m to a bear at 2.6 m. The floor is well under the smallest animal in the package and still a hundred times the 15 mm a wrongly-scaled import arrives at."
+smallest_m = 0.08
+largest_m = 4.0

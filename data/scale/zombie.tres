@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="AssetScale" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/asset_scale.gd" id="1_xar0a"]
+
+[resource]
+script = ExtResource("1_xar0a")
+covers = "res://assets/models/characters/zombie/zombie.glb"
+reason = "As the scavenger: an arms-out bind pose, so the span is the longest side."
+smallest_m = 1.3
+largest_m = 2.6

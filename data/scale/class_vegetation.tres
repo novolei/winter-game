@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="AssetScale" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/asset_scale.gd" id="1_yteyk"]
+
+[resource]
+script = ExtResource("1_yteyk")
+covers = "res://assets/models/vegetation"
+reason = "A shrub to a mature bare tree. The five shipped trees run 3.7 m to 10.6 m."
+smallest_m = 0.3
+largest_m = 25.0

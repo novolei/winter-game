@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="AssetScale" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/asset_scale.gd" id="1_h7uvb"]
+
+[resource]
+script = ExtResource("1_h7uvb")
+covers = "res://assets/models/characters/crow/crow.fbx"
+reason = "A carrion crow's wingspan is 0.93 m to 1.04 m; a raven's reaches 1.3 m. The bind pose is wings-spread, so the wingspan is the longest side."
+smallest_m = 0.7
+largest_m = 1.3

@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="AssetScale" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/asset_scale.gd" id="1_506bh"]
+
+[resource]
+script = ExtResource("1_506bh")
+covers = "res://assets/models/props"
+reason = "A hand tool to a power pole. The shipped set runs from a 1 m unit of wire to a 9 m pole."
+smallest_m = 0.05
+largest_m = 12.0

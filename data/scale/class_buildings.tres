@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="AssetScale" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/asset_scale.gd" id="1_batel"]
+
+[resource]
+script = ExtResource("1_batel")
+covers = "res://assets/models/buildings"
+reason = "A building runs from a privy to a barn. The valley's own are a well house at 2.9 m and the farmhouse at 10.5 m."
+smallest_m = 1.5
+largest_m = 40.0

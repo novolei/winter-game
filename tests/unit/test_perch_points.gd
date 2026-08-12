@@ -232,3 +232,167 @@ func test_placement_composes_the_parent_chain_outside_a_tree() -> void:
 
 func test_gathering_without_a_tree_is_empty_rather_than_an_error() -> void:
 	assert_eq(PerchScript.gather(null).size(), 0, "gathering from nothing must be empty, not a crash")
+
+
+# --- an eave, or a limb -------------------------------------------------------
+#
+# RUN is the third kind, and it exists because a SPAN cannot describe an eave.
+# A span reads its length out of its own basis, because `Farmstead._string_wires()`
+# writes `scale.z = length` onto a one-metre wire and that number does not exist
+# until two other nodes have settled onto procedural snow. An eave is the
+# opposite: a fixed edge of a model, both ends known in the model's own metres,
+# nothing scaling it. Declaring one as a span would mean stretching an invisible
+# node to the length of a roof and keeping the two in step by hand.
+
+
+func test_a_run_divides_the_line_between_its_two_ends() -> void:
+	_perches.kind = PerchPoints.Kind.RUN
+	_perches.run_from = Vector3(-3.8, 3.03, 3.85)
+	_perches.run_to = Vector3(0.2, 3.03, 3.85)
+	_perches.spacing_m = 1.2
+	_perches.from_fraction = 0.0
+	_perches.to_fraction = 1.0
+	var found := _perches.perches()
+	assert_eq(found.size(), 4, "a 4 m eave at 1.2 m spacing offered %d places" % found.size())
+	# Distances rather than equality: the fractions are floats and the ends come
+	# out of a lerp, so an exact compare fails on a value that prints identically.
+	assert_almost_eq(
+		(found[0]["at"] as Vector3).distance_to(Vector3(-3.8, 3.03, 3.85)), 0.0, 0.0001,
+		"the first perch is at %s rather than the run's start" % str(found[0]["at"])
+	)
+	assert_almost_eq(
+		(found[found.size() - 1]["at"] as Vector3).distance_to(Vector3(0.2, 3.03, 3.85)), 0.0, 0.0001,
+		"the last perch is at %s rather than the run's end" % str(found[found.size() - 1]["at"])
+	)
+
+
+## The fractions keep birds off the corners of a roof, the way they keep them off
+## the insulators on a wire.
+func test_the_fractions_keep_the_birds_off_the_ends_of_a_run() -> void:
+	_perches.kind = PerchPoints.Kind.RUN
+	_perches.run_from = Vector3(0.0, 3.0, 0.0)
+	_perches.run_to = Vector3(10.0, 3.0, 0.0)
+	_perches.spacing_m = 2.0
+	_perches.from_fraction = 0.15
+	_perches.to_fraction = 0.85
+	for perch in _perches.perches():
+		var at: Vector3 = perch["at"]
+		assert_true(at.x >= 1.5 - 0.0001 and at.x <= 8.5 + 0.0001, "a perch landed at x = %.3f, outside the fractions" % at.x)
+
+
+## The whole point of declaring it on the prop. The farmhouse in
+## `scenes/main.tscn` stands at (13, 0, -12); an eave written in world metres
+## would be a row of birds beside the house the day anybody nudges it.
+func test_a_run_moves_and_turns_with_the_prop_that_declares_it() -> void:
+	_perches.kind = PerchPoints.Kind.RUN
+	_perches.run_from = Vector3(0.0, 3.0, 1.0)
+	_perches.run_to = Vector3(4.0, 3.0, 1.0)
+	_perches.spacing_m = 4.0
+	# The fractions default to 0.12..0.88 -- a bird does not sit on the corner of
+	# a roof any more than it sits on an insulator -- and this test is about the
+	# transform rather than about them, so it asks for the whole run.
+	_perches.from_fraction = 0.0
+	_perches.to_fraction = 1.0
+	_prop.position = Vector3(13.0, 0.0, -12.0)
+	_prop.rotate_y(PI * 0.5)
+	var found := _perches.perches()
+	assert_eq(found.size(), 2, "expected the two ends, got %d" % found.size())
+	var first: Vector3 = found[0]["at"]
+	# A quarter turn about +Y sends local +x to -z and local +z to +x.
+	assert_almost_eq(first.x, 14.0, 0.0001, "the run's start did not turn with the prop")
+	assert_almost_eq(first.y, 3.0, 0.0001, "a yaw moved the run vertically")
+	assert_almost_eq(first.z, -12.0, 0.0001, "the run's start did not turn with the prop")
+
+
+## Spacing is in WORLD metres and the perch is in the prop's own. Those are the
+## same number only while nothing is scaled, and a tree that is placed at 1.4x
+## should carry more birds along the same declared limb rather than the same
+## number spread further apart.
+func test_a_scaled_prop_carries_more_birds_on_the_same_declared_run() -> void:
+	_perches.kind = PerchPoints.Kind.RUN
+	_perches.run_from = Vector3(0.0, 4.0, 0.0)
+	_perches.run_to = Vector3(2.0, 4.0, 0.0)
+	_perches.spacing_m = 1.0
+	_perches.from_fraction = 0.0
+	_perches.to_fraction = 1.0
+	var plain := _perches.perches().size()
+	_prop.scale = Vector3(3.0, 1.0, 1.0)
+	var stretched := _perches.perches().size()
+	assert_eq(plain, 3, "a 2 m run at 1 m spacing offered %d places" % plain)
+	assert_true(stretched > plain, "a 6 m run offered %d places against the 2 m run's %d" % [stretched, plain])
+
+
+## A bird on an eave faces along it, which is what a row of pigeons on a roof
+## edge does and is the only heading that does not look arbitrary.
+func test_a_bird_on_a_run_faces_along_it() -> void:
+	_perches.kind = PerchPoints.Kind.RUN
+	_perches.run_from = Vector3(0.0, 3.0, 0.0)
+	_perches.run_to = Vector3(0.0, 3.0, 5.0)
+	_perches.spacing_m = 5.0
+	var facing: Vector3 = _perches.perches()[0]["facing"]
+	assert_almost_eq(facing.z, 1.0, 0.0001, "a bird on a run along +z faces %s" % str(facing))
+	assert_almost_eq(facing.y, 0.0, 0.0001, "the heading kept a climb in it")
+
+
+## A sloping limb still stands its birds upright, the same way a sloping wire
+## does.
+func test_a_bird_on_a_sloping_run_gets_a_flat_heading() -> void:
+	_perches.kind = PerchPoints.Kind.RUN
+	_perches.run_from = Vector3(0.0, 3.0, 0.0)
+	_perches.run_to = Vector3(0.0, 6.0, 4.0)
+	_perches.spacing_m = 5.0
+	var facing: Vector3 = _perches.perches()[0]["facing"]
+	assert_almost_eq(facing.y, 0.0, 0.0001, "a bird on a sloping limb points its beak up the hill")
+
+
+## `facing` overrides the run's own direction, for a ledge birds sit on looking
+## outward rather than a line they sit along.
+func test_a_declared_facing_beats_the_runs_own_direction() -> void:
+	_perches.kind = PerchPoints.Kind.RUN
+	_perches.run_from = Vector3(0.0, 3.0, 0.0)
+	_perches.run_to = Vector3(4.0, 3.0, 0.0)
+	_perches.spacing_m = 4.0
+	_perches.facing = Vector3(0.0, 0.0, -1.0)
+	var facing: Vector3 = _perches.perches()[0]["facing"]
+	assert_almost_eq(facing.z, -1.0, 0.0001, "the declared facing was ignored: %s" % str(facing))
+
+
+## A declaration nobody filled in must offer nothing rather than a pile of birds
+## at the prop's origin.
+func test_a_run_with_no_length_offers_nothing() -> void:
+	_perches.kind = PerchPoints.Kind.RUN
+	_perches.spacing_m = 1.0
+	assert_eq(_perches.perches().size(), 0, "an unset run offered somewhere to sit")
+
+
+## The ceiling applies to a run as it does to a span: a limb twenty metres up is
+## a bird nobody will ever see, and it would still take one of the flock's places
+## away from a perch that is in shot.
+func test_the_ceiling_drops_a_run_that_climbs_out_of_shot() -> void:
+	_perches.kind = PerchPoints.Kind.RUN
+	_perches.run_from = Vector3(0.0, 4.0, 0.0)
+	_perches.run_to = Vector3(0.0, 20.0, 6.0)
+	_perches.spacing_m = 4.0
+	_perches.ceiling_m = 12.0
+	for perch in _perches.perches():
+		assert_true((perch["at"] as Vector3).y <= 12.0, "a perch survived at %.2f m" % (perch["at"] as Vector3).y)
+
+
+## And the grip: the stored `local` resolves back to the same world point through
+## the declaration on any later frame, which is what lets a bird ride a prop the
+## wind is moving.
+func test_every_run_perch_resolves_back_to_itself() -> void:
+	_perches.kind = PerchPoints.Kind.RUN
+	_perches.run_from = Vector3(-1.0, 3.0, 2.0)
+	_perches.run_to = Vector3(3.0, 3.2, 2.0)
+	_perches.spacing_m = 1.0
+	_prop.position = Vector3(13.0, 0.0, -12.0)
+	_prop.rotate_y(0.41)
+	var found := _perches.perches()
+	assert_true(found.size() > 1, "the run offered %d places, so this checks almost nothing" % found.size())
+	for perch in found:
+		var resolved: Vector3 = _perches.placement() * (perch["local"] as Vector3)
+		assert_almost_eq(
+			resolved.distance_to(perch["at"] as Vector3), 0.0, 0.0001,
+			"the stored place resolves to %s rather than %s" % [str(resolved), str(perch["at"])]
+		)

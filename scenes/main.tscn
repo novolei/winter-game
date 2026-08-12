@@ -37,6 +37,7 @@
 [ext_resource type="PackedScene" path="res://scenes/effects/chimney_smoke.tscn" id="35_smoke"]
 [ext_resource type="Script" path="res://src/systems/weather_system.gd" id="36_weather"]
 [ext_resource type="Script" path="res://src/systems/aurora_system.gd" id="37_aurora"]
+[ext_resource type="Script" path="res://src/entities/wildlife/pigeon_flock.gd" id="40_pigeons"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_room_main"]
 size = Vector3(6.88, 3.2, 5.68)
@@ -123,6 +124,15 @@ light_cull_mask = 6
 
 [node name="ChimneySmoke" parent="Farmhouse" instance=ExtResource("35_smoke")]
 
+[node name="Perches" type="Node3D" parent="Farmhouse"]
+script = ExtResource("33_perches")
+kind = 2
+run_from = Vector3(-3.8, 3.03, 3.85)
+run_to = Vector3(0.2, 3.03, 3.85)
+spacing_m = 1.1
+from_fraction = 0.06
+to_fraction = 0.94
+
 [node name="Farmstead" type="Node3D" parent="." unique_id=1902244600]
 script = ExtResource("10_farmstead")
 
@@ -148,8 +158,16 @@ transform = Transform3D(0.9659258, 0, 0.25881904, 0, 1, 0, -0.25881904, 0, 0.965
 [node name="TireSwing" parent="Farmstead/TreeA" unique_id=1902244606 instance=ExtResource("16_tire_swing")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.07, 3.56, -0.12)
 
+[node name="Perches" type="Node3D" parent="Farmstead/TreeA"]
+script = ExtResource("33_perches")
+points = Array[Vector3]([Vector3(2.116, 8.264, 0.733), Vector3(-3.016, 7.842, 0.814), Vector3(-0.162, 8.283, -1.102)])
+
 [node name="TreeB" parent="Farmstead" unique_id=1902244607 instance=ExtResource("18_tree_b")]
 transform = Transform3D(0.76604444, 0, -0.64278764, 0, 1, 0, 0.64278764, 0, 0.76604444, -12.49, 0, -15.475)
+
+[node name="Perches" type="Node3D" parent="Farmstead/TreeB"]
+script = ExtResource("33_perches")
+points = Array[Vector3]([Vector3(1.581, 6.108, -0.423), Vector3(-0.954, 6.101, -1.262), Vector3(1.159, 6.026, 1.284)])
 
 [node name="TreeC" parent="Farmstead" unique_id=1902244608 instance=ExtResource("19_tree_c")]
 transform = Transform3D(0.42261827, 0, 0.9063078, 0, 1, 0, -0.9063078, 0, 0.42261827, 33.27, 0, 11.465)
@@ -214,6 +232,9 @@ script = ExtResource("34_crows")
 
 [node name="Calls" type="Node3D" parent="Crows"]
 script = ExtResource("38_crow_calls")
+
+[node name="Pigeons" type="Node3D" parent="."]
+script = ExtResource("40_pigeons")
 
 [node name="StartleShot" type="Node" parent="."]
 script = ExtResource("39_startle")

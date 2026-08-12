@@ -72,6 +72,22 @@ const GROUP := &"perches"
 enum Kind {
 	POINTS,
 	SPAN,
+	## A straight run declared in the prop's own metres -- an EAVE, or a limb.
+	##
+	## SPAN cannot do this and the difference is not cosmetic. A span reads its
+	## length out of its own basis, because `Farmstead._string_wires()` writes
+	## `scale.z = length` onto a one-metre wire and the number does not exist
+	## until two other nodes have settled onto procedural snow. An eave is the
+	## opposite kind of thing: it is a fixed edge of a model, its two ends are
+	## known in the model's own space, and nothing scales it. Declaring one as a
+	## SPAN would mean stretching an invisible node to the length of a roof and
+	## keeping the two in step by hand.
+	##
+	## So RUN takes the two ends and divides the line between them, using the
+	## same `spacing_m`, `from_fraction`, `to_fraction` and `ceiling_m` a span
+	## does -- spaced in WORLD metres, so a prop that is scaled in the scene gets
+	## the right number of birds rather than the right number of model units.
+	RUN,
 }
 
 @export var kind: Kind = Kind.POINTS
@@ -84,8 +100,18 @@ enum Kind {
 ## this project is built to.
 @export var facing := Vector3.ZERO
 
-## SPAN only. How far apart along the span, in world metres, and how much of each
-## end to leave alone -- a bird does not sit on the insulator.
+## RUN only. The two ends of the run, in the prop's own metres.
+##
+## Both default to zero, which is a run of no length and offers nothing -- the
+## same answer a zero-length span gives, and for the same reason: a declaration
+## somebody forgot to fill in must produce no perches rather than a pile of them
+## at the prop's origin.
+@export var run_from := Vector3.ZERO
+@export var run_to := Vector3.ZERO
+
+## SPAN and RUN. How far apart along the line, in world metres, and how much of
+## each end to leave alone -- a bird does not sit on the insulator, and it does
+## not sit on the very corner of a roof either.
 @export var spacing_m := 2.4
 @export var from_fraction := 0.12
 @export var to_fraction := 0.88
@@ -120,6 +146,8 @@ func perches() -> Array:
 	var placed := placement()
 	if kind == Kind.SPAN:
 		return _span_perches(placed)
+	if kind == Kind.RUN:
+		return _run_perches(placed)
 	var found: Array = []
 	var aim := facing if facing.length_squared() > 0.0001 else Vector3(0.0, 0.0, -1.0)
 	for point in points:
@@ -175,7 +203,7 @@ func _span_perches(placed: Transform3D) -> Array:
 	# At least one, and then as many more as fit -- a short drop from the eave to
 	# the pole still gets somewhere to sit rather than being skipped for being
 	# under one spacing long.
-	var count := maxi(1, int(floorf(usable / spacing_m)) + 1)
+	var count := _how_many(usable)
 	var found: Array = []
 	for index in range(count):
 		var travel := first if count == 1 \
@@ -196,6 +224,63 @@ func _span_perches(placed: Transform3D) -> Array:
 			"local_facing": Vector3(0.0, 0.0, -1.0),
 		})
 	return found
+
+
+## An eave, or a limb: the line between two points of the prop, cut into places
+## to sit.
+##
+## THE SPACING IS IN WORLD METRES AND THE PERCH IS IN THE PROP'S. Those are two
+## different quantities the moment anything is scaled -- the trees in
+## `scenes/main.tscn` are placed at a scale of one today and nothing says they
+## always will be -- so the count comes off the world length and the `local` that
+## goes back to the bird is a fraction of the declared run. `placed * local`
+## therefore returns `at` exactly on every frame, which is what lets a bird ride
+## a prop that moves, and it is asserted rather than assumed.
+##
+## The heading is along the run by default, which is what a row of birds on an
+## eave does. Setting `facing` overrides it, for the case where the run is a
+## ledge birds sit on facing outward rather than a line they sit along.
+func _run_perches(placed: Transform3D) -> Array:
+	var span := run_to - run_from
+	var world := placed.basis * span
+	var length := world.length()
+	if length < 0.001 or spacing_m <= 0.0:
+		return []
+	var direction := world / length
+	var lowest := minf(from_fraction, to_fraction)
+	var highest := maxf(from_fraction, to_fraction)
+	var usable := (highest - lowest) * length
+	if usable <= 0.0:
+		return []
+	var count := _how_many(usable)
+	var aimed := facing.length_squared() > 0.0001
+	var found: Array = []
+	for index in range(count):
+		var fraction := lowest if count == 1 \
+			else lowest + (highest - lowest) * float(index) / float(count - 1)
+		var local := run_from + span * fraction
+		var at := placed * local
+		if at.y > ceiling_m:
+			continue
+		var local_facing := facing if aimed else span.normalized()
+		found.append({
+			"at": at,
+			"facing": _flatten(placed.basis * local_facing if aimed else direction),
+			"anchor": self,
+			"local": local,
+			"local_facing": local_facing,
+		})
+	return found
+
+
+## How many places fit into `usable` world metres at `spacing_m`.
+##
+## At least one, and then as many more as fit. A four-metre eave and a
+## thirty-metre wire come out of the same two exported numbers, and a run shorter
+## than one spacing still gets somewhere to sit rather than being skipped for
+## being small.
+func _how_many(usable: float) -> int:
+	return maxi(1, int(floorf(usable / spacing_m)) + 1)
 
 
 ## A heading with the climb taken out of it. A bird on a sloping wire stands

@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="AssetScale" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/asset_scale.gd" id="1_bc87d"]
+
+[resource]
+script = ExtResource("1_bc87d")
+covers = "res://assets/models/characters/winter_wanderer.glb"
+reason = "A standing man. The longest side is his height."
+smallest_m = 1.4
+largest_m = 2.1
