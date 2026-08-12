@@ -63,9 +63,20 @@ const BLUR_TO := 3.0
 ## Section 2.4's drift, in design pixels.
 const DRIFT_RISE := -8.0
 
-## How long after the previous glyph the next one is written. Fast enough that a
-## line does not feel typed out, slow enough to read as a hand moving.
-const GLYPH_STAGGER := 0.055
+## How long after the previous glyph the next one is written.
+##
+## SET AGAINST THE BLOOM, not chosen for feel. At 0.055 -- the first value here --
+## a four character line finished writing in 0.485 s, because the stagger was a
+## sixth of the 0.32 s heavy bloom and every glyph overlapped almost completely
+## with its neighbours. That does not read as writing, it reads as a fade-in with
+## extra steps, and the difference only shows up on a short line where there are
+## not enough characters for the lag to accumulate.
+##
+## At 0.14 a glyph is roughly half written when the next one starts, so the line
+## still flows rather than ticking out one character at a time, and a twelve
+## character line takes about 1.7 s to write -- a deliberate hand, and a span
+## that fits inside a montage shot alongside its hold and its exit.
+const GLYPH_STAGGER := 0.14
 
 ## How far a scattered glyph may deviate from the wind, in radians. Small: the
 ## wind has a direction and the letters obey it. Wider than this and the line
@@ -166,8 +177,15 @@ func opacity_at(t: float) -> float:
 		_PHASE_BLOOM:
 			# Opacity finishes with the overshoot, not with the settle: the
 			# element is fully present while it is still coming to rest.
+			#
+			# CLAMPED, and that is not defensive. BLOOM_HEAVY_EASE's first
+			# control point is at y = 1.2, so the curve deliberately overshoots
+			# -- which is the juice on SCALE and meaningless on opacity. Measured
+			# on the heavy bloom, this returned 1.0044. An alpha above 1 is
+			# nonsense a Color will happily carry, and it silently defeats any
+			# comparison of the form "is this fully faded in yet".
 			var u: float = clampf(phase[1] / BLOOM_PEAK_FRACTION, 0.0, 1.0)
-			return ease_with(bloom_ease, u)
+			return clampf(ease_with(bloom_ease, u), 0.0, 1.0)
 		_PHASE_HOLD: return 1.0
 		_PHASE_EXIT: return 1.0 - ease_with(DRIFT_EASE, phase[1])
 	return 0.0
