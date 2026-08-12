@@ -114,7 +114,23 @@ that agent's report worth keeping are copied here.
 | W2-2 | **`MINIMUM_TESTS` is a floor, not a census.** Set to 533 = 467 + that agent's own 66, deliberately *not* to the observed total, because three other agents were adding and removing test files concurrently and a floor including their in-flight work would false-alarm on them. Whoever closes Wave 2 should re-baseline it once against a quiet tree. |
 | W2-3 | `tests/art/test_warmth_budget.gd` does not exist yet, and W3-1 above schedules it. When it is written it **must** stat warm pixels per region, not per frame — see the Director's ruling appended to Art Bible rule 12 (`ff48b9a`). A whole-frame ratio would fail every interior shot by design. |
 
-**Acted on, not deferred:** the same report flagged that the farmhouse floor is
-buried under up to 0.59 m of snow and the player floats 0.39 m above it. That is
-task W2-J — the snow height field does not know buildings exist. Fix is in
-flight; the register entry is here only so the trail is unbroken if it isn't.
+**Acted on, not deferred** — and the diagnosis was wrong, which is the part worth
+keeping. The reveal agent reported the farmhouse floor buried under up to 0.59 m
+of snow with the player floating 0.39 m above it, and the Director dispatched
+W2-J as "the snow height field does not know buildings exist."
+
+The implementer measured the site before writing anything and found **the snow in
+the main room is 7 mm deep**. What buries the floor is the *bare ground*: the
+house stands on a wind-scoured crest that runs 0.6 m over the floorboards.
+Carving snow alone would have changed nothing in the room that needed changing.
+
+So a building now levels the ground to its own floor **and** keeps the snow off
+it — both writes into rasters the field already had, no shader opened. Snow over
+the floorboards went from 240 of 252 sample points to 6, all of them the doorway
+drift. Fixed in `29bfada`.
+
+**Two lessons, both already paid for twice:** a symptom reported in metres is not
+a diagnosis, and the agent standing in the scene with a probe outranks the
+director reasoning from a screenshot. The same correction happened earlier with
+the "character lying down" report, which measurement showed was flat shading plus
+a 45-degree camera, not a broken take.
