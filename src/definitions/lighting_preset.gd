@@ -150,6 +150,19 @@ extends Resource
 @export var sky_curve := 0.15
 @export var sky_energy := 1.0
 
+## HOW MANY STARS, 0 none .. 1 a clear winter night.
+##
+## The sky is drawn by assets/shaders/aurora_sky.gdshader rather than by
+## ProceduralSkyMaterial, and this is the one thing the custom shader adds to the
+## gradient above that a preset has to have an opinion about. It crossfades like
+## everything else, so dusk brings them out rather than switching them on.
+##
+## It earns its place for the same reason the gradient does -- nothing is above
+## the horizon at any framing the game uses today -- plus one of its own: the
+## aurora is drawn ADDITIVELY over this, so the stars showing THROUGH the curtain
+## are what prove it is semi-transparent rather than a sheet of green.
+@export var star_amount := 0.0
+
 @export_group("Volumetric Air")
 ## Style document section 39, Forward+ only -- and we are Forward+. The goal is a
 ## little cold moisture in the air, not a player who cannot see: the document is

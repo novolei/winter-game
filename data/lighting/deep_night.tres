@@ -18,6 +18,7 @@ fog_sky_affect = 0.35
 glow_strength = 0.65
 sky_zenith_color = Color(0.10980392, 0.16470589, 0.27058825, 1)
 sky_horizon_color = Color(0.2, 0.28627452, 0.43137255, 1)
+star_amount = 1.0
 volumetric_fog_density = 0.0018
 volumetric_fog_albedo = Color(0.7364706, 0.81411767, 0.9082353, 1)
 tonemap_exposure = 0.42

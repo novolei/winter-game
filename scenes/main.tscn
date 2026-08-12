@@ -31,9 +31,12 @@
 [ext_resource type="PackedScene" path="res://scenes/effects/snow_load.tscn" id="30_snow_load"]
 [ext_resource type="Script" path="res://src/entities/wildlife/perch_points.gd" id="33_perches"]
 [ext_resource type="Script" path="res://src/entities/wildlife/crow_flock.gd" id="34_crows"]
+[ext_resource type="Script" path="res://src/entities/wildlife/crow_calls.gd" id="38_crow_calls"]
+[ext_resource type="Script" path="res://src/rendering/startle_shot.gd" id="39_startle"]
 [ext_resource type="PackedScene" path="res://scenes/effects/wind.tscn" id="31_wind"]
 [ext_resource type="PackedScene" path="res://scenes/effects/chimney_smoke.tscn" id="35_smoke"]
 [ext_resource type="Script" path="res://src/systems/weather_system.gd" id="36_weather"]
+[ext_resource type="Script" path="res://src/systems/aurora_system.gd" id="37_aurora"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_room_main"]
 size = Vector3(6.88, 3.2, 5.68)
@@ -209,9 +212,18 @@ to_fraction = 0.32
 [node name="Crows" type="Node3D" parent="."]
 script = ExtResource("34_crows")
 
+[node name="Calls" type="Node3D" parent="Crows"]
+script = ExtResource("38_crow_calls")
+
+[node name="StartleShot" type="Node" parent="."]
+script = ExtResource("39_startle")
+
 [node name="Snowfall" parent="." unique_id=130002654 instance=ExtResource("27_snowfall")]
 
 [node name="Wind" parent="." unique_id=130002655 instance=ExtResource("31_wind")]
 
 [node name="Weather" type="Node" parent="."]
 script = ExtResource("36_weather")
+
+[node name="Aurora" type="Node" parent="."]
+script = ExtResource("37_aurora")

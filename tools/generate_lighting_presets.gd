@@ -123,6 +123,14 @@ func _initialize() -> void:
 	# fog          [colour, OPACITY] -- see below; no longer a density
 	# window       [begin m, end m] -- the depth window, measured from the camera
 	# sky          [zenith, horizon] -- a vertical gradient, per preset
+	# stars        0 none .. 1 a clear winter night. The sky is drawn by
+	#              assets/shaders/aurora_sky.gdshader now rather than by a
+	#              ProceduralSkyMaterial, and this is the one field the swap adds.
+	#              Only the two dark looks carry any: a dusk gets the first few,
+	#              DEEP NIGHT gets all of them, and the storm gets none because a
+	#              whiteout has no sky. Like the gradient above it is not in shot
+	#              at any framing the game uses today -- it is what makes the
+	#              aurora provably semi-transparent when something does look up.
 	# vapour       [enabled, density] -- style document section 39's volumetric air.
 	#              SHIPPED OFF ON ALL SIX, and the densities below are what to
 	#              turn back on. Measured rather than assumed: it costs almost
@@ -167,6 +175,7 @@ func _initialize() -> void:
 			"fog": [bible.snow_tones[0], 0.0], "fog_on": false,
 			"window": [74.0, 118.0], "sky_affect": 0.0,
 			"sky": [bible.snow_tones[4], _pale(bible, 0.65)],
+				"stars": 0.0,
 			"vapour": [false, 0.0],
 			"glow": [false, 0.0],
 			"bands": [0.12, 0.07],
@@ -190,6 +199,7 @@ func _initialize() -> void:
 			"fog": [bible.snow_tones[0], 0.55], "fog_on": true,
 			"window": [74.0, 118.0], "sky_affect": 0.0,
 			"sky": [bible.snow_tones[4], _pale(bible, 0.62)],
+				"stars": 0.0,
 			"vapour": [false, 0.0012],
 			"glow": [true, 0.12],
 			"bands": [0.12, 0.07],
@@ -217,6 +227,7 @@ func _initialize() -> void:
 			# The one warm sky in the run, and the only one whose horizon is not
 			# blue. Pale snow carried most of the way to the amber.
 			"sky": [bible.snow_tones[3], _pale(bible, 0.55).lerp(bible.warm_tones[2], 0.45)],
+				"stars": 0.0,
 			"vapour": [false, 0.0012],
 			"glow": [true, 0.50],
 			# A softer, wider band: low warm light rakes rather than cuts.
@@ -247,6 +258,7 @@ func _initialize() -> void:
 			"fog": [bible.structure_tones[0], 0.62], "fog_on": true,
 			"window": [70.0, 112.0], "sky_affect": 0.25,
 			"sky": [bible.structure_tones[0], bible.snow_tones[1]],
+				"stars": 0.25,
 			"vapour": [false, 0.0015],
 			"glow": [true, 0.45],
 			# More of the world falls into the shadow band as the light goes.
@@ -268,6 +280,7 @@ func _initialize() -> void:
 			"fog": [bible.structure_tones[1], 0.58], "fog_on": true,
 			"window": [70.0, 112.0], "sky_affect": 0.35,
 			"sky": [bible.structure_tones[2], bible.structure_tones[0]],
+				"stars": 1.0,
 			"vapour": [false, 0.0018],
 			"glow": [true, 0.65],
 			"bands": [0.24, 0.10],
@@ -297,6 +310,7 @@ func _initialize() -> void:
 			# goes with it.
 			"window": [56.0, 108.0], "sky_affect": 0.90,
 			"sky": [bible.snow_tones[2], _pale(bible, 0.35)],
+				"stars": 0.0,
 			"vapour": [false, 0.0020],
 			"glow": [true, 0.80],
 			# Wide and soft: what little shading survives has no edge to it.
@@ -334,6 +348,7 @@ func _initialize() -> void:
 		preset.sky_horizon_color = row["sky"][1]
 		preset.sky_curve = 0.15
 		preset.sky_energy = 1.0
+		preset.star_amount = row["stars"]
 		preset.volumetric_fog_enabled = row["vapour"][0]
 		preset.volumetric_fog_density = row["vapour"][1]
 		preset.volumetric_fog_albedo = _pale(bible, 0.60)

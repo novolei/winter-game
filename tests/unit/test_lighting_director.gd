@@ -352,12 +352,27 @@ func test_the_director_builds_a_gradient_sky_out_of_the_preset() -> void:
 	assert_not_null(env.sky, "no Sky resource was built")
 	if env.sky == null:
 		return
-	var material := env.sky.sky_material as ProceduralSkyMaterial
-	assert_not_null(material, "the Sky carries no ProceduralSkyMaterial")
+	# A ShaderMaterial rather than a ProceduralSkyMaterial SINCE THE AURORA: the
+	# stock material cannot carry stars or a curtain, and a sky is the only thing
+	# in the engine that is genuinely at infinity, enormous and free of parallax.
+	# The assertion below is unchanged in what it demands -- the preset's own
+	# zenith and horizon must reach the sky -- only in where it reads them from.
+	# See assets/shaders/aurora_sky.gdshader, which reproduces this material's
+	# gradient formula so that none of the six moved.
+	var material := env.sky.sky_material as ShaderMaterial
+	assert_not_null(material, "the Sky carries no ShaderMaterial")
 	if material == null:
 		return
-	assert_eq(material.sky_top_color, preset.sky_zenith_color, "the zenith is not the preset's")
-	assert_eq(material.sky_horizon_color, preset.sky_horizon_color, "the horizon is not the preset's")
+	assert_eq(
+		material.shader.resource_path, "res://assets/shaders/aurora_sky.gdshader",
+		"the Sky is not on the project's own sky shader"
+	)
+	assert_eq(
+		material.get_shader_parameter("sky_top_color"), preset.sky_zenith_color,
+		"the zenith is not the preset's")
+	assert_eq(
+		material.get_shader_parameter("sky_horizon_color"), preset.sky_horizon_color,
+		"the horizon is not the preset's")
 
 
 ## The sky must not start lighting the world. Every world shader declares

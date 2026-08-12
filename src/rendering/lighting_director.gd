@@ -49,6 +49,22 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 const PRESET_DIRECTORY := "res://data/lighting"
 const SCHEDULE_DIRECTORY := "res://data/schedule"
 
+## THE SKY IS A CUSTOM SHADER RATHER THAN A ProceduralSkyMaterial, and the swap
+## is safe for a reason worth writing down rather than trusting.
+##
+## The stock material could not carry stars or an aurora, and there is nowhere
+## else to put either: `Environment` holds exactly one sky, and a sky is the only
+## thing in the engine that is genuinely at infinity, enormous, behind
+## everything, and free of parallax -- which is the whole of 巨幕挂在远远天际.
+##
+## Nothing the game currently renders can move. `ambient_light_sky_contribution`
+## is 0 and `reflected_light_source` is DISABLED just below, so the sky lights
+## nothing; and at every framing the game uses the ground plane fills the frame,
+## so it draws no background pixels either. The shader reproduces the same
+## gradient formula the six presets were authored against, and
+## tests/unit/test_aurora.gd mirrors that formula so the two cannot drift.
+const SKY_SHADER_PATH := "res://assets/shaders/aurora_sky.gdshader"
+
 ## Spelled out rather than preloaded off WorldClock, the same way MusicDirector
 ## spells them out: systems never hold references to one another.
 const EVENT_DAY_STARTED := &"clock.day_started"
@@ -144,7 +160,33 @@ var _fade_elapsed := 0.0
 var _fade_duration := 0.0
 
 var _panel: Node = null
-var _sky_material: ProceduralSkyMaterial = null
+var _sky_material: ShaderMaterial = null
+
+## ---------------------------------------------------------------------------
+## THE OVERLAY -- a hue rotation that rides ON TOP of whichever preset is on
+## ---------------------------------------------------------------------------
+## Added for the aurora, and deliberately general: it is "a coloured light that
+## is not one of the six", which is the shape a beacon, a flare or a fire seen
+## across the valley would also want.
+##
+## It composes onto the channel SUNRISE's amber already uses -- the world's LIT
+## cel band is multiplied by a luminance-normalised colour -- rather than being a
+## second mechanism beside it. Two things easing the same number in opposite
+## directions is worse than either.
+##
+## NORMALISED IS THE WHOLE GUARANTEE. Both factors have luminance exactly 1 and
+## their product is renormalised, so the overlay can only rotate hue: it cannot
+## brighten the snow, it cannot darken it, and it therefore cannot take anything
+## across the glow's 0.95 threshold. No bloom on the snow, structurally.
+##
+## `_overlay_fill` is the CHARACTER's share of the same rotation, on the ambient.
+## He is the one stock PBR material in the game and the world's cel shaders read
+## nothing from a light but its shadow term -- see LightingPreset's header -- so
+## an overlay that greened the snow and left him alone would move half the
+## picture.
+var _overlay_color := Color.WHITE
+var _overlay_world := 0.0
+var _overlay_fill := 0.0
 
 
 func _ready() -> void:
@@ -185,12 +227,13 @@ func _build_environment() -> void:
 	# anyway -- it is what the fog resolves toward as `fog_sky_affect` comes up in
 	# the storm, and it is what stops the first shot that tips the camera finding
 	# six presets with the same sky.
-	_sky_material = ProceduralSkyMaterial.new()
-	_sky_material.use_debanding = true
-	# No sun disc. The sun is 21.5 degrees up and its light is the frame's
-	# subject; a white blob on the horizon is not.
-	_sky_material.sun_angle_max = 0.0
-	_sky_material.sun_curve = 1.0
+	#
+	# No sun disc, which under the stock material took two properties to suppress
+	# and here takes none: the shader draws no light source at all. The sun is
+	# 21.5 degrees up and its light is the frame's subject; a white blob on the
+	# horizon is not.
+	_sky_material = ShaderMaterial.new()
+	_sky_material.shader = load(SKY_SHADER_PATH)
 	var sky := Sky.new()
 	sky.sky_material = _sky_material
 	# The sky is a backdrop, not a light -- the radiance cubemap exists to be
@@ -406,18 +449,141 @@ func cel_band_softness() -> float:
 ## deliberately not `source_color` -- it is a multiplier, and its red channel
 ## goes above 1.0 whenever the light is warm.
 func world_light_tint() -> Color:
-	return tint_for(_active) if _active != null else Color.WHITE
+	var base := tint_for(_active) if _active != null else Color.WHITE
+	return compose_tint(base, unit_tint(_overlay_color, _overlay_world))
 
 
 static func tint_for(look: LightingPreset) -> Color:
-	if look.world_light_strength <= 0.0:
+	return unit_tint(look.world_light_color, look.world_light_strength)
+
+
+## A colour as a HUE ROTATION with the brightness taken out of it: the sRGB
+## colour carried to linear, divided by its own luminance, and lerped that far
+## from white. White and a unit-luminance colour both have luminance 1, and
+## luminance is linear, so EVERY point on that lerp has luminance exactly 1.
+##
+## Which is the whole guarantee this project leans on twice now: a light that
+## cannot change how bright anything is cannot take the shadow band off-palette,
+## and cannot push the snow across the glow threshold.
+static func unit_tint(colour: Color, strength: float) -> Color:
+	if strength <= 0.0:
 		return Color.WHITE
-	var target := look.world_light_color.srgb_to_linear()
-	var luma := 0.2126 * target.r + 0.7152 * target.g + 0.0722 * target.b
+	var target := colour.srgb_to_linear()
+	var luma := luminance(target)
 	if luma <= 0.0:
 		return Color.WHITE
 	var unit := Color(target.r / luma, target.g / luma, target.b / luma)
-	return Color.WHITE.lerp(unit, clampf(look.world_light_strength, 0.0, 1.0))
+	return Color.WHITE.lerp(unit, clampf(strength, 0.0, 1.0))
+
+
+static func luminance(colour: Color) -> float:
+	return 0.2126 * colour.r + 0.7152 * colour.g + 0.0722 * colour.b
+
+
+## Two hue rotations, one after the other, renormalised so the pair is still one.
+##
+## The product of two unit-luminance colours is NOT unit luminance -- that is the
+## one place this could have leaked brightness into a channel that is supposed to
+## carry none. Renormalising is exact and it is free, and it leaves the identity
+## intact: composing anything with WHITE gives that thing back unchanged, so the
+## six presets are byte-for-byte where they were whenever no overlay is on.
+static func compose_tint(a: Color, b: Color) -> Color:
+	var product := Color(a.r * b.r, a.g * b.g, a.b * b.b)
+	var luma := luminance(product)
+	if luma <= 0.0:
+		return Color.WHITE
+	return Color(product.r / luma, product.g / luma, product.b / luma)
+
+
+## Rotates `base` toward `tint` while keeping `base`'s own brightness. For the
+## ambient fill, which is a colour with a luminance of its own that the overlay
+## has no business moving.
+static func rotate_hue(base: Color, tint: Color) -> Color:
+	var before := luminance(base)
+	if before <= 0.0:
+		return base
+	var product := Color(base.r * tint.r, base.g * tint.g, base.b * tint.b)
+	var after := luminance(product)
+	if after <= 0.0:
+		return base
+	var scale := before / after
+	return Color(product.r * scale, product.g * scale, product.b * scale, base.a)
+
+
+# --- the overlay ------------------------------------------------------------
+#
+# See the members' header. A coloured light that is not one of the six, riding on
+# top of whichever preset is on.
+
+
+## `world_strength` is how far the world's LIT cel band rotates toward `colour`;
+## `fill_strength` is how far the CHARACTER's ambient does. Both 0..1, both a
+## pure hue rotation, and both zero by default -- which is the shipped state for
+## every frame in which nothing is glowing at the sky.
+##
+## Re-writes the frame, because `CelPainter.set_world_shading()` is a PUSH to
+## every solid in the game and there is nothing for it to subscribe to. The
+## ground pulls `world_light_tint()` itself every frame and would have picked the
+## change up regardless -- so without this the snow would go teal and the
+## buildings would not, which is exactly the kind of half-moved picture that
+## reads as art direction.
+##
+## The caller is expected to rate-limit: `AuroraSystem.tint_epsilon` is that,
+## and the reasoning for it is there.
+func set_world_light_overlay(colour: Color, world_strength: float, fill_strength := 0.0) -> void:
+	_overlay_color = colour
+	_overlay_world = clampf(world_strength, 0.0, 1.0)
+	_overlay_fill = clampf(fill_strength, 0.0, 1.0)
+	if _active != null:
+		_write(_active)
+
+
+func world_light_overlay_strength() -> float:
+	return _overlay_world
+
+
+func character_fill_overlay_strength() -> float:
+	return _overlay_fill
+
+
+## How much aurora is in the sky, 0 .. 1. One uniform on one material: no walk,
+## no restamp, cheap enough to push on every frame of a two-minute showing.
+func set_aurora_strength(strength: float) -> void:
+	if _sky_material == null:
+		return
+	_sky_material.set_shader_parameter("aurora_strength", clampf(strength, 0.0, 1.0))
+
+
+## Everything about the curtain that does not change while it hangs. Pushed once,
+## when it opens.
+##
+## Untyped `definition` on purpose: this file must go on compiling if
+## `src/definitions/aurora_definition.gd` is deleted, the same rule that keeps
+## every system from naming another system's type.
+func set_aurora_curtain(definition, bearing_degrees: float) -> void:
+	if _sky_material == null or definition == null:
+		return
+	_sky_material.set_shader_parameter("aurora_bearing", deg_to_rad(bearing_degrees))
+	_sky_material.set_shader_parameter("aurora_span", deg_to_rad(definition.span_degrees))
+	_sky_material.set_shader_parameter("aurora_base", deg_to_rad(definition.base_elevation_degrees))
+	_sky_material.set_shader_parameter("aurora_top", deg_to_rad(definition.top_elevation_degrees))
+	_sky_material.set_shader_parameter("aurora_opacity", definition.sky_opacity)
+	_sky_material.set_shader_parameter("aurora_ray_frequency", definition.ray_frequency)
+	_sky_material.set_shader_parameter("aurora_ray_sharpness", definition.ray_sharpness)
+	_sky_material.set_shader_parameter("aurora_shear", definition.ray_shear)
+	_sky_material.set_shader_parameter("aurora_drift", definition.drift_speed)
+	_sky_material.set_shader_parameter("aurora_color_a", definition.band_color(0))
+	_sky_material.set_shader_parameter("aurora_color_b", definition.band_color(1))
+	_sky_material.set_shader_parameter("aurora_color_c", definition.band_color(2))
+	_sky_material.set_shader_parameter("aurora_band_opacity", definition.band_opacity)
+	_sky_material.set_shader_parameter("aurora_band_lift", definition.band_lift)
+	_sky_material.set_shader_parameter("aurora_band_offset", definition.band_offset)
+
+
+## The sky material, for a capture that wants to read back what was pushed.
+## Nothing in the game holds it.
+func sky_material() -> ShaderMaterial:
+	return _sky_material
 
 
 ## Snaps to one of the six, abandoning any crossfade. False if there is no such
@@ -540,6 +706,9 @@ static func blend(from: LightingPreset, to: LightingPreset, t: float) -> Lightin
 	result.sky_horizon_color = from.sky_horizon_color.lerp(to.sky_horizon_color, k)
 	result.sky_curve = lerpf(from.sky_curve, to.sky_curve, k)
 	result.sky_energy = lerpf(from.sky_energy, to.sky_energy, k)
+	# Stars come out over the dusk rather than switching on at its midpoint, which
+	# is the same argument every other continuous field on this list is here for.
+	result.star_amount = lerpf(from.star_amount, to.star_amount, k)
 	# Volumetric air, on the same rule as the fog switch above: on the moment
 	# either end wants it, with the density carrying the fade, because volumetric
 	# fog off IS volumetric fog at density zero.
@@ -574,7 +743,11 @@ func _write(look: LightingPreset) -> void:
 	_active = look
 	var env := environment
 	if env != null:
-		env.ambient_light_color = look.ambient_color
+		# The character's fill, rotated toward the overlay's hue but never
+		# brightened or dimmed by it -- see `rotate_hue()`. At the default overlay
+		# of nothing this is exactly `look.ambient_color`.
+		env.ambient_light_color = rotate_hue(
+			look.ambient_color, unit_tint(_overlay_color, _overlay_fill))
 		env.ambient_light_energy = look.ambient_energy
 		env.tonemap_exposure = look.tonemap_exposure
 		env.fog_enabled = look.fog_enabled
@@ -604,16 +777,24 @@ func _write(look: LightingPreset) -> void:
 		env.volumetric_fog_length = look.fog_depth_end + 20.0
 		env.background_energy_multiplier = look.sky_energy
 	if _sky_material != null:
-		_sky_material.sky_top_color = look.sky_zenith_color
-		_sky_material.sky_horizon_color = look.sky_horizon_color
-		_sky_material.sky_curve = look.sky_curve
+		_sky_material.set_shader_parameter("sky_top_color", look.sky_zenith_color)
+		_sky_material.set_shader_parameter("sky_horizon_color", look.sky_horizon_color)
+		_sky_material.set_shader_parameter("sky_curve", look.sky_curve)
 		# Below the horizon is the ground plane's own colour rather than a
 		# default brown: nothing in this game is ever above the horizon line, so
 		# the lower dome only ever shows through as fog and as the sliver past
 		# the plane's edge in a very wide shot.
-		_sky_material.ground_horizon_color = look.sky_horizon_color
-		_sky_material.ground_bottom_color = look.sky_zenith_color
-		_sky_material.ground_curve = look.sky_curve
+		_sky_material.set_shader_parameter("ground_horizon_color", look.sky_horizon_color)
+		_sky_material.set_shader_parameter("ground_bottom_color", look.sky_zenith_color)
+		_sky_material.set_shader_parameter("ground_curve", look.sky_curve)
+		# ONE, NOT `look.sky_energy`, and the distinction is a double-apply
+		# waiting to happen: the preset's sky energy goes on the Environment's
+		# `background_energy_multiplier` above, exactly where it went when this
+		# was a ProceduralSkyMaterial -- whose own two energy multipliers were
+		# likewise left at their defaults. Setting it here as well would square it.
+		_sky_material.set_shader_parameter("sky_energy", 1.0)
+		_sky_material.set_shader_parameter("ground_energy", 1.0)
+		_sky_material.set_shader_parameter("star_amount", look.star_amount)
 	# The world's two cel shaders. The ground pulls these itself every frame
 	# (TerrainRenderer._process); every solid is reached here, because a
 	# CelPainter is a RefCounted nobody keeps a reference to.
