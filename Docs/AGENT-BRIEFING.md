@@ -280,3 +280,18 @@ Then reply with **only** this, under 15 lines — the detail lives in the report
 - The report file path
 
 Use `DONE_WITH_CONCERNS` when the work is complete but you have doubts. Use `BLOCKED` when you cannot finish. Use `NEEDS_CONTEXT` when information you needed was missing. Never silently ship work you are unsure about.
+
+### Trap 9 — A fresh `InputEvent` is born on device 32, and device 32 is nobody
+
+Building an input map in code — `InputMap.action_add_event()` with a `new()` event — produces a control that is silently inert. A freshly constructed `InputEventMouseButton` comes back with `device: 32`. A real mouse reports `-1`. The action exists, the binding exists, the project file looks right, and nothing ever fires.
+
+```gdscript
+var ev := InputEventMouseButton.new()
+ev.button_index = MOUSE_BUTTON_WHEEL_UP
+ev.shift_pressed = true
+ev.device = -1                      # <-- without this line the action never matches
+```
+
+Nothing warns you. The only symptom is a feature that does nothing, which reads as "my logic is wrong" and sends you looking in the wrong file.
+
+The agent that found this did so by printing the serialised event with the engine's own `var_to_str()` and reading what actually came out, rather than writing the expected serialisation from memory. That habit is the whole lesson: **when you generate a config or a resource in code, print what the engine produced and read it.** It costs one line and it is the difference between finding this in a minute and losing an afternoon.
