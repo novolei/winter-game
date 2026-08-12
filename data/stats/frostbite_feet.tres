@@ -31,8 +31,22 @@ threshold = 0.2
 target_stat = &"locomotion:run_speed"
 value = 0.0
 
+[sub_resource type="Resource" id="Resource_s8ijk"]
+script = ExtResource("2_30ocg")
+watch_stat = &"frostbite_feet"
+threshold = 0.5
+target_stat = &"locomotion:footing"
+value = 0.5
+
+[sub_resource type="Resource" id="Resource_gd0jf"]
+script = ExtResource("2_30ocg")
+watch_stat = &"frostbite_feet"
+threshold = 0.2
+target_stat = &"locomotion:footing"
+value = 0.0
+
 [resource]
 script = ExtResource("1_bxnad")
 id = &"frostbite_feet"
 display_name = "Frostbite (feet)"
-threshold_effects = Array[ExtResource("2_30ocg")]([SubResource("Resource_ki7cw"), SubResource("Resource_2ir8v"), SubResource("Resource_csjin"), SubResource("Resource_p8lo0")])
+threshold_effects = Array[ExtResource("2_30ocg")]([SubResource("Resource_ki7cw"), SubResource("Resource_2ir8v"), SubResource("Resource_csjin"), SubResource("Resource_p8lo0"), SubResource("Resource_s8ijk"), SubResource("Resource_gd0jf")])

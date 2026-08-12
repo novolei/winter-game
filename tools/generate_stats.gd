@@ -91,6 +91,13 @@ const BELOW := 0  # ThresholdEffect.Comparison.BELOW
 ##   locomotion:run_snow_limit  scales how deep the snow may be before the run
 ##                              goes; 0.5 means he loses it in half the depth a
 ##                              healthy man manages
+##   locomotion:rhythm     how much of the terrain's penalty a man who keeps
+##                         going wins back; 0 means the first step's price is the
+##                         price for ever
+##   locomotion:footing    how much of an ordinary walk his feet can still carry;
+##                         0 puts him fully into the guarded walk
+##   stand:composure       how much of his ordinary bearing his hands let him
+##                         keep; 0 draws them right in
 ##   ignition:speed        how fast a fire can be lit
 ##   aim:steadiness        weapon steadiness
 ##   vision:focus          GDD 5's 画面轻微失焦
@@ -150,6 +157,24 @@ const STATS := [
 			[0.30, &"core_temperature", MUL, 1.5],
 			# 归零后果: 体温加速流失. Compounds with the row above to 3.0x.
 			[0.05, &"core_temperature", MUL, 2.0],
+			# ...and the half of hunger a player can SEE. Until this row the
+			# stat's whole expression was a number on another bar: a starving man
+			# looked exactly like a fed one, and with no HUD there was nothing at
+			# all to read. He now loses his RHYTHM -- he pays the first step's
+			# price into every drift and every climb and never wins it back, so he
+			# sets off level with a fed man and is left behind over the next few
+			# strides.
+			#
+			# THIS IS A GATE AND NOT A SCALER, and it is worth being exact about
+			# why, because the row looks like the `locomotion:speed` multiply that
+			# was deleted from this file. What it scales is how much RELIEF
+			# persistence buys, and the relief is bounded by the terrain's own
+			# penalty -- on ground that costs nothing there is nothing to take
+			# away. A starving man on a beaten trail walks at a fed man's pace,
+			# and in a drift he walks at the honest unrelieved terrain speed,
+			# never below it. See PlayerController.rhythm_ceiling().
+			[0.30, &"locomotion:rhythm", MUL, 0.5],
+			[0.05, &"locomotion:rhythm", MUL, 0.0],
 		],
 	},
 	{
@@ -205,6 +230,18 @@ const STATS := [
 			[0.50, &"aim:steadiness", MUL, 0.70],
 			[0.20, &"ignition:speed", MUL, 0.50],
 			[0.20, &"aim:steadiness", MUL, 0.60],
+			# ...and the part a player can SEE. Every row above this one is a
+			# consequence with no cause on screen: a man whose fire takes twice as
+			# long to light is being told about his hands by a failure, which
+			# reads as the game being unfair rather than as his body being hurt.
+			# He now draws his hands in and keeps them there.
+			#
+			# Reuses the cold idle's own arms rather than a new take -- a man
+			# tucking ruined hands away and a man hugging himself against the cold
+			# put their hands in the same place. See
+			# PlayerController.stand_chill().
+			[0.50, &"stand:composure", MUL, 0.5],
+			[0.20, &"stand:composure", MUL, 0.0],
 		],
 	},
 	{
@@ -227,6 +264,19 @@ const STATS := [
 			# can notice happening, and can walk to a fire to undo.
 			[0.50, &"locomotion:run_snow_limit", MUL, 0.5],
 			[0.20, &"locomotion:run_speed", MUL, 0.0],
+			# ...and the reading the two rows above never had. Losing the run is
+			# a capability the player is meant to notice, and until now the only
+			# way he could notice it was by pressing a direction and finding that
+			# the auto-run had quietly stopped firing. He now WALKS differently:
+			# lower, shorter-stepped, both feet guarded. The take is the library's
+			# own, and which take and why is the long block at
+			# WandererAnimations.WALK_GUARDED.
+			#
+			# Bilateral on purpose. 足部冻伤 is both feet, so a limp -- one leg
+			# favouring the other -- would be the wrong picture even if the
+			# library's limp were usable, which measurement says it is not.
+			[0.50, &"locomotion:footing", MUL, 0.5],
+			[0.20, &"locomotion:footing", MUL, 0.0],
 		],
 	},
 ]

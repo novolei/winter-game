@@ -45,8 +45,22 @@ threshold = 0.2
 target_stat = &"aim:steadiness"
 value = 0.6
 
+[sub_resource type="Resource" id="Resource_rndxk"]
+script = ExtResource("2_w8kul")
+watch_stat = &"frostbite_hands"
+threshold = 0.5
+target_stat = &"stand:composure"
+value = 0.5
+
+[sub_resource type="Resource" id="Resource_3nvad"]
+script = ExtResource("2_w8kul")
+watch_stat = &"frostbite_hands"
+threshold = 0.2
+target_stat = &"stand:composure"
+value = 0.0
+
 [resource]
 script = ExtResource("1_pm21r")
 id = &"frostbite_hands"
 display_name = "Frostbite (hands)"
-threshold_effects = Array[ExtResource("2_w8kul")]([SubResource("Resource_34jyl"), SubResource("Resource_r06xo"), SubResource("Resource_u3psq"), SubResource("Resource_c1sf2"), SubResource("Resource_3b3ip"), SubResource("Resource_0rkwk")])
+threshold_effects = Array[ExtResource("2_w8kul")]([SubResource("Resource_34jyl"), SubResource("Resource_r06xo"), SubResource("Resource_u3psq"), SubResource("Resource_c1sf2"), SubResource("Resource_3b3ip"), SubResource("Resource_0rkwk"), SubResource("Resource_rndxk"), SubResource("Resource_3nvad")])

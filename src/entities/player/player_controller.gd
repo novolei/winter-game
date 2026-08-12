@@ -44,6 +44,7 @@ const IDLE_CLIP := WandererAnimations.IDLE
 const IDLE_COLD_CLIP := WandererAnimations.IDLE_COLD
 const WALK_CLIP := WandererAnimations.WALK
 const RUN_CLIP := WandererAnimations.RUN
+const WALK_GUARDED_CLIP := WandererAnimations.WALK_GUARDED
 
 ## The visual layer the character's own surfaces are put on, so a light can be
 ## aimed at him and at nothing else. Bit 0 stays set: the sun still lights him
@@ -364,6 +365,33 @@ const SLOPE_FLOOR := 0.25
 ## A useful way to hold it: at full rhythm the model behaves exactly as though
 ## terrain_severity were `terrain_severity * (1 - momentum_relief)` = 0.275. He
 ## walks in at 0.50 and settles to 0.275.
+##
+## ---------------------------------------------------------------------------
+## THIS IS THE HEALTHY BODY'S RHYTHM. HUNGER IS WHAT TAKES IT AWAY.
+## ---------------------------------------------------------------------------
+## The survival model scales it through `locomotion:rhythm` -- see
+## rhythm_ceiling(), which is where GDD section 5's 饥饿 finally reaches the body
+## instead of only reaching the temperature bar.
+##
+## WHY THE RHYTHM AND NOT THE SPEED, given that the body is never allowed to
+## scale a speed (see top_speed_at). Finding a rhythm is a CAPABILITY, not a
+## number: a fed man breaks trail, settles into it and the ground stops fighting
+## him; a starving one never settles, and pays the first step's price at every
+## step. What he is left with is EXACTLY the speed the terrain gives -- the
+## honest, unmodified terrain model, cold-start -- so nothing about his body has
+## scaled the ground's number down. He has failed to earn back what persistence
+## would have earned. The same distinction the run gate makes, one level down.
+##
+## Two properties follow, and both are tested rather than asserted here:
+##
+##   * A starving man on ground that costs nothing is not slowed AT ALL. `effort`
+##     is zero on a beaten trail and on bare level snow, so there is no relief to
+##     remove. The packed layer stays worth beating, and hunger cannot become the
+##     silent everywhere-slowdown the locomotion rework existed to delete.
+##   * The FIRST step into a drift costs a starving man exactly what it costs a
+##     fed one. Only the recovery is gone. So what a player sees is not a man who
+##     is slower, it is a man who never gets going -- which is a different picture
+##     and a nameable one.
 @export var momentum_relief := 0.45
 
 ## How quickly he finds it, as a closed fraction per second -- the same form as
@@ -693,6 +721,20 @@ const AUTO_RUN_SETTING := "winter_time/controls/auto_run_delay_seconds"
 ## the legs into a blur.
 @export var anim_max_pace := 1.5
 
+## The ground speed the guarded walk's feet plant at.
+##
+## NOT A CHOSEN NUMBER, and not one this file is allowed to invent: it is
+## measured off the take the same way anim_walk_speed was, and it is what decides
+## the stride the pace is computed against. See WandererAnimations.WALK_GUARDED
+## for the measurement and for why the take named `Limping_Walk_inplace` is the
+## one being used while the take that actually limps is not.
+@export var anim_guarded_speed := WandererAnimations.WALK_GUARDED_SPEED
+
+## How fast the guarded walk fades in and out, as a closed fraction per second --
+## the same form as auto_run_rise and turn_speed. See advance_footing().
+@export var footing_rise := 1.2
+@export var footing_fall := 0.8
+
 ## Where standing still ends and locomotion begins, in ground speed.
 ##
 ## Below the first the figure is idling outright; above the second the walk
@@ -796,6 +838,9 @@ var _furrow_travel := 0.0
 var _walk_period := 1.0667
 var _run_period := 0.6667
 var _cycle_period := 0.6667
+## One cycle of the guarded walk, not the whole take. See _build_animation().
+var _guarded_period := 1.1889
+var _footing := 0.0
 ## The auto-run: how long he has kept going, which way he has been going, and how
 ## far the walk has been promoted toward the run. See advance_gait().
 var _run_hold := 0.0
@@ -1140,6 +1185,31 @@ static func _synced_blend() -> AnimationNodeBlend2:
 ##
 ## The two rate nodes carry constants set by _lock_gait_cycles() once the tree is
 ## live; everything else here is fixed wiring.
+## ---------------------------------------------------------------------------
+## WHERE THE GUARDED WALK SITS, AND WHY IT IS INSIDE `pace`
+## ---------------------------------------------------------------------------
+## The shape with GDD section 5's 足部冻伤 in it:
+##
+##     walk ---------.
+##                    >-- gait --.
+##     run ----------'            >-- footing --> pace ---.
+##     walk_guarded -------------'                         >-- motion --> output
+##     idle -----.                                        /
+##                >-- chill -----------------------------'
+##     idle_cold '
+##
+## `footing` is INSIDE the locomotion branch, upstream of `pace`, and that is not
+## a free choice. `pace` is what makes the feet plant instead of skate, and a
+## clip outside it plays at a fixed rate while the man's speed varies with the
+## snow -- so a guarded walk hung off the output would skate everywhere except at
+## one speed. Inside it, the same arithmetic that plants the walk's feet plants
+## the guarded walk's, and _drive_animation() only has to tell it the right
+## stride.
+##
+## Its own TimeScale carries the take's cycle onto the shared one, exactly as the
+## walk's and the run's do. It has to: the take is 3.5667 s of THREE cycles, so
+## anything that treated the clip's length as its period would step three strides
+## per stride (briefing trap 12 is the same lesson from the other end).
 static func build_blend_tree() -> AnimationNodeBlendTree:
 	var idle := AnimationNodeAnimation.new()
 	idle.animation = IDLE_CLIP
@@ -1149,6 +1219,8 @@ static func build_blend_tree() -> AnimationNodeBlendTree:
 	walk.animation = WALK_CLIP
 	var run := AnimationNodeAnimation.new()
 	run.animation = RUN_CLIP
+	var guarded := AnimationNodeAnimation.new()
+	guarded.animation = WALK_GUARDED_CLIP
 
 	var graph := AnimationNodeBlendTree.new()
 	graph.add_node("idle", idle)
@@ -1156,19 +1228,25 @@ static func build_blend_tree() -> AnimationNodeBlendTree:
 	graph.add_node("chill", _synced_blend())
 	graph.add_node("walk", walk)
 	graph.add_node("run", run)
-	# One per clip, holding a constant that puts both cycles on the run's length.
+	graph.add_node("walk_guarded", guarded)
+	# One per clip, holding a constant that puts every cycle on the run's length.
 	graph.add_node("walk_rate", AnimationNodeTimeScale.new())
 	graph.add_node("run_rate", AnimationNodeTimeScale.new())
+	graph.add_node("guarded_rate", AnimationNodeTimeScale.new())
 	graph.add_node("gait", _synced_blend())
+	graph.add_node("footing", _synced_blend())
 	graph.add_node("pace", AnimationNodeTimeScale.new())
 	graph.add_node("motion", _synced_blend())
 	graph.connect_node("chill", 0, "idle")
 	graph.connect_node("chill", 1, "idle_cold")
 	graph.connect_node("walk_rate", 0, "walk")
 	graph.connect_node("run_rate", 0, "run")
+	graph.connect_node("guarded_rate", 0, "walk_guarded")
 	graph.connect_node("gait", 0, "walk_rate")
 	graph.connect_node("gait", 1, "run_rate")
-	graph.connect_node("pace", 0, "gait")
+	graph.connect_node("footing", 0, "gait")
+	graph.connect_node("footing", 1, "guarded_rate")
+	graph.connect_node("pace", 0, "footing")
 	graph.connect_node("motion", 0, "chill")
 	graph.connect_node("motion", 1, "pace")
 	graph.connect_node("output", 0, "motion")
@@ -1274,6 +1352,8 @@ func _lock_gait_cycles() -> void:
 	var rates := cycle_rates(_walk_period, _run_period)
 	_animation.set(&"parameters/walk_rate/scale", rates.x)
 	_animation.set(&"parameters/run_rate/scale", rates.y)
+	# The third cycle, on the same shared length by the same arithmetic.
+	_animation.set(&"parameters/guarded_rate/scale", _guarded_period / maxf(_cycle_period, 0.0001))
 
 
 func _build_animation() -> void:
@@ -1287,7 +1367,7 @@ func _build_animation() -> void:
 	if player.has_animation_library(&""):
 		player.remove_animation_library(&"")
 	player.add_animation_library(&"", WandererAnimations.build())
-	for clip in [IDLE_CLIP, IDLE_COLD_CLIP, WALK_CLIP, RUN_CLIP]:
+	for clip in [IDLE_CLIP, IDLE_COLD_CLIP, WALK_CLIP, RUN_CLIP, WALK_GUARDED_CLIP]:
 		if not player.has_animation(clip):
 			push_warning("player_controller: the merged library is missing %s" % clip)
 			return
@@ -1296,6 +1376,15 @@ func _build_animation() -> void:
 	# length retimes itself. See _lock_gait_cycles().
 	_walk_period = maxf(player.get_animation(WALK_CLIP).length, 0.0001)
 	_run_period = maxf(player.get_animation(RUN_CLIP).length, 0.0001)
+	# ...and this one is the take's length over its CYCLE COUNT, because the
+	# guarded walk ships as three cycles in one take. Same discipline, one
+	# division apart: the number that retimes is measured off the asset and the
+	# only thing written down is what could not be measured.
+	_guarded_period = maxf(
+		player.get_animation(WALK_GUARDED_CLIP).length
+			/ maxf(float(WandererAnimations.WALK_GUARDED_CYCLES), 1.0),
+		0.0001
+	)
 
 	var graph := build_blend_tree()
 
@@ -1387,12 +1476,31 @@ func _drive_animation(wade: float, grade: float) -> void:
 		return
 	var speed := Vector2(velocity.x, velocity.z).length()
 	var gait := clampf(inverse_lerp(anim_walk_speed, anim_run_speed, speed), 0.0, 1.0)
-	var stride := lerpf(anim_walk_speed * _walk_period, anim_run_speed * _run_period, gait)
-	var pace := speed * _cycle_period / maxf(stride, 0.0001)
 	_animation.set(&"parameters/motion/blend_amount", motion_blend(speed, wade, grade))
 	_animation.set(&"parameters/gait/blend_amount", gait)
-	_animation.set(&"parameters/pace/scale", clampf(pace, 0.0, anim_max_pace))
+	_animation.set(&"parameters/footing/blend_amount", _footing)
+	_animation.set(&"parameters/pace/scale", clampf(pace_for(speed, gait, _footing), 0.0, anim_max_pace))
 	_animation.set(&"parameters/chill/blend_amount", clampf(chill, 0.0, 1.0))
+
+
+## The playback rate that makes the feet plant at this ground speed, for this
+## mixture of the three locomotion takes.
+##
+## THE STRIDE HAS TO BE BLENDED TOO, and forgetting it is the whole failure mode
+## of adding a fourth clip to this branch. The guarded walk covers 1.10 m per
+## cycle against the walk's 1.44, so a man moving at the same speed on ruined
+## feet takes MORE steps to cover the same ground. Computed against the walk's
+## stride alone he would be played 31% too slow and his boots would slide
+## forward through the snow -- which reads as ice rather than as a defect, and
+## therefore survives review.
+##
+## Pure and public so tests can check it without a scene tree, in the same spirit
+## as top_speed_at(). See the comment above _drive_animation() for why this is
+## computed in STRIDES rather than in speeds at all.
+func pace_for(speed: float, gait: float, footing: float) -> float:
+	var stride := lerpf(anim_walk_speed * _walk_period, anim_run_speed * _run_period, gait)
+	stride = lerpf(stride, anim_guarded_speed * _guarded_period, clampf(footing, 0.0, 1.0))
+	return speed * _cycle_period / maxf(stride, 0.0001)
 
 
 ## How cold he looks standing still. 0 is the warm relaxed stand, 1 the shiver.
@@ -1493,6 +1601,57 @@ func body_chill() -> float:
 
 
 ## ---------------------------------------------------------------------------
+## 手部冻伤 -- and the moment the stand and the breath had to be separated
+## ---------------------------------------------------------------------------
+## How much of his ordinary bearing his hands still let him keep. 1 whole, 0
+## gone.
+##
+## The consequences of ruined hands already shipped -- ignition:speed and
+## aim:steadiness both halve -- and nothing said so, which is the worse half of
+## the same defect the feet had: a player who cannot light a fire is being told
+## something by a failure rather than by his own body.
+func composure_ceiling() -> float:
+	return clampf(_channel(&"stand:composure", 1.0), 0.0, 1.0)
+
+
+## What the stand is showing: the colder of "how cold he is" and "how much his
+## hands are costing him".
+##
+## THIS REUSES THE COLD IDLE'S ARMS RATHER THAN AUTHORING A POSE, and that is the
+## whole design. Measured off the takes, hand position relative to the hips:
+##
+##     idle        +/- 39 cm out, +5 cm up, hands 79 cm apart -- arms hanging
+##     idle_cold   +/- 10 cm out, +20 cm up, +19 cm forward, 21 cm apart
+##                                             -- hugged high across the chest
+##
+## A man tucking ruined hands under his arms and a man hugging himself against
+## the cold put their hands in the same place, so the take the shiver already
+## uses IS the pose, and no new clip is needed. The floor and the remap are the
+## ones IDLE_CHILL_FLOOR already established, so a warm man with wrecked hands
+## lands where the ladder says the arms cross the belly and worsens from there.
+##
+## ---------------------------------------------------------------------------
+## AND WHY THE BREATH NO LONGER FOLLOWS IT
+## ---------------------------------------------------------------------------
+## drive_readouts() used to hand ONE number to the stand and to the breath fog,
+## deliberately, and IDLE_CHILL_FLOOR's own comment names the condition for
+## splitting them: "if the breath ever needs to be colder or warmer than the
+## body, that is the moment to separate them, and not before."
+##
+## That moment is this. A man's hands do not change how he breathes. Left
+## coupled, frostbitten hands would thicken the vapour of a man whose core
+## temperature is fine -- and the vapour is this game's primary cold readout, so
+## the picture would say "freezing" about a man who is merely damaged. The two
+## readouts have to be able to disagree because the two facts can.
+func stand_chill() -> float:
+	var cold := body_chill()
+	var hands := 1.0 - composure_ceiling()
+	if hands <= 0.0001:
+		return cold
+	return maxf(cold, IDLE_CHILL_FLOOR + hands * (1.0 - IDLE_CHILL_FLOOR))
+
+
+## ---------------------------------------------------------------------------
 ## THE SPEED MODEL
 ## ---------------------------------------------------------------------------
 ## Tobler's hiking function, normalised so level ground is exactly 1.
@@ -1566,7 +1725,7 @@ func terrain_factor(wade: float, grade: float, momentum := 0.0) -> float:
 	var base := lerpf(1.0, raw, clampf(terrain_severity, 0.0, 1.0))
 	var effort := maxf(1.0 - base, 0.0)
 	var in_stride := clampf(momentum, 0.0, effort)
-	return base + clampf(momentum_relief, 0.0, 1.0) * in_stride
+	return base + rhythm_ceiling() * in_stride
 
 
 ## How hard this ground is to break into, as the penalty the first step pays:
@@ -1578,6 +1737,21 @@ func terrain_factor(wade: float, grade: float, momentum := 0.0) -> float:
 ## tests and tools/measure_locomotion.gd need it.
 func terrain_effort(wade: float, grade: float) -> float:
 	return maxf(1.0 - terrain_factor(wade, grade, 0.0), 0.0)
+
+
+## How much of the terrain's penalty being in his stride wins back, after the
+## body has had its say.
+##
+## WHERE GDD SECTION 5's 饥饿 REACHES LOCOMOTION. `locomotion:rhythm` is scaled
+## down by hunger, so a starving man breaks trail at the same price as a fed one
+## and then never gets the discount for keeping going. See momentum_relief for
+## why the rhythm and not the speed, and note the structural consequence: this
+## multiplies `in_stride`, which is clamped to `effort`, which is zero wherever
+## the terrain costs nothing. A body cannot reach a man on a beaten trail through
+## this channel however starved it is, and that is not a guard anyone has to
+## remember -- it is the shape of the expression.
+func rhythm_ceiling() -> float:
+	return clampf(_channel(&"locomotion:rhythm", momentum_relief), 0.0, 1.0)
 
 
 ## How deep a resistance he is currently in his stride against.
@@ -1612,6 +1786,93 @@ func run_ceiling() -> float:
 ## for him, and it has done so without any body state touching the speed itself.
 func run_snow_ceiling() -> float:
 	return clampf(_channel(&"locomotion:run_snow_limit", run_snow_limit), 0.0, 1.0)
+
+
+## ---------------------------------------------------------------------------
+## 足部冻伤 -- the reading, at last
+## ---------------------------------------------------------------------------
+## How much of a normal walk his feet can still carry. 1 whole, 0 gone.
+##
+## The consequences of ruined feet already shipped -- run_snow_ceiling() halves
+## and run_ceiling() goes to zero -- and NOTHING SAID SO. A man with frostbitten
+## feet moved exactly like a healthy one and simply stopped being promoted to a
+## run, which a player experiences as the controls having quietly changed their
+## mind. `locomotion:footing` is the same fact stated where it can be seen.
+func footing_ceiling() -> float:
+	return clampf(_channel(&"locomotion:footing", 1.0), 0.0, 1.0)
+
+
+## How much of the guarded walk is in the body right now, 0 .. 1. Eased.
+func footing_blend() -> float:
+	return _footing
+
+
+## ---------------------------------------------------------------------------
+## THE FLOOR IS A SILHOUETTE, THE SAME ARGUMENT AS IDLE_CHILL_FLOOR
+## ---------------------------------------------------------------------------
+## `walk` and `walk_guarded` differ in POSTURE and not only in amplitude.
+## Measured with tools/measure_body_readouts.gd rather than described from the
+## viewport, because the first description written here was wrong about which way
+## the head moved:
+##
+##     hands over the hips     walk -2 .. +11 cm     guarded +20 .. +26 cm
+##     hands apart             walk 66 .. 78 cm      guarded 51 .. 57 cm
+##     foot lift per step      walk 13.7 cm          guarded 7.9 / 9.0 cm
+##     cycle                   walk 1.067 s          guarded 1.189 s
+##
+## So the guarded walk carries its arms high and forward and close together,
+## lifts its feet 40% less, and takes longer over each step. (It does NOT stoop:
+## its head sits 2.8 cm HIGHER than the walk's, and the crouched look is the wider
+## stance and the reaching arms, not a bent spine.)
+##
+## Because the difference is in WHERE the limbs are, the blend between them is not
+## a dial from one take to the other: below some value you are looking at the
+## ordinary walk with noise on it, and the useful range starts above that.
+## Photographed as a ladder of blend VALUES at one instant --
+## tools/capture_body_readouts.gd --ladder, which is the only instrument that can
+## show this; a sheet stepping TIME cannot, because every frame of it is a
+## plausible pose:
+##
+##     0.30   upright, arms swinging at the sides. An ordinary walk. NOTHING IS
+##            WRONG WITH THIS MAN.
+##     0.45   the leading arm has come up and forward. Could be an arm swing.
+##            Ambiguous.
+##     0.60   both arms carried in front and high, the stance wider, the step
+##            visibly shorter. THE SILHOUETTE HAS CHANGED CHARACTER.
+##     0.80   unmistakable.
+##
+## So the two authored tiers -- half footing at frostbite_feet 0.5, none at 0.2 --
+## are remapped onto [FLOOR, 1] rather than used raw. Used raw the first tier
+## would land at 0.50, in the ambiguous band, and the player who has just done
+## real damage to his feet would see nothing at all until he did it twice.
+const GUARDED_WALK_FLOOR := 0.60
+
+
+## What the blend is heading for, from the body. Zero while the feet are sound,
+## and the remap above the moment they are not.
+func footing_target() -> float:
+	var lost := 1.0 - footing_ceiling()
+	if lost <= 0.0001:
+		return 0.0
+	return GUARDED_WALK_FLOOR + lost * (1.0 - GUARDED_WALK_FLOOR)
+
+
+## Eases the guarded walk in and out by one tick and returns the new blend.
+##
+## Eased for the reason advance_gait() is eased: a body that snaps between two
+## postures at a threshold makes the threshold itself visible, and a threshold is
+## the one thing a game with no HUD must never show. Slower than the auto-run in
+## both directions -- feet do not change their mind -- and slower coming back
+## than going in, because getting worse is something that happens to you and
+## getting better is something you walked to a fire for.
+func advance_footing(delta: float) -> float:
+	var target := footing_target()
+	var rate := footing_rise if target > _footing else footing_fall
+	_footing = lerpf(_footing, target, 1.0 - exp(-maxf(rate, 0.0) * maxf(delta, 0.0)))
+	# An exponential ease never arrives; see advance_gait() for the same line.
+	if absf(_footing - target) < 0.001:
+		_footing = target
+	return _footing
 
 
 ## Whether there is a run to be had here at all.
@@ -1840,11 +2101,14 @@ func register_settings() -> void:
 ## readout. `speed` is the ground speed, which is also what the animation blend
 ## reads, so exertion cannot disagree with the gait either.
 func drive_readouts(speed: float) -> void:
-	set_chill(body_chill())
+	# TWO NUMBERS NOW, AND THE DIFFERENCE IS THE HANDS. The stand carries the
+	# cold AND the frostbite; the breath carries only the cold. See stand_chill()
+	# for why this is the moment they had to stop being one value.
+	set_chill(stand_chill())
 	if _breath == null:
 		return
 	_breath.set_exertion(clampf(inverse_lerp(anim_idle_speed, run_speed, speed), 0.0, 1.0))
-	_breath.set_chill(chill)
+	_breath.set_chill(body_chill())
 	# GDD section 9's 呼吸变浅变快. Data, not a branch: the threshold rows live in
 	# data/stats/core_temperature.tres and this passes on whatever they say.
 	_breath.set_rate_scale(_channel(&"breath:rate", 1.0))
@@ -1972,6 +2236,10 @@ func _physics_process(delta: float) -> void:
 	# test but on deliberately different timescales, and neither may depend on
 	# being called first. See momentum_rise for why the two are staged.
 	var momentum := advance_momentum(delta, direction, wade, grade)
+	# ...and how much of a walk his feet can still carry. Advanced every tick
+	# rather than only while moving: feet that have gone are gone whether or not
+	# he is walking on them, and the ease must not stall when he stops.
+	advance_footing(delta)
 	var top_speed := top_speed_at(wade, grade, gait, momentum)
 
 	var wanted := direction * top_speed

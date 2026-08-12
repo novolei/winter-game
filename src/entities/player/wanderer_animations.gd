@@ -39,6 +39,80 @@ const IDLE_COLD := &"idle_cold"
 const WALK := &"walk"
 const RUN := &"run"
 
+## The fifth: what a man walks like when his feet have gone.
+##
+## ---------------------------------------------------------------------------
+## THE TAKE NAMED `Limping_Walk_inplace` DOES NOT LIMP. MEASURED, NOT READ.
+## ---------------------------------------------------------------------------
+## A limp is an ASYMMETRY -- one leg lifts less, or stays down longer, or the hip
+## drops onto it -- so that is what was measured, with
+## tools/measure_body_readouts.gd, over one gait cycle of each candidate:
+##
+##     take          foot lift L/R   ratio   left-against-right-mirrored
+##     walk           13.70 / 13.69   0.999   0.934      symmetric, as expected
+##     walk_limp       7.85 /  9.01   0.871   0.933      SYMMETRIC. Not a limp.
+##     walk_weary      8.51 /  2.02   0.238  -0.047      one foot barely leaves
+##                                                       the ground. THIS limps.
+##
+## So the names are swapped, in the third instance of briefing trap 15 on this
+## project: `Limping_Walk_inplace` is a low, guarded, short-stepped walk with
+## both feet doing the same thing, and `Injured_Walk` is the one with a dragged
+## leg.
+##
+## ---------------------------------------------------------------------------
+## AND THE ONE THAT LIMPS IS THE ONE WE CANNOT USE
+## ---------------------------------------------------------------------------
+## Every take here is IN PLACE -- root travel is under half a centimetre per
+## cycle -- so the speed a clip was authored for is the rate its STANCE foot
+## slides backwards under the hips. Measured the same way, calibrated against
+## anim_walk_speed = 1.35 (itself the speed at which the walk's feet plant), and
+## corroborated by the run coming out at 4.29 against the shipped 4.6:
+##
+##     walk        1.350 m/s        walk_limp   0.924 m/s
+##     run         4.293 m/s        walk_weary  0.523 m/s
+##
+## `walk_weary` is authored for a man moving at 0.52 m/s. The standing ruling is
+## that the body GATES movement and never scales it, so a man with ruined feet
+## still walks at 1.35 on bare ground -- and playing walk_weary there means
+## running the clip at 2.58x, a hobble at 214 steps a minute. The only ways out
+## are to blur the take or to let the body scale a speed, and the second is a
+## ruling nobody here gets to change.
+##
+## `walk_limp` at 0.924 m/s needs 1.46x on bare ground -- inside the shipped
+## anim_max_pace guard of 1.5 -- and almost exactly 1.0x at the 0.88-1.09 m/s
+## the snow actually gives him, which is where a man with ruined feet spends most
+## of his time.
+##
+## ---------------------------------------------------------------------------
+## ...AND BILATERAL IS THE RIGHT READING ANYWAY
+## ---------------------------------------------------------------------------
+## Worth saying plainly, because it turns a compromise into the correct choice:
+## GDD section 5's 足部冻伤 is BOTH feet. A limp is what a man does when ONE leg
+## is hurt and the other can carry him. Frostbite has no good leg, and what it
+## produces is a short, low, careful, bilateral gait -- which is what walk_limp
+## measures as: both feet lifting 40% less than the walk's and staying down
+## longer.
+const WALK_GUARDED := &"walk_guarded"
+
+## How many gait cycles are inside the guarded walk's take.
+##
+## The take is 3.5667 s where the walk is 1.0667, and the difference is not a
+## slower cycle -- it is THREE of them. Autocorrelating the foot height trace
+## puts the cycle at 1.19 s. Dropping the take onto the graph as though its
+## LENGTH were its period would step three strides per stride and photograph a
+## man vibrating.
+##
+## A count rather than a period, so the period is derived from the clip's own
+## length and a re-export at a different length retimes itself -- the same
+## discipline _build_animation() applies to the walk and the run.
+const WALK_GUARDED_CYCLES := 3
+
+## Ground speed the guarded walk's feet plant at, in m/s. Measured; see the block
+## above. tests/unit/test_body_readouts.gd re-derives the relationship rather
+## than trusting this number, because a constant that must agree with another
+## value is a relationship and not a constant.
+const WALK_GUARDED_SPEED := 0.924
+
 ## [source file, take name in that file, name in the library, loops].
 ##
 ## LOOPS is measured, not guessed: the take loops when its last pose returns to
@@ -52,12 +126,14 @@ const TAKES: Array = [
 	[MODEL_PATH, "idle_neutral", "idle", true],
 	[MODEL_PATH, "Walking", "walk", true],
 	[MODEL_PATH, "Running", "run", true],
+	# Named for what it is rather than for what Meshy called it -- see
+	# WALK_GUARDED above for the measurements that renamed it.
+	[MODEL_PATH, "Limping_Walk_inplace", "walk_guarded", true],
 
 	# --- locomotion the game will want ---
 	[MODEL_PATH, "Run_02", "run_alt", true],
 	[MODEL_PATH, "Sprint_and_Sudden_Stop", "run_to_stop", false],
 	[MODEL_PATH, "Injured_Walk", "walk_weary", true],
-	[MODEL_PATH, "Limping_Walk_inplace", "walk_limp", true],
 	[MODEL_PATH, "Spear_Walk", "walk_carry", true],
 	[MODEL_PATH, "Tightrope_Walk_inplace", "walk_balance", false],
 

@@ -39,13 +39,27 @@ const TUNING := {
 ## modulate a behaviour -- the localised half of GDD section 5 -- and whoever
 ## owns that behaviour reads it back with channel_value(). Adding to this list
 ## is a decision, which is why the list is here and not inferred.
-const BEHAVIOUR_CHANNELS := [
-	"locomotion",  # run_speed, run_snow_limit -- both GATES; see below
-	"ignition",    # how long lighting a fire takes
-	"aim",         # weapon steadiness
-	"vision",      # focus -- GDD section 5's 画面轻微失焦
-	"breath",      # rate -- GDD section 9's 呼吸变浅变快
-]
+## ---------------------------------------------------------------------------
+## THE SUB-CHANNEL IS DECLARED TOO, AND IT WAS NOT BEFORE
+## ---------------------------------------------------------------------------
+## This list held only the HEAD -- "locomotion" -- so `locomotion:run_speed` and
+## `locomotion:rn_speed` were equally acceptable and the second is a silent
+## no-op, which is exactly the W1-D3 defect this test exists to end. It went
+## unnoticed while `locomotion` had two sub-channels and both were spelt right;
+## it has five now, and a typo in one of them would be invisible again.
+const BEHAVIOUR_CHANNELS := {
+	"locomotion": [
+		"run_speed",       # 0 means running is off entirely
+		"run_snow_limit",  # how deep the snow may be before the run goes
+		"rhythm",          # how much of the terrain's penalty keeping going wins back
+		"footing",         # how much of an ordinary walk his feet still carry
+	],
+	"ignition": ["speed"],      # how long lighting a fire takes
+	"aim": ["steadiness"],      # weapon steadiness
+	"vision": ["focus"],        # GDD section 5's 画面轻微失焦
+	"breath": ["rate"],         # GDD section 9's 呼吸变浅变快
+	"stand": ["composure"],     # how much of his bearing his hands let him keep
+}
 
 var _system = null
 var _bus = null
@@ -226,6 +240,13 @@ func test_every_interlock_names_something_that_exists() -> void:
 					BEHAVIOUR_CHANNELS.has(head),
 					"%s targets '%s', which is neither a stat nor a declared behaviour channel" % [definition.id, target]
 				)
+				if BEHAVIOUR_CHANNELS.has(head):
+					assert_true(
+						(BEHAVIOUR_CHANNELS[head] as Array).has(channel),
+						"%s targets '%s': '%s' is not a declared sub-channel of '%s', and an "
+							% [definition.id, target, channel, head]
+							+ "undeclared one is a silent no-op at runtime"
+					)
 
 func test_every_effect_lives_in_the_file_of_the_stat_it_watches() -> void:
 	# Nothing in the machine requires this -- an effect carries its own
