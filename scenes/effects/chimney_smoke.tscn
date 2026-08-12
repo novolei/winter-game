@@ -1,0 +1,20 @@
+[gd_scene load_steps=2 format=3]
+
+; 袅袅炊烟. Instance this as a CHILD OF THE BUILDING whose flue it belongs to,
+; and nothing else has to be authored:
+;
+;   * it finds the flue itself -- an authored `flue_path`, or a marker with
+;     "flue" in its name anywhere under the building, or the measured fallback
+;     in `placeholder_offset`. `flue_source()` says which won.
+;   * it finds the fire itself, by asking the `&"fires"` group for one burning
+;     below the flue. Nothing wires a stove to a chimney.
+;   * WindSystem finds IT, by the two hooks it publishes, on the sweep it
+;     already runs. There is no path between the two files.
+;
+; A child rather than a sibling because the building settles itself onto the
+; snow at _ready() and the flue has to come down with it.
+
+[ext_resource type="Script" path="res://src/rendering/chimney_smoke.gd" id="1_smoke"]
+
+[node name="ChimneySmoke" type="GPUParticles3D"]
+script = ExtResource("1_smoke")
