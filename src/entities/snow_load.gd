@@ -298,13 +298,62 @@ const CHILL_SOURCE := &"snow_load"
 ## which is what makes "shake it off at the door" a thing a player can do.
 @export var settle_retention := 0.45
 
-## How much of the settled half a full gale strips per second. Loose snow does
-## not stay on a shoulder in a wind. The waded crust is packed and gets none of
-## this -- the same distinction the two retentions above make.
+## How much of the settled half the wind strips per second, per m/s^2 of it. The
+## waded crust is packed and gets none of this -- the same distinction the two
+## retentions above make.
 ##
-## Inert until something drives `set_wind()`: `src/systems/wind_system.gd` is
-## Wave 3, and at zero wind this contributes nothing.
-@export var settle_wind_strip := 0.09
+## ---------------------------------------------------------------------------
+## RULED: WIND ON A BODY IS NOT WIND ON A ROOF, AND THIS WAS THE WRONG MODEL
+## ---------------------------------------------------------------------------
+## This started at 0.09, written when `set_wind()` was a hook nobody called and
+## the only picture in mind was loose snow blowing off a shoulder. Then
+## `src/systems/wind_system.gd` arrived and drove it, and the number turned out
+## to be describing a roof.
+##
+## ON A ROOF, REMOVAL IS RIGHT. A flat horizontal surface holds loose snow and a
+## gale takes it away, which is exactly what the ground and accumulation shaders
+## do with the same wind and they are correct to.
+##
+## ON A MAN IT IS WRONG, AND WRONG IN THE OPPOSITE DIRECTION. A vertical, rough,
+## folded surface standing in driven snow gets PLASTERED. Anybody who has stood
+## out in a blizzard comes back caked on the windward side, not cleaned off. Wind
+## in heavy snowfall increases deposition on a body; it does not strip it. Roof
+## snow and body snow are different materials on different surfaces, and they
+## must no more share a model than they share an appearance.
+##
+## WHAT THE WRONG MODEL COST, measured. Settling gains `k(1-s)` a second and this
+## strips `settle_wind_strip * |wind| * s`, so a standing man equilibrates at
+## `s* = k/(k+w)`. In the game's own whiteout -- wind measured at 0.11 .. 0.46 --
+## 0.09 put that at a QUARTER of a load, and under the shipped gale profile at
+## 0.07. The worst weather in the game could never cover him. Nothing errored and
+## no test failed; only a capture of a man standing in a whiteout not going white
+## showed it, and since the load is what raises his heat loss, the survival
+## coupling went quietest exactly where it should have been loudest.
+##
+## SO IT IS A RESIDUAL, NOT A FORCE, and 0.003 is derived rather than dialled:
+## the scour may not hold a standing man below 0.85 at the strongest wind the
+## shipped profile produces in a whiteout, so
+## `strip = k(1 - 0.85) / (0.85 * 0.46)`. What that then gives everywhere else:
+##
+##     whiteout, ordinary wind 0.28   plateau 0.91   obvious in 44 s
+##     whiteout, gusting at    0.46   plateau 0.86
+##     whiteout, gale peak     1.14   plateau 0.71
+##     whiteout, full gale     1.68   plateau 0.62
+##
+## -- a gale is still a visible difference from still air, and it can no longer
+## keep him clean. `tests/unit/test_snow_load.gd::
+## test_a_blizzard_cakes_him_even_with_the_wind_blowing` holds all of that.
+##
+## The mechanism is unchanged and still earns its place on a CLEAR day, which is
+## the case it was written for: with nothing falling, wind is the only thing
+## other than a footfall that takes loose snow off a shoulder.
+##
+## FLAGGED, NOT BUILT: the truthful version of this is DIRECTIONAL -- the
+## windward side accumulates while the leeward scours -- which at this project's
+## fixed camera yaw would be genuinely beautiful. It is a per-fragment claim
+## about `dot(normal, wind)` rather than a scalar, and it is not what was asked
+## for. See the task report.
+@export var settle_wind_strip := 0.003
 
 ## How fast warmth melts BOTH loads, as a fraction of what is left per second.
 ## The owner asked for "quickly" and this is quickly: at 0.55 a full load is

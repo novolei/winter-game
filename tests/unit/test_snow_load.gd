@@ -73,6 +73,18 @@ const THIN := 0.1
 const LEGIBLE_SETTLE := 0.10
 const OBVIOUS_SETTLE := 0.30
 
+## The wind a standing man actually stands in during a whiteout, in the
+## acceleration `set_wind()` takes. MEASURED off the running game with `report()`'s
+## own `wind=` field rather than reasoned about: it ran **0.11 .. 0.46 m/s^2**
+## over three minutes of `whiteout`, which is `WindProfile.gale_metres` (1.6763)
+## times a strength that wandered between 0.07 and 0.27.
+##
+## The STRONG end is the one worth testing against, because a gust is exactly the
+## moment a standing man must not be scoured clean. For scale, the shipped
+## `data/weather/wind_gale.tres` peaks near 1.14 and a theoretical full gale is
+## 1.6763; the guard below is checked at all three.
+const WHITEOUT_GUST := 0.46
+
 
 func _fresh() -> Node3D:
 	var legs: Node3D = SnowLoadScript.new()
@@ -1239,6 +1251,70 @@ func test_settling_is_slow_enough_to_be_a_process_he_can_watch() -> void:
 	_free(storm)
 
 
+## AND A BLIZZARD CAKES HIM, WITH THE WIND BLOWING. This is the guard on the
+## thing that broke silently, and it is a MODELLING claim rather than a tuning
+## one.
+##
+## Wind was being treated as pure removal on the body. On a roof that is right --
+## a flat horizontal surface holds loose snow and a gale takes it away, which is
+## what the ground and accumulation shaders do with the same wind, correctly. On
+## a MAN it is wrong in the opposite direction: a vertical, rough, folded surface
+## in driven snow gets PLASTERED. Anybody who has stood out in a blizzard comes
+## back caked on the windward side, not cleaned off. Roof snow and body snow are
+## different materials on different surfaces and they must not share a model any
+## more than they share an appearance.
+##
+## Left as removal, the two clocked forces fought and the wind won: with
+## `settle_wind_strip` at 0.09 the equilibrium `k/(k+w)` sat at a QUARTER of a
+## load, so the worst weather in the game could never cover him -- and since the
+## load is what raises his heat loss, the survival coupling went quietest exactly
+## where it should have been loudest. Nothing errored and no test failed; only a
+## capture of a man standing in a whiteout not going white showed it.
+##
+## So the scour on a body is now a residual rather than a force, and this test is
+## what stops it being read as a tuning knob and turned back up.
+func test_a_blizzard_cakes_him_even_with_the_wind_blowing() -> void:
+	var gusting := _fresh()
+	gusting.set_snowfall_rate(1.0)
+	gusting.set_wind(Vector3(WHITEOUT_GUST, 0.0, 0.0))
+	var to_obvious := _seconds_to_settle(gusting, OBVIOUS_SETTLE, 900)
+	assert_true(
+		to_obvious < 90.0,
+		"a whiteout took %.0f s to put an obvious load on a man standing in its own "
+			% to_obvious
+			+ "wind -- the wind is scouring him faster than the sky can cover him"
+	)
+	# And it does not stop there. A plateau below a caked man is the defect this
+	# test exists for: the equilibrium has to sit high, not merely be passed.
+	for _tick in range(900):
+		gusting._process(1.0)
+	assert_true(
+		gusting.settled() > 0.75,
+		"fifteen minutes of blizzard left a standing man at %f, so the wind is "
+			% gusting.settled()
+			+ "holding him below caked and the chill he should be paying for the worst "
+			+ "weather in the game never arrives"
+	)
+	_free(gusting)
+	# AND IT STILL HOLDS UNDER THE STRONGEST WIND THE PROJECT CAN PRODUCE.
+	# data/weather/wind_gale.tres peaks near 1.14 and WindProfile.gale_metres is
+	# 1.6763; a scour tuned only against the ordinary profile would let a gale
+	# event quietly restore the defect.
+	for gale in [1.14, 1.6763]:
+		var blown := _fresh()
+		blown.set_snowfall_rate(1.0)
+		blown.set_wind(Vector3(gale, 0.0, 0.0))
+		for _tick in range(1800):
+			blown._process(1.0)
+		assert_true(
+			blown.settled() > OBVIOUS_SETTLE * 1.5,
+			"a %.2f gale held a standing man at %f in a whiteout, which is not a man "
+				% [gale, blown.settled()]
+				+ "who has been out in it"
+		)
+		_free(blown)
+
+
 ## THE OWNER'S STATED REQUIREMENT, and it is not a special case anywhere -- the
 ## settling rate is proportional to the snowfall rate, so at zero it is zero.
 ## What is left is the waded crust, which is untouched by the weather.
@@ -1477,7 +1553,17 @@ func test_the_wind_strips_the_settled_half_and_not_the_packed_one() -> void:
 	var packed: float = legs.carried()
 	assert_true(caked > 0.9, "the storm never covered him: %f" % caked)
 	# The snowfall has to stop, or the wind is fighting the sky rather than the
-	# load: a gale that also brings snow is a different question.
+	# load: a gale that also brings snow is a different question, and it now has
+	# its own test -- `test_a_blizzard_cakes_him_even_with_the_wind_blowing`, which
+	# rules that in driven snow a body is plastered rather than scoured.
+	#
+	# 12.0 IS BEYOND ANYTHING THE GAME CAN PRODUCE, and that is worth saying rather
+	# than leaving for somebody to infer: `WindProfile.gale_metres` is 1.6763, so
+	# this is seven times a full gale. What it proves is that the MECHANISM is still
+	# there, not a timing anybody will experience. At a real 1.68 gale on a clear
+	# day the same strip takes about a seventh of his load in half a minute, which
+	# is the residual the ruling above intends -- footfalls, at 0.45 retention, are
+	# what actually clean a moving man.
 	legs.set_snowfall_rate(0.0)
 	legs.set_wind(Vector3(12.0, 0.0, 0.0))
 	for _tick in range(30):
