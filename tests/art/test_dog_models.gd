@@ -494,115 +494,166 @@ func test_the_import_is_set_to_the_rate_the_pack_authored() -> void:
 	assert_eq(offenders.size(), 0, "; ".join(offenders))
 
 
-## The pack's 1024 colour map is dropped at BUILD time, not extracted at import.
-## See `Dog`'s header for what that cost.
-##
-## The assertion is on MAPS, not on materials, and the first version got that
-## wrong. `export_materials="NONE"` writes a `.glb` with no material at all and
-## Godot's glTF importer then invents a plain `StandardMaterial3D` per surface --
-## so "no material" is not a state this pipeline can produce, and a gate asking
-## for it fails on a file that is exactly right. `Dog._paint()` overrides those
-## defaults with the cel material anyway; what must never arrive is a texture,
-## because a texture is a surface no gate in this project judges.
-const MAP_PROPERTIES := [
-	"albedo_texture", "normal_texture", "roughness_texture", "metallic_texture",
-	"emission_texture", "ao_texture",
-]
+# --- the coat -----------------------------------------------------------------
+#
+# THE CHARACTER EXEMPTION, ASSERTED IN BOTH DIRECTIONS.
+#
+# `1a4aaac` put the companion dog on Art Bible rules 8 and 9's character
+# exemption beside the protagonist, the scavenger and the bear -- free of the
+# 12-colour table, using its own maps. So these tests are the OPPOSITE of what
+# stood here two hours ago, which asserted that no dog shipped a texture.
+#
+# The failure that caused the amendment is the one worth gating against: the
+# textures were never brought into the project, so the dog could only be a flat
+# warm shape, and the owner saw it in one look. A gate that only checked "the
+# material loads" would have passed that all day -- an unbound map and a bound
+# one both produce a material with no error.
 
 
-func test_no_dog_ships_a_texture() -> void:
+func test_every_dog_ships_its_own_coat_map() -> void:
 	var offenders := PackedStringArray()
 	for breed in DogAnimationsScript.BREEDS:
-		var rig := _rig(breed)
-		if rig == null:
-			continue
-		for instance in _meshes(rig):
-			var mesh: Mesh = (instance as MeshInstance3D).mesh
-			for surface in range(mesh.get_surface_count()):
-				var material := mesh.surface_get_material(surface)
-				if material == null:
-					continue
-				for property in MAP_PROPERTIES:
-					if material.get(property) != null:
-						offenders.append("%s surface %d carries a %s" % [breed, surface, property])
-		rig.free()
-	var folder := DirAccess.open(DogAnimationsScript.MODEL_ROOT)
-	if folder != null:
-		for entry in folder.get_files():
-			if entry.ends_with(".png") or entry.ends_with(".jpg"):
-				offenders.append("%s is on disk beside the models" % entry)
+		var path := DogScript.albedo_path(breed)
+		if path == "":
+			offenders.append("%s names no coat map" % breed)
+		elif not ResourceLoader.exists(path):
+			offenders.append("%s's coat map %s is not in the project" % [breed, path])
 	assert_eq(offenders.size(), 0, "; ".join(offenders))
 
 
-# --- the colour ---------------------------------------------------------------
+## Three dogs, three maps. The scene picks one at random and the whole argument
+## for keeping their coats is that which one you find carries weight.
+func test_the_three_breeds_wear_three_different_maps() -> void:
+	var seen: Dictionary = {}
+	var offenders := PackedStringArray()
+	for breed in DogAnimationsScript.BREEDS:
+		var path := DogScript.albedo_path(breed)
+		if seen.has(path):
+			offenders.append("%s and %s share %s" % [seen[path], breed, path.get_file()])
+		seen[path] = breed
+	assert_eq(offenders.size(), 0, "; ".join(offenders))
 
 
-func test_the_dog_is_painted_from_the_palette() -> void:
+## THE MAP IS BOUND, not merely present. `Dog.material()` must come back with
+## the breed's own texture on it -- a `StandardMaterial3D` with `albedo_texture`
+## null is white plastic, it loads without a single error, and a white dog on a
+## snowfield has no silhouette at all.
+func test_every_dogs_material_actually_carries_its_map() -> void:
+	var offenders := PackedStringArray()
+	for breed in DogAnimationsScript.BREEDS:
+		var dog: Dog = DogScript.new()
+		dog.breed = breed
+		var worn := dog.material()
+		if worn == null:
+			offenders.append("%s resolved no material" % breed)
+		elif worn.albedo_texture == null:
+			offenders.append("%s's material has no albedo_texture; it is white plastic" % breed)
+		elif worn.albedo_texture.resource_path != DogScript.albedo_path(breed):
+			offenders.append("%s wears %s rather than its own %s" % [
+				breed, worn.albedo_texture.resource_path, DogScript.albedo_path(breed)])
+		dog.free()
+	assert_eq(offenders.size(), 0, "; ".join(offenders))
+
+
+## AND IT REACHES THE MESH. A material built and never overridden onto the
+## surfaces leaves the model wearing whatever Godot invented for a primitive that
+## arrived without one -- which renders, and renders grey.
+func test_the_map_reaches_every_surface_of_the_built_rig() -> void:
+	var offenders := PackedStringArray()
+	for breed in DogAnimationsScript.BREEDS:
+		var dog: Dog = DogScript.new()
+		dog.breed = breed
+		if not dog.build_rig():
+			offenders.append("%s did not build a rig" % breed)
+			dog.free()
+			continue
+		var surfaces := 0
+		for node in dog.find_children("*", "MeshInstance3D", true, false):
+			var instance := node as MeshInstance3D
+			if instance.mesh == null:
+				continue
+			surfaces += 1
+			var worn := instance.material_override
+			if worn == null:
+				offenders.append("%s's %s has no material_override" % [breed, instance.name])
+			elif (worn as StandardMaterial3D) == null or (worn as StandardMaterial3D).albedo_texture == null:
+				offenders.append("%s's %s is overridden with something carrying no map" % [
+					breed, instance.name])
+		if surfaces == 0:
+			offenders.append("%s built a rig with no mesh in it" % breed)
+		dog.free()
+	assert_eq(offenders.size(), 0, "; ".join(offenders))
+
+
+## The map is a COAT and not a swatch. A 1024 image that imported as a single
+## flat colour is what an unbound or broken texture looks like from the other
+## side, and it is exactly the state the flat-tint dog was in when the owner
+## called it fake -- so the gate asks the picture whether it has a chest, paws
+## and a nose in it rather than whether the file exists.
+##
+## Six colours is a floor, not a target. MEASURED on the shipped maps: the golden
+## retriever's holds gold, cream, two greys, near-black and a red tongue.
+func test_every_coat_map_holds_more_than_one_colour() -> void:
+	var offenders := PackedStringArray()
+	for breed in DogAnimationsScript.BREEDS:
+		var texture: Texture2D = load(DogScript.albedo_path(breed))
+		if texture == null:
+			offenders.append("%s's map did not load" % breed)
+			continue
+		var image := texture.get_image()
+		if image == null:
+			offenders.append("%s's map carries no image" % breed)
+			continue
+		var seen: Dictionary = {}
+		var step := maxi(1, image.get_width() / 128)
+		for y in range(0, image.get_height(), step):
+			for x in range(0, image.get_width(), step):
+				var pixel := image.get_pixel(x, y)
+				if pixel.a < 0.5:
+					continue
+				seen[pixel.to_html(false)] = true
+		if seen.size() < 6:
+			offenders.append("%s's map holds %d colours; a flat fill is not a coat" % [
+				breed, seen.size()])
+	assert_eq(offenders.size(), 0, "; ".join(offenders))
+
+
+## Rule 8 bans specular highlights across the world, and the exemption is about
+## COLOUR rather than about gloss. Fur is flat, rough and non-metal, and
+## `StandardMaterial3D`'s defaults are none of those.
+func test_no_dog_is_shiny() -> void:
+	var offenders := PackedStringArray()
+	for breed in DogAnimationsScript.BREEDS:
+		var dog: Dog = DogScript.new()
+		dog.breed = breed
+		var worn := dog.material()
+		if worn != null:
+			if worn.roughness < 0.8:
+				offenders.append("%s is glossy (roughness %.2f)" % [breed, worn.roughness])
+			if worn.metallic > 0.0:
+				offenders.append("%s is metallic (%.2f)" % [breed, worn.metallic])
+			if worn.metallic_specular > 0.0:
+				offenders.append("%s carries a specular highlight (%.2f)" % [breed, worn.metallic_specular])
+		dog.free()
+	assert_eq(offenders.size(), 0, "; ".join(offenders))
+
+
+## THE EXEMPTION IS SCOPED, and this is the negative control on it. The crow and
+## the pigeon are the two animals already shipped, and they resolve their colour
+## out of the twelve. The dog getting its own maps must not become "animals get
+## their own maps".
+func test_the_exemption_did_not_reach_the_other_animals() -> void:
 	var bible: Resource = load(PALETTE_PATH)
-	assert_not_null(bible, "the palette is missing, so nothing can be resolved from it")
 	if bible == null:
 		return
-	var dog: Dog = DogScript.new()
-	var tone: Color = dog.palette_tone()
-	dog.free()
-	assert_true(bible.contains(tone), "the dog's colour %s is not in the 12-colour table" % tone.to_html(false))
-	assert_true(
-		bible.structure_tones.has(tone),
-		"the dog is painted %s, which is not a structure tone" % tone.to_html(false)
-	)
-
-
-## Art Bible rule 12. Warm is reserved for windows, fire, beacons, the truck and
-## the scarf, and it does not list animals.
-func test_no_part_of_the_dog_is_warm() -> void:
-	var bible: Resource = load(PALETTE_PATH)
-	if bible == null:
-		return
-	var dog: Dog = DogScript.new()
-	var tone: Color = dog.palette_tone()
-	dog.free()
-	assert_false(bible.warm_tones.has(tone), "the dog is painted a warm tone")
-
-
-## Not the farmhouse's own siding, and not the crow's near-black. A dog found in
-## the snow beside the buildings has to have a silhouette against both.
-func test_the_dog_is_not_the_colour_of_the_wall_or_of_the_crow() -> void:
-	var bible: Resource = load(PALETTE_PATH)
-	if bible == null:
-		return
-	var dog: Dog = DogScript.new()
-	var tone: Color = dog.palette_tone()
-	dog.free()
-	assert_true(
-		tone != bible.structure_tones[0],
-		"the dog is painted the siding's own tone, so a dog against the farmhouse disappears into it"
-	)
-	assert_true(
-		tone != bible.structure_tones[bible.structure_tones.size() - 1],
-		"the dog is painted the crow's near-black"
-	)
-
-
-## A living animal carries no settled snow -- and the refusal has to go through
-## the painter's own cache key rather than being written onto the material
-## afterwards. `CelPainter` caches one material per colour, so the moment anybody
-## hands the dog the world's painter through the public `set_painter()`, a write
-## would reach everything else painted the same colour and no gate could see it.
-func test_the_dog_refuses_snow_through_the_painters_key_and_not_by_writing_on_it() -> void:
-	var painter := CelPainter.new()
-	var dog: Dog = DogScript.new()
-	var tone: Color = dog.palette_tone()
-	var a_wall := painter.material_for(tone)
-	dog.set_painter(painter)
-	var worn := dog.material()
-	assert_not_null(worn, "the dog resolved no material at all")
-	assert_true(worn != a_wall, "the dog and the world are sharing one material, so one decides for both")
-	assert_almost_eq(
-		float(worn.get_shader_parameter("snow_receptivity")), 0.0, 0.0001,
-		"snow settles on the dog, and by day six the companion is white"
-	)
-	assert_true(
-		float(a_wall.get_shader_parameter("snow_receptivity")) > 0.0,
-		"painting the dog turned the snow off for everything that shares its colour"
-	)
-	dog.free()
+	var offenders := PackedStringArray()
+	for path in ["res://data/wildlife/crow.tres", "res://data/wildlife/pigeon.tres"]:
+		if not ResourceLoader.exists(path):
+			continue
+		var species: Resource = load(path)
+		if species == null or not species.has_method("tone"):
+			continue
+		if not bible.contains(species.tone()):
+			offenders.append("%s's colour %s is outside the twelve" % [
+				path.get_file(), species.tone().to_html(false)])
+	assert_eq(offenders.size(), 0, "; ".join(offenders))

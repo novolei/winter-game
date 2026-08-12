@@ -58,6 +58,30 @@ const SHOTS := [
 	[&"lie", 0.10, WIDE_STOP, "the same dog at the widest stop"],
 ]
 
+## ---------------------------------------------------------------------------
+## THE WORST-CASE WARM FRAME, WHICH THE AMENDMENT ASKS FOR BY NAME
+## ---------------------------------------------------------------------------
+## Rule 12's amendment (`a0f7d8c`) says the 0.5% warm quota is not waived and
+## must be RE-MEASURED rather than assumed, because the dog moves and shares the
+## budget with the scarf, the windows and the truck.
+##
+## So: after dark, at the farmhouse, with the stove lit and the interior showing
+## warm through the openings, the player and his scarf in frame, and the golden
+## retriever -- the warm one -- standing beside him. That is the frame the
+## amendment names, and MEASURED it is over the quota **with the dog and
+## without it**: see the wave report.
+const WORST_SPOT := Vector2(14.2, -4.6)
+const WORST_HEIGHT := 1.0
+## TWO framings, and the pair is the point.
+##
+## 10.5 m is Art Bible rule 1's tightest real stop and is the number any verdict
+## about the quota has to be based on. 6.5 m is tighter than the game ever gets
+## and is a stress reading: warm share scales with the subject's screen area, so
+## it says how much headroom there is rather than whether the rule is met.
+##
+## Reporting only the 6.5 would have been a breach invented by the instrument.
+const WORST_STOPS := [10.5, 6.5]
+
 var _out := OUT_DEFAULT
 var _camera: Camera3D = null
 var _dog: Dog = null
@@ -121,8 +145,88 @@ func _run() -> void:
 			var suffix := "wide" if float(shot[2]) == WIDE_STOP else String(state)
 			_measure(breed, state, float(shot[2]))
 			_save("%s-%s-%s.png" % [_out, breed, suffix])
+
+	await _worst_case(world, ground)
 	if _dog != null:
 		_dog.queue_free()
+
+
+## After dark, stove lit, player and the largest dog together, framed tighter
+## than gameplay ever is. See WORST_SPOT.
+func _worst_case(world: Node3D, ground: float) -> void:
+	var bus := get_node_or_null("/root/EventBus")
+	var clock := get_node_or_null("/root/WorldClock")
+	var stove := get_node_or_null("Main/Farmhouse/Stove")
+	var player := get_node_or_null("Main/Player") as Node3D
+	if stove != null and stove.has_method("light"):
+		stove.call("add_fuel_seconds", 600.0)
+		stove.call("light")
+	if bus != null:
+		# Through the bus, which is the path the game uses: the lighting director
+		# and everything else subscribe, so one event moves the whole world.
+		# WITH the clock's own payload -- `_on_night_started` does `int(payload)`
+		# and a null there is a script error rather than a dark frame.
+		bus.call("emit_event", &"clock.night_started", int(clock.call("current_day")) if clock != null else 1)
+	await _wait(9.0)
+
+	var here := Vector3(WORST_SPOT.x, ground, WORST_SPOT.y)
+	if player != null:
+		player.global_position = here
+	# The GOLDEN retriever, because it is the warm one and this frame exists to
+	# measure the warm quota. The first version put the great dane here and then
+	# repainted it, which measured a navy dog against a navy dog.
+	_swap_dog(world, DogAnimations.GOLDEN_RETRIEVER, ground)
+	# Beside the man, not on top of him: a companion's distance, and close enough
+	# that both are in the same tight frame.
+	_dog.global_position = here + Vector3(0.9, 0.0, 0.35)
+	_dog.rotation.y = deg_to_rad(-115.0)
+	print("capture_dogs: worst case -- stove lit=%s, dog %s beside the player at %s" % [
+		stove.call("is_lit") if stove != null and stove.has_method("is_lit") else "?",
+		_dog.breed, str(here.snapped(Vector3(0.1, 0.1, 0.1)))])
+	for stop in WORST_STOPS:
+		_hold(DogAnimations.IDLE, 0.35)
+		_frame_at(float(stop))
+		await _wait(0.5)
+		_aim(WORST_SPOT, WORST_HEIGHT)
+		_hold(DogAnimations.IDLE, 0.35)
+		await RenderingServer.frame_post_draw
+		_measure(_dog.breed, &"idle", float(stop))
+		_save("%s-worst-%.0f-warm.png" % [_out, float(stop) * 10.0])
+
+		# And the same frame with NO dog in it, so the animal's own contribution
+		# to rule 12's budget is a DIFFERENCE rather than a total. Repainting it
+		# navy was the first version and it measured nothing: the warm count is
+		# the silhouette, and a navy dog occludes as much warm snow as a gold one.
+		_dog.visible = false
+		await _wait(0.2)
+		_aim(WORST_SPOT, WORST_HEIGHT)
+		await RenderingServer.frame_post_draw
+		_save("%s-worst-%.0f-control.png" % [_out, float(stop) * 10.0])
+		_dog.visible = true
+		await _wait(0.2)
+
+
+func _swap_dog(world: Node3D, breed: StringName, ground: float) -> void:
+	if _dog != null:
+		_dog.queue_free()
+		_dog = null
+	_dog = Dog.new()
+	_dog.breed = breed
+	world.add_child(_dog)
+	_dog.global_position = Vector3(SPOT.x, ground, SPOT.y)
+	_dog.rotation.y = deg_to_rad(-115.0)
+
+
+## Play a take and hold it at a fixed fraction, so a frame is a chosen pose
+## rather than whatever the clock had reached.
+func _hold(state: StringName, where: float) -> void:
+	if _dog == null:
+		return
+	var played := _dog.play(state)
+	var player := _dog.player()
+	if played == &"" or player == null:
+		return
+	player.seek(player.get_animation("%s/%s" % [DogAnimations.LIBRARY, played]).length * where, true)
 
 
 ## Where the snow surface is, the way the farmstead settles a building onto it.
@@ -193,6 +297,35 @@ func _measure(breed: StringName, state: StringName, stop: float) -> void:
 			low = low.min(on_screen)
 			high = high.max(on_screen)
 	var centre := _camera.unproject_position(_dog.global_position) * scale
+	# ---------------------------------------------------------------------
+	# IS THE COAT ACTUALLY ON THE ANIMAL
+	# ---------------------------------------------------------------------
+	# The Director asked for this to be verified rather than assumed, and the
+	# reason is that an unbound map is invisible from every angle except this
+	# one: a `StandardMaterial3D` whose `albedo_texture` is null loads without
+	# an error, renders the mesh, and renders it in ONE colour. So the frame is
+	# asked how many colours the dog occupies. A coat has a body, a chest, paws,
+	# a nose and an eye in it; a flat fill has one value and its two shade bands.
+	var frame := get_viewport().get_texture().get_image()
+	var found: Dictionary = {}
+	var x0 := int(low.x * scale)
+	var x1 := int(high.x * scale)
+	var y0 := int(low.y * scale)
+	var y1 := int(high.y * scale)
+	for y in range(maxi(0, y0), mini(frame.get_height(), y1 + 1)):
+		for x in range(maxi(0, x0), mini(frame.get_width(), x1 + 1)):
+			var pixel := frame.get_pixel(x, y)
+			# The snow behind it is blue; the dog is not. Everything the animal
+			# is made of has more red than the field it stands on.
+			if pixel.r - pixel.b > -0.10:
+				found[pixel.to_html(false)] = int(found.get(pixel.to_html(false), 0)) + 1
+	var ranked: Array = found.keys()
+	ranked.sort_custom(func(a, b): return int(found[a]) > int(found[b]))
+	var top := PackedStringArray()
+	for key in ranked.slice(0, 5):
+		top.append("%s x%d" % [key, int(found[key])])
+	print("capture_dogs:    coat on screen -- %d distinct colours over the animal: %s" % [
+		found.size(), ", ".join(top)])
 	# One string literal, not two joined with `+`: `%` binds tighter than `+`, so
 	# a split format applies the array to the second half only and Godot reports
 	# "String formatting error: a number is required" from a line that looks
