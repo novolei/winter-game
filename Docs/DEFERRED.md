@@ -134,3 +134,11 @@ a diagnosis, and the agent standing in the scene with a probe outranks the
 director reasoning from a screenshot. The same correction happened earlier with
 the "character lying down" report, which measurement showed was flat shading plus
 a 45-degree camera, not a broken take.
+
+## Wave 2 — from roads and dynamic accumulation (`b9e1490`)
+
+| # | Finding |
+|---|---|
+| W2-4 | **At full accumulation the roofs go white and the buildings lose their silhouette.** Compare `roads-snow/road-00.png` with `road-03.png`: at day 1 the farmhouse reads as a dark shape with pale roof panels, and at full accumulation the roof is white and only the vertical walls still carry the shape. The Art Bible's whole value logic is dark solids against bright snow, so this is the composition weakening at exactly the point in the seven-day arc where the picture should be at its most desperate. Not a defect — arguably the correct narrative, the world being buried — but it must be judged with the day-1-to-day-7 arc played end to end, not from single frames. Whoever owns that playthrough owns this call. |
+| W2-5 | **Day 1's pitched roof carries no shader snow**; only flat tops accumulate at that level. The implementer asked whether it should start sooner. **Director's ruling: no.** A steep roof shedding snow is real, and the dark pitch is what makes the house read against the field. One constant if this is ever revisited. |
+| W2-6 | **No roof cap mesh shipped, deliberately.** Every model that needs one already carries geometry for it (the farmhouse's six roof slabs, the shed and well-house slabs, the truck's three panels, the pole's crossarm plate) and the shader grows snow *between* them. Growing a cap would need vertex displacement, which cracks every hard edge on these split-vertex models. Accepted; recorded so the style document's roof-cap line is not re-raised as an omission. |
