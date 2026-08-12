@@ -168,6 +168,7 @@ var _tween: Tween = null
 var _bus = null
 var _registry = null
 var _occupant: Node = null
+var _owner: Node = null
 
 
 # --- wiring -----------------------------------------------------------------
@@ -497,6 +498,25 @@ func is_revealed() -> bool:
 ##                 for the whole of the night, rather than sitting in the
 ##                 transparent pipeline. Measured indistinguishable from
 ##                 transparency 1.0, so this changes cost and not the picture.
+##
+## ---------------------------------------------------------------------------
+## THE FIRST OF THOSE THREE IS PUBLISHED RATHER THAN WRITTEN, WHEN ANYBODY ELSE
+## HAS AN OPINION ABOUT THIS BUILDING
+## ---------------------------------------------------------------------------
+## `src/rendering/occluder_fader.gd` fades the whole farmhouse when it stands
+## between the camera and the player, and this takes its roof off when he steps
+## inside. Two systems writing `transparency` to one mesh is a fight, and the
+## visible symptom was a pop AT THE THRESHOLD -- the house heading back toward
+## solid while the roof was still coming off, at the exact beat this feature
+## exists to serve.
+##
+## So there is one writer, and it is the fader's `paint()`. This publishes a
+## number to it and the fader resolves both requests. Where there is no fader --
+## a unit test, a building in a scene of its own -- this writes as it always
+## did, and the composite the fader produces from a request alone is
+## byte-for-byte the same value, so neither case is a special case.
+##
+## `cast_shadow` and `visible` are not contested and stay here.
 func apply_fade(value: float) -> void:
 	if not is_finite(value):
 		return
@@ -504,15 +524,32 @@ func apply_fade(value: float) -> void:
 	if not _resolved:
 		resolve()
 	var casting := _fade <= 0.0
+	var writer = fade_owner()
 	for index in range(_parts.size()):
 		var part := _parts[index]
-		part.transparency = _fade
+		if writer == null or not writer.request_removal(part, self, _fade):
+			part.transparency = _fade
 		part.cast_shadow = (
 			_shadow_before[index]
 			if casting
 			else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		)
 		part.visible = _fade < 1.0
+
+
+## Whoever owns this building's alpha, or null when nobody does. Duck-typed --
+## this must not know what an occluder fader is, only that something offered to
+## take the write.
+func fade_owner():
+	if _owner != null and is_instance_valid(_owner):
+		return _owner
+	if not is_inside_tree():
+		return null
+	# get_node_or_null, NOT Engine.get_singleton (briefing trap 3).
+	var found := get_node_or_null("/root/OccluderFader")
+	if found != null and found.has_method("request_removal"):
+		_owner = found
+	return _owner
 
 
 ## How long a move to `target` takes from where the fade is now.

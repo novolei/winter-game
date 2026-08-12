@@ -31,16 +31,46 @@ extends Resource
 ## more of the frame than the half a percent that rule allows.
 @export var tint := Color(0.0, 0.0, 0.0, 0.0)
 
-## How long a full fade takes, in seconds, either way.
+## How long a full fade takes, in seconds, for a SMALL object -- a trunk, a
+## post, a panel of fence.
 ##
 ## Short. The effect exists to answer "where is my guy" and an answer that takes
-## half a second is a player who has already stopped to look for him. Matched to
-## `InteriorReveal.fade_seconds` (0.30) rather than chosen independently, minus a
-## little, because these two are the same gesture in the frame and two different
-## speeds would read as two different systems.
-@export var fade_seconds := 0.22
+## half a second is a player who has already stopped to look for him. It is a
+## little longer than the 0.22 s this shipped with because the motion is now
+## eased rather than linear, and an eased ramp of the same length reads faster
+## through the middle and lands harder at the ends.
+@export var fade_seconds := 0.26
 
-## How far outside the character's own screen footprint an occluder still counts,
-## in pixels. A shape that stops exactly at his outline pops in and out as he
-## walks; this starts the fade a little before the overlap.
-@export var margin_px := 10.0
+## The same, for a LARGE object -- a building, a truck, a run of fence.
+##
+## Slower, and that is the whole of "scale the motion to the object". A house
+## that changes state as briskly as a fence post reads as a light switch; the
+## same gesture stretched reads as mass. See `OccluderFader.duration_for()`,
+## which also scales by how far the fade actually has to travel, so a reversal
+## caught halfway takes half the time rather than crawling.
+@export var fade_seconds_large := 0.40
+
+## What counts as large: the widest horizontal extent of the object's occlusion
+## proxy, in metres.
+@export var large_metres := 4.0
+
+## How long an occluder goes on being faded after the ray has stopped hitting
+## it, in seconds.
+##
+## THIS IS NOT THE FIX FOR ANYTHING. It is a bounded dwell that stops a single
+## ray chattering when the player skims an edge -- a trunk, the corner of a
+## building -- and it is deliberately shorter than the fade itself, so it can
+## never be mistaken for the fade failing to release. If an occluder appears to
+## stick for longer than this, the trigger is wrong and the dwell is not the
+## place to look.
+@export var dwell_seconds := 0.10
+
+## Where on the character the ray is aimed, as a fraction of his height.
+##
+## Not his origin: that is at his ankles, the one part of him whose being hidden
+## nobody minds and whose being clear proves nothing. The owner's rule is that
+## the ray runs from the camera to his head and upper body, so it is aimed at
+## the top of his chest -- high enough that a low fence does not fade for
+## covering his boots, low enough that it is aimed at a part of him you would
+## notice losing.
+@export var aim_height := 0.78

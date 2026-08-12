@@ -40,6 +40,27 @@ const TINT := Color(0x16 / 255.0, 0x18 / 255.0, 0x1C / 255.0)
 ## the character behind it stops reading.
 const OPACITY := 0.55
 
+## The motion, and it is the half of this effect a screenshot cannot show.
+##
+## Two durations rather than one: a fence post and a farmhouse are the same
+## gesture at different masses, and a house that changes state as briskly as a
+## post reads as a light switch rather than as a building. Both are eased rather
+## than linear -- see OccluderFader.curve_for() for why neither of them
+## overshoots, on a building least of all.
+const FADE_SECONDS := 0.26
+const FADE_SECONDS_LARGE := 0.40
+const LARGE_METRES := 4.0
+
+## A bounded dwell before an occluder is released, so a single ray does not
+## chatter when the player skims an edge. Deliberately much shorter than the
+## fade: it must never be able to look like the release failing.
+const DWELL_SECONDS := 0.10
+
+## Where the ray is aimed, as a fraction of the character's height: the top of
+## his chest. His origin is at his ankles, which is the one part of him whose
+## being covered nobody minds.
+const AIM_HEIGHT := 0.78
+
 
 func _initialize() -> void:
 	var SettingsScript := load("res://src/definitions/occluder_fade_settings.gd")
@@ -49,6 +70,11 @@ func _initialize() -> void:
 	# message (briefing trap 4).
 	var settings: OccluderFadeSettings = SettingsScript.new()
 	settings.tint = Color(TINT.r, TINT.g, TINT.b, OPACITY)
+	settings.fade_seconds = FADE_SECONDS
+	settings.fade_seconds_large = FADE_SECONDS_LARGE
+	settings.large_metres = LARGE_METRES
+	settings.dwell_seconds = DWELL_SECONDS
+	settings.aim_height = AIM_HEIGHT
 	var path := "res://data/rendering/occluder_fade.tres"
 	var error := ResourceSaver.save(settings, path)
 	print("generate_occluder_fade: %s -> %d" % [path, error])
