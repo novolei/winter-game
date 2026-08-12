@@ -678,12 +678,33 @@ func occupant() -> Node:
 
 # --- announcing -------------------------------------------------------------
 
+## ---------------------------------------------------------------------------
+## IT SAYS WHO, AS WELL AS WHERE
+## ---------------------------------------------------------------------------
+## An event about something that does not say what it is ABOUT is invisible
+## while there is exactly one character in the world -- every listener assumes
+## it means the player, and every listener is right.
+##
+## It stops being invisible in wave 4. The bear walks through doors, wave 5's
+## threats walk through doors, and a listener that cannot tell whose crossing
+## this was applies it to all of them. That is not hypothetical: the snow a
+## walker carries melts indoors, and with no subject in the payload EVERY walker
+## in the valley thawed the moment the player stepped inside. The fix there was
+## to ask this building who its occupant is -- which works, and which every
+## future listener would have had to reinvent.
+##
+## `occupant()` rather than the body from the signal, because that is the honest
+## answer for all three callers: `accepts()` only admits the occupant, so for a
+## real crossing they are the same node, and for `reveal()` called directly by
+## the capture harness there is no body to name and the subject this building
+## admits is still the right answer.
 func _announce(event: StringName) -> void:
 	var bus = _event_bus()
 	if bus == null:
 		return
 	bus.emit_event(event, {
 		"building": _building_name(),
+		"occupant": occupant(),
 		"reveal": self,
 		"fade_seconds": fade_seconds,
 	})

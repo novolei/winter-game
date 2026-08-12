@@ -216,6 +216,27 @@ func test_opening_and_shutting_are_announced() -> void:
 	assert_eq(Array(_tags()), ["open", "shut"], "both edges must be announced; got %s" % ", ".join(_tags()))
 
 
+## ...AND WHO WORKED IT. A door only ever toggles for the occupant standing at
+## it, so the payload can say who that was -- and while there is exactly one
+## character in the world, its silence about that is invisible. Wave 4's bear and
+## wave 5's threats come through the same doorway, and a listener choosing a
+## sound, or a threat noticing it has been heard, has no way to tell whose door
+## this was from a payload that only names the door.
+func test_the_announcement_names_who_worked_the_door() -> void:
+	var door := _build()
+	_with_bus(door)
+	_occupant = Node3D.new()
+	door.set_occupant(_occupant)
+	door.open()
+	assert_eq(_events.size(), 1, "expected one announcement")
+	if _events.is_empty():
+		return
+	assert_eq(
+		(_events[0]["payload"] as Dictionary).get("occupant", null), _occupant,
+		"the door said it opened but not who opened it"
+	)
+
+
 # --- the gate, which is the point -------------------------------------------
 
 func test_walking_through_a_wall_with_the_door_shut_reveals_nothing() -> void:

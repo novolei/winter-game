@@ -282,6 +282,11 @@ func light() -> bool:
 	if _lit or _fuel <= 0.0:
 		return false
 	_lit = true
+	# Findable from this instant, because being alight is the whole of what
+	# membership means -- see src/entities/fires.gd. Joining here rather than in
+	# _ready() is what makes the group's meaning enforceable: a caller asking the
+	# group for fires gets fires, never a cold stove it has to filter out.
+	Fires.join(self)
 	_drive_light()
 	_emit(EVENT_LIT)
 	return true
@@ -292,6 +297,9 @@ func extinguish() -> void:
 	if not _lit:
 		return
 	_lit = false
+	# Both ways out of the fire lead here -- smothered, and burnt to nothing in
+	# advance() -- so there is one place that has to remember to leave.
+	Fires.leave(self)
 	_drive_light()
 	_emit(EVENT_WENT_OUT)
 
@@ -311,10 +319,14 @@ func advance(delta: float) -> void:
 
 ## How much of this fire reaches `point`, 0 .. 1. Zero when it is not burning:
 ## an unlit stove is furniture.
+##
+## One of the three questions every member of the `&"fires"` group answers --
+## see src/entities/fires.gd for the other two and for why they are a contract
+## rather than a description of this file.
 func warmth_at(point: Vector3) -> float:
 	if not _lit:
 		return 0.0
-	var distance := _origin().distance_to(point)
+	var distance := fire_position().distance_to(point)
 	if distance <= warm_radius_m:
 		return 1.0
 	if warm_falloff_m <= 0.0:
@@ -456,11 +468,27 @@ func _drive_light() -> void:
 
 # --- internals ---------------------------------------------------------------
 
-## The fire's own position. Node3D.global_position asserts on a node that is not
-## inside a tree, and a stove under test never is, so the local transform stands
-## in for it there.
-func _origin() -> Vector3:
-	return global_position if is_inside_tree() else position
+## The fire's own position, and the point `warmth_at()` measures from -- the two
+## have to be the same or a caller's distance test disagrees with the warmth it
+## then asks for. The `&"fires"` group's second question; see fires.gd.
+##
+## NOT the OmniLight's place. `light_offset` lifts the flame into the firebox for
+## the shading, but the warmth and the distance a body stands at are measured
+## from where the stove STANDS, which is its own origin on the floor.
+func fire_position() -> Vector3:
+	return _origin_of(self)
+
+
+## Where a Node3D is, without asserting that it is in a tree.
+##
+## `global_position` fails an engine assertion outside the tree and answers with
+## the ORIGIN, so an unguarded read does not merely print an error -- for a stove
+## at the origin it silently reports that whoever it was asked about is standing
+## in the fire. A stove under test is never in a tree, and neither is a body a
+## test registers with the ServiceRegistry. Out of a tree the local position IS
+## the world position, because there is no parent transform to compose with.
+static func _origin_of(node: Node3D) -> Vector3:
+	return node.global_position if node.is_inside_tree() else node.position
 
 ## One id per stove instance, so two fires in one room add up instead of
 ## replacing each other. Instance id rather than the node name: two stoves under
@@ -470,9 +498,13 @@ func _source() -> StringName:
 		_source_id = StringName("stove:%d" % get_instance_id())
 	return _source_id
 
+## WHICH fire, as well as where it is. A position is not an identity: two fires
+## in one room cannot be told apart by it, and a listener keyed on position can
+## never erase a fire that was moved between lighting it and its going out. The
+## position stays because most listeners only want the place.
 func _emit(event: StringName) -> void:
 	if _bus != null:
-		_bus.emit_event(event, {"position": _origin()})
+		_bus.emit_event(event, {"fire": self, "position": fire_position()})
 
 func _process(delta: float) -> void:
 	advance(delta)
@@ -482,7 +514,10 @@ func _process(delta: float) -> void:
 	if occupant == null:
 		clear_recovery()
 		return
-	apply_recovery(occupant.global_position)
+	# _origin_of, not global_position: whoever the registry hands back is not
+	# guaranteed to be in a tree, and an unguarded read there answers with the
+	# origin -- which is where this stove is standing. See _origin_of().
+	apply_recovery(_origin_of(occupant))
 
 ## Whoever the fire is warming. The player registers itself with the
 ## ServiceRegistry autoload on _ready(); when threats or a second character want

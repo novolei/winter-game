@@ -277,11 +277,20 @@ func _process(_delta: float) -> void:
 		toggle()
 
 
+## Which door, whether it is open -- and WHO worked it. The last of those was
+## missing, and it is the same gap `InteriorReveal._announce()` had: an event
+## that names its object but not its subject reads correctly for as long as
+## there is exactly one character who could have been the subject.
+##
+## The door only ever toggles for the occupant standing at it, so `occupant()`
+## is who did it. Wave 4's bear and wave 5's threats come through the same
+## doorway, and a listener -- an audio director picking a sound, a threat
+## noticing it has been heard -- cannot tell whose door this was without it.
 func _announce(event: StringName) -> void:
 	var bus = _event_bus()
 	if bus == null:
 		return
-	bus.emit_event(event, {"door": self, "open": _open})
+	bus.emit_event(event, {"door": self, "occupant": occupant(), "open": _open})
 
 
 func _event_bus():

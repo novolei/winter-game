@@ -302,6 +302,37 @@ func test_the_announcement_names_the_building_it_came_from() -> void:
 	)
 
 
+## ...AND WHO WENT IN. An event about something that does not say what it is
+## about is invisible while there is exactly one character in the world, and
+## every listener quietly assumes it means the player.
+##
+## It stops being invisible in wave 4. The bear walks through doors, wave 5's
+## threats walk through doors, and a listener that cannot tell whose crossing
+## this was applies it to all of them -- which is not a hypothetical: the snow
+## load had to ask the building who its occupant was, because the payload would
+## not say, and without that fix every walker in the valley thawed the moment
+## the player stepped indoors.
+func test_the_announcement_names_who_went_in() -> void:
+	var reveal := _build()
+	_with_bus(reveal)
+	_occupant = Node3D.new()
+	_occupant.name = "Player"
+	reveal.set_occupant(_occupant)
+	reveal.on_body_entered(_occupant)
+	reveal.on_body_exited(_occupant)
+	assert_eq(_events.size(), 2, "expected one announcement each way")
+	if _events.size() < 2:
+		return
+	assert_eq(
+		(_events[0]["payload"] as Dictionary).get("occupant", null), _occupant,
+		"the crossing in named the building but not who crossed it"
+	)
+	assert_eq(
+		(_events[1]["payload"] as Dictionary).get("occupant", null), _occupant,
+		"the crossing out named the building but not who left it"
+	)
+
+
 ## Nothing else in the valley may take the roof off. A threat walking past the
 ## door, a dropped item, a beacon -- all of them are bodies.
 func test_only_the_occupant_trips_the_threshold() -> void:

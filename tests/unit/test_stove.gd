@@ -692,3 +692,150 @@ func test_the_falloff_can_be_flattened_so_the_angle_decides_the_band() -> void:
 	if light == null:
 		return
 	assert_almost_eq(light.omni_attenuation, 0.45, 0.0001, "the authored decay never reached the light")
+
+# --- being findable ---------------------------------------------------------
+## A fire that nothing can FIND is half a fire. The stove answers `is_lit()` and
+## `warmth_at()` perfectly well, and until it joined a group the only way to ask
+## "is there a fire near me" was to walk the whole scene tree asking every node
+## whether it happened to answer to that pair of methods. The snow load does
+## exactly that today; the beacon, the threats' approach behaviour and the
+## survival model all want the same question answered.
+##
+## So a burning thing joins `&"fires"` and a cold one does not, and the tests
+## below are about that word ACTUALLY: membership tracks the STATE, not the
+## object, so `get_nodes_in_group(&"fires")` returns things that are burning and
+## a caller never has to filter. The moment a cold stove is allowed to sit in
+## the group, the group means "stove-shaped node" and every caller grows the
+## same `if fire.is_lit()` line -- which is the group not carrying its weight.
+##
+## The name is written out as a literal rather than read from `Fires.GROUP`,
+## for the same reason the palette tests hardcode their hexes: a test that reads
+## the value out of the constant it is checking asserts only that the constant
+## equals itself.
+const FIRES_GROUP := &"fires"
+
+func test_a_cold_stove_is_not_a_fire() -> void:
+	var stove = _build()
+	stove.add_fuel_seconds(600.0)
+	assert_false(
+		stove.is_in_group(FIRES_GROUP),
+		"a stove with wood in it and no flame is furniture; a caller asking the "
+		+ "group for fires must not have to filter it back out"
+	)
+
+func test_lighting_a_stove_makes_it_findable_as_a_fire() -> void:
+	var stove = _build_lit()
+	assert_true(
+		stove.is_in_group(FIRES_GROUP),
+		"a lit stove is not in the fires group, so nothing can find it without "
+		+ "walking the scene tree"
+	)
+
+func test_smothering_the_fire_takes_it_out_of_the_group() -> void:
+	var stove = _build_lit()
+	stove.extinguish()
+	assert_false(
+		stove.is_in_group(FIRES_GROUP),
+		"a smothered fire is still listed as burning"
+	)
+
+## The fire also goes out by itself, and that path is the one a caller cannot
+## see coming: nobody called extinguish(), the wood simply ran out.
+func test_a_fire_that_burns_out_leaves_the_group_on_its_own() -> void:
+	var stove = _build_lit(30.0)
+	stove.advance(60.0)
+	assert_false(
+		stove.is_in_group(FIRES_GROUP),
+		"the fuel ran out and the fire is still listed as burning"
+	)
+	stove.add_fuel_seconds(600.0)
+	stove.light()
+	assert_true(stove.is_in_group(FIRES_GROUP), "a relit fire never rejoined")
+
+## `Node3D.global_position` fails an engine assertion outside the tree and
+## answers with the ORIGIN, so the group's position question has to be one a
+## fire can answer wherever it is -- a stove under test never is in a tree.
+func test_a_fire_says_where_it_is_without_being_in_a_tree() -> void:
+	var stove = _build_lit()
+	stove.position = Vector3(4.0, 0.0, -2.0)
+	assert_eq(
+		stove.fire_position(), Vector3(4.0, 0.0, -2.0),
+		"a fire out of the tree reported the wrong place, which for a distance "
+		+ "test is a fire in the wrong part of the valley"
+	)
+	assert_almost_eq(
+		stove.warmth_at(stove.fire_position()), 1.0, 0.0001,
+		"fire_position() must be the point warmth_at() measures from, or a "
+		+ "caller's distance test and the warmth it then asks for disagree"
+	)
+
+## The payload said WHERE a fire was and not WHICH one, and a position is not an
+## identity: a fire that is carried, or two fires in one room, cannot be told
+## apart by it -- and a listener keyed on position can never erase a fire that
+## moved between lighting and going out.
+func test_the_announcement_names_which_fire_it_came_from() -> void:
+	var stove = _build_lit(30.0)
+	assert_eq(_events.size(), 1, "lighting the stove said nothing")
+	if _events.is_empty():
+		return
+	assert_eq(_events[0].get("fire", null), stove, "the lighting said which place but not which fire")
+	stove.advance(60.0)
+	assert_eq(_events.size(), 2, "the fire dying said nothing")
+	if _events.size() < 2:
+		return
+	assert_eq(_events[1].get("fire", null), stove, "the fire going out said which place but not which fire")
+
+## THE BODY THE FIRE IS WARMING IS NOT NECESSARILY IN THE TREE.
+##
+## The occupant comes off the ServiceRegistry, so it is whatever was registered
+## -- and reading `global_position` on a Node3D outside the tree does not merely
+## print an engine ERROR (which this project counts as a failed run whatever the
+## assertions said), it returns the ORIGIN. For a stove standing at the origin
+## that reads as "he is in the fire", so a man forty metres away is warmed at
+## full rate and the failure looks like generous tuning rather than a bug.
+func test_a_body_outside_the_tree_is_still_where_it_says_it_is() -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	assert_not_null(tree, "the runner is a SceneTree, so a real /root must be reachable")
+	if tree == null:
+		# Return rather than fall through: dereferencing a null tree aborts the
+		# method, and with one assertion already counted the runner's
+		# zero-assertion guard would let it print PASS.
+		return
+	var registry = tree.root.get_node_or_null("ServiceRegistry")
+	assert_not_null(registry, "the ServiceRegistry autoload must be present at /root/ServiceRegistry")
+	if registry == null:
+		return
+
+	_build_lit()
+	_drop_to(&"core_temperature", 0.5)
+	# Far outside the falloff, and never added to a tree.
+	var man := Node3D.new()
+	man.position = OUTSIDE
+	# The live registry is shared with every later test, so whatever was there
+	# goes back, including nothing.
+	var had: bool = registry.has(&"player")
+	var before_service: Object = registry.get_service(&"player")
+	registry.register(&"player", man)
+
+	tree.root.add_child(_stove)
+	_stove._process(0.0)
+	var before_value: float = _survival.value_of(&"core_temperature")
+	_survival.advance(1.0)
+	var after_value: float = _survival.value_of(&"core_temperature")
+
+	# Unwound before asserting: _exit_tree() takes the stove's warmth off the
+	# body, and a Node left under /root leaks at exit (briefing constraint 2).
+	tree.root.remove_child(_stove)
+	if had:
+		registry.register(&"player", before_service)
+	else:
+		registry.unregister(&"player")
+	man.free()
+
+	assert_true(
+		after_value < before_value,
+		"core_temperature went %f -> %f: a man forty metres from the fire warmed "
+		% [before_value, after_value]
+		+ "up, so the stove read his position as the origin -- which is where the "
+		+ "fire is"
+	)
