@@ -19,7 +19,9 @@ extends TestCase
 
 const AssetScannerScript := preload("res://tests/framework/asset_scanner.gd")
 const PigeonScript := preload("res://src/entities/wildlife/pigeon.gd")
-const PigeonAnimationsScript := preload("res://src/entities/wildlife/pigeon_animations.gd")
+## What the pigeon IS. `pigeon_animations.gd` and the `DOVE_*` constants are
+## gone: the take table, the source rate and the yaw are all fields here.
+const SPECIES := preload("res://data/wildlife/pigeon.tres")
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
 
 const PIGEON := "res://assets/models/characters/pigeon/pigeon.fbx"
@@ -49,8 +51,8 @@ func _posed_rig() -> Node3D:
 	var rig := (packed as PackedScene).instantiate() as Node3D
 	if rig == null:
 		return null
-	if absf(PigeonScript.DOVE_YAW) > 0.0001:
-		rig.rotate_y(PigeonScript.DOVE_YAW)
+	if absf(SPECIES.model_yaw) > 0.0001:
+		rig.rotate_y(SPECIES.model_yaw)
 	return rig
 
 
@@ -199,8 +201,8 @@ func test_immutable_tracks_are_kept() -> void:
 ## off by 25% or 150% with nothing to report it.
 func test_the_import_is_set_to_the_rate_the_pack_authored() -> void:
 	assert_true(
-		_import_text().contains("animation/fps=%d" % int(PigeonAnimationsScript.SOURCE_FPS)),
-		"the import rate does not match PigeonAnimations.SOURCE_FPS"
+		_import_text().contains("animation/fps=%d" % int(SPECIES.source_fps)),
+		"the import rate does not match the species' source_fps"
 	)
 
 
@@ -228,7 +230,7 @@ func test_the_pigeon_is_painted_from_the_palette() -> void:
 	assert_not_null(bible, "the palette is missing, so nothing can be resolved from it")
 	if bible == null:
 		return
-	var tone: Color = PigeonScript.palette_tone()
+	var tone: Color = SPECIES.tone()
 	assert_true(bible.contains(tone), "the pigeon's colour %s is not in the 12-colour table" % tone.to_html(false))
 	assert_true(
 		bible.structure_tones.has(tone),
@@ -241,8 +243,8 @@ func test_the_pigeon_is_painted_from_the_palette() -> void:
 ## the crow's near-black would make the second species indistinguishable from the
 ## first, which is the whole reason for adding it.
 func test_the_pigeon_is_a_lighter_bird_than_the_crow() -> void:
-	var pigeon: Color = PigeonScript.palette_tone()
-	var crow: Color = Crow.palette_tone()
+	var pigeon: Color = SPECIES.tone()
+	var crow: Color = Crow.SPECIES.tone()
 	assert_true(
 		pigeon != crow,
 		"the pigeon and the crow are both %s, so nobody can tell them apart" % pigeon.to_html(false)
@@ -263,7 +265,7 @@ func test_the_pigeon_is_not_the_colour_of_the_wall_it_sits_on() -> void:
 	if bible == null:
 		return
 	assert_true(
-		PigeonScript.palette_tone() != bible.structure_tones[0],
+		SPECIES.tone() != bible.structure_tones[0],
 		"the pigeon is painted the siding's own tone, so a bird on the eave disappears into the wall"
 	)
 
@@ -274,7 +276,7 @@ func test_no_part_of_the_pigeon_is_warm() -> void:
 	var bible: Resource = load(PALETTE_PATH)
 	if bible == null:
 		return
-	assert_false(bible.warm_tones.has(PigeonScript.palette_tone()), "the pigeon is painted a warm tone")
+	assert_false(bible.warm_tones.has(SPECIES.tone()), "the pigeon is painted a warm tone")
 
 
 ## A living bird carries no settled snow -- and the refusal has to go through the
@@ -285,7 +287,7 @@ func test_no_part_of_the_pigeon_is_warm() -> void:
 ## project could see it.
 func test_the_pigeon_refuses_snow_through_the_painters_key_and_not_by_writing_on_it() -> void:
 	var painter := CelPainter.new()
-	var tone: Color = PigeonScript.palette_tone()
+	var tone: Color = SPECIES.tone()
 	# What anything else painted the same colour already holds.
 	var a_wall := painter.material_for(tone)
 	var pigeon: Pigeon = PigeonScript.new()
@@ -353,8 +355,8 @@ func test_the_bird_is_built_facing_the_way_look_at_points_it() -> void:
 		beak_at.z < tail_at.z,
 		("the pigeon is built tail-first: beak z = %+.4f, tail z = %+.4f in the rig's own space. "
 			+ "look_at() aims -Z, so every departure flies backwards and every perched bird faces "
-			+ "the wrong way along its eave. Pigeon.DOVE_YAW is %.4f rad.") % [
-			beak_at.z, tail_at.z, PigeonScript.DOVE_YAW]
+			+ "the wrong way along its eave. pigeon.tres's model_yaw is %.4f rad.") % [
+			beak_at.z, tail_at.z, SPECIES.model_yaw]
 	)
 	# Along the axis, not merely on the right side of zero. A rig whose beak was a
 	# millimetre forward of its tail would pass a sign test and still read as a

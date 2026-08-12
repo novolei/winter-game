@@ -1,0 +1,87 @@
+[gd_resource type="Resource" script_class="BirdSpecies" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/bird_species.gd" id="1_13r0i"]
+[ext_resource type="Script" path="res://src/definitions/bird_take.gd" id="2_pvs18"]
+
+[sub_resource type="Resource" id="Resource_0y2cj"]
+script = ExtResource("2_pvs18")
+take_name = &"perch"
+source_path = "res://assets/models/characters/crow/crow_perch.fbx"
+first_frame = 123
+last_frame = 182
+loops = true
+seconds = 1.9666666666666666
+
+[sub_resource type="Resource" id="Resource_rkccy"]
+script = ExtResource("2_pvs18")
+take_name = &"look"
+source_path = "res://assets/models/characters/crow/crow_turn.fbx"
+first_frame = 0
+last_frame = 24
+seconds = 0.8
+
+[sub_resource type="Resource" id="Resource_hqjp7"]
+script = ExtResource("2_pvs18")
+take_name = &"flap"
+source_path = "res://assets/models/characters/crow/crow_fly.fbx"
+first_frame = 1
+last_frame = 25
+loops = true
+in_place = true
+seconds = 0.8
+
+[sub_resource type="Resource" id="Resource_1mlgs"]
+script = ExtResource("2_pvs18")
+take_name = &"take_off"
+source_path = "res://assets/models/characters/crow/crow_takeoff.fbx"
+first_frame = 1
+last_frame = 29
+in_place = true
+seconds = 0.9333333333333333
+
+[sub_resource type="Resource" id="Resource_ais17"]
+script = ExtResource("2_pvs18")
+take_name = &"fly"
+source_path = "res://assets/models/characters/crow/crow_fly.fbx"
+first_frame = 82
+last_frame = 106
+loops = true
+in_place = true
+seconds = 0.8
+
+[sub_resource type="Resource" id="Resource_ln4pt"]
+script = ExtResource("2_pvs18")
+take_name = &"glide"
+source_path = "res://assets/models/characters/crow/crow_fly.fbx"
+first_frame = 163
+last_frame = 195
+loops = true
+in_place = true
+seconds = 1.0666666666666667
+
+[sub_resource type="Resource" id="Resource_hw05p"]
+script = ExtResource("2_pvs18")
+take_name = &"land"
+source_path = "res://assets/models/characters/crow/crow_takeoff.fbx"
+first_frame = 33
+last_frame = 99
+in_place = true
+seconds = 2.2
+
+[resource]
+script = ExtResource("1_13r0i")
+species_name = "crow"
+model_path = "res://assets/models/characters/crow/crow.fbx"
+library = &"crow"
+model_yaw = 3.141592653589793
+palette_index = 3
+takes = Array[ExtResource("2_pvs18")]([SubResource("Resource_0y2cj"), SubResource("Resource_rkccy"), SubResource("Resource_hqjp7"), SubResource("Resource_1mlgs"), SubResource("Resource_ais17"), SubResource("Resource_ln4pt"), SubResource("Resource_hw05p")])
+roles = {
+&"flap": &"flap",
+&"fly": &"fly",
+&"glide": &"glide",
+&"land": &"land",
+&"look": &"look",
+&"perch": &"perch",
+&"take_off": &"take_off"
+}

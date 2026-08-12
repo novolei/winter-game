@@ -311,11 +311,11 @@ func _where_they_are() -> String:
 ## The birds themselves, off the flock's own children rather than through
 ## find_children's type argument, which matches class names and is one rename
 ## away from silently finding nothing.
-func _birds() -> Array[Crow]:
-	var found: Array[Crow] = []
+func _birds() -> Array[Bird]:
+	var found: Array[Bird] = []
 	for child in _flock.get_children():
-		if child is Crow:
-			found.append(child as Crow)
+		if child is Bird:
+			found.append(child as Bird)
 	return found
 
 

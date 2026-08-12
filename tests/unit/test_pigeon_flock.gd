@@ -98,7 +98,7 @@ func _run(seconds: float) -> void:
 func _birds() -> Array:
 	var found: Array = []
 	for child in _flock.get_children():
-		if child is Crow:
+		if child is Bird:
 			found.append(child)
 	return found
 
@@ -106,11 +106,12 @@ func _birds() -> Array:
 # --- what it builds -----------------------------------------------------------
 
 
-## A `Pigeon` IS a `Crow` by inheritance, which is what lets the parent's whole
-## timeline drive it unchanged -- and is also why this has to be asserted rather
-## than assumed. A `_build_crow()` that had lost its override would hand back
-## crows, every test in this file would still pass, and the valley would quietly
-## have twice as many crows and no pigeons.
+## A `Pigeon` is a `Bird` carrying `data/wildlife/pigeon.tres`, and so is a
+## `Crow` -- which is why this has to be asserted rather than assumed. A
+## `_new_bird()` that had lost its override would hand back plain birds wearing
+## the pigeon species, every OTHER test in this file would still pass, and
+## nothing would report it. It is the same assertion that guarded the five
+## overrides this class used to need.
 func test_the_flock_hatches_pigeons_and_not_crows() -> void:
 	_flock.arrive_now()
 	var birds := _birds()

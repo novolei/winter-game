@@ -42,6 +42,11 @@ extends TestCase
 
 const AssetScannerScript := preload("res://tests/framework/asset_scanner.gd")
 const CrowScript := preload("res://src/entities/wildlife/crow.gd")
+
+## What the crow IS, now that its model, colour and facing are data rather than
+## three constants a subclass could not redeclare. Every measurement below reads
+## the species, so a `.tres` that lost its yaw reports a bird facing backwards.
+const SPECIES := preload("res://data/wildlife/crow.tres")
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
 
 const CROW := "res://assets/models/characters/crow/crow.fbx"
@@ -207,7 +212,7 @@ func test_the_crow_is_painted_from_the_palette() -> void:
 	assert_not_null(bible, "the palette is missing, so nothing can be resolved from it")
 	if bible == null:
 		return
-	var tone: Color = CrowScript.palette_tone()
+	var tone: Color = SPECIES.tone()
 	assert_true(bible.contains(tone), "the crow's colour %s is not in the 12-colour table" % tone.to_html(false))
 	assert_true(
 		bible.structure_tones.has(tone),
@@ -230,7 +235,7 @@ func test_the_crow_is_painted_from_the_palette() -> void:
 ## crow become two materials.
 func test_the_crow_refuses_snow_through_the_painters_key_and_not_by_writing_on_it() -> void:
 	var painter := CelPainter.new()
-	var tone: Color = CrowScript.palette_tone()
+	var tone: Color = SPECIES.tone()
 	# What a tree painted the same colour already holds.
 	var a_tree := painter.material_for(tone)
 	var crow: Crow = CrowScript.new()
@@ -324,8 +329,8 @@ func _posed_rig() -> Node3D:
 	var rig := (packed as PackedScene).instantiate() as Node3D
 	if rig == null:
 		return null
-	if absf(CrowScript.MODEL_YAW) > 0.0001:
-		rig.rotate_y(CrowScript.MODEL_YAW)
+	if absf(SPECIES.model_yaw) > 0.0001:
+		rig.rotate_y(SPECIES.model_yaw)
 	return rig
 
 
@@ -355,8 +360,8 @@ func test_the_bird_is_built_facing_the_way_look_at_points_it() -> void:
 		beak_at.z < tail_at.z,
 		("the crow is built tail-first: beak z = %+.4f, tail z = %+.4f in the rig's own space. "
 			+ "look_at() aims -Z, so every departure flies backwards and every perched bird "
-			+ "faces the wrong way along its wire. MODEL_YAW is %.4f rad.") % [
-			beak_at.z, tail_at.z, CrowScript.MODEL_YAW]
+			+ "faces the wrong way along its wire. crow.tres's model_yaw is %.4f rad.") % [
+			beak_at.z, tail_at.z, SPECIES.model_yaw]
 	)
 	# Not merely on the correct side of zero -- along the axis. A rig whose beak
 	# was a millimetre forward of its tail would pass a sign test and still read
@@ -416,7 +421,7 @@ func test_no_part_of_the_crow_is_warm() -> void:
 	var bible: Resource = load(PALETTE_PATH)
 	if bible == null:
 		return
-	var tone: Color = CrowScript.palette_tone()
+	var tone: Color = SPECIES.tone()
 	assert_false(
 		bible.warm_tones.has(tone),
 		"the crow is painted a warm tone, and rule 12 does not list birds"

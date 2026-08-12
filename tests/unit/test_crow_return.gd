@@ -161,9 +161,9 @@ func test_the_feet_touch_when_the_takes_own_body_comes_down() -> void:
 	assert_true(touched_at > 0.0, "the bird's feet never touched")
 	var through := (touched_at - landing_started) / crow.land_seconds
 	assert_almost_eq(
-		through, Crow.LAND_FLARE, 0.03,
+		through, Crow.SPECIES.land_flare, 0.03,
 		"the feet touched %.0f%% through the landing take, not %.0f%%" % [
-			through * 100.0, Crow.LAND_FLARE * 100.0]
+			through * 100.0, Crow.SPECIES.land_flare * 100.0]
 	)
 	assert_true(crow.is_perched(), "the bird never finished its landing")
 	assert_almost_eq(

@@ -20,8 +20,18 @@ extends TestCase
 ##
 ## So every take is played and sampled, and the assertion is on the pose rather
 ## than on the take list.
+##
+## ---------------------------------------------------------------------------
+## WHAT MOVED
+## ---------------------------------------------------------------------------
+## `pigeon_animations.gd` is gone: the renamer is `BirdAnimations` and the table
+## is `data/wildlife/pigeon.tres`. Every assertion below is the one it was.
 
-const PigeonAnimationsScript := preload("res://src/entities/wildlife/pigeon_animations.gd")
+const BirdAnimationsScript := preload("res://src/entities/wildlife/bird_animations.gd")
+
+## The dove itself, read straight out of the data rather than through `Pigeon`,
+## so this file measures the species and not the class that names it.
+const SPECIES := preload("res://data/wildlife/pigeon.tres")
 
 ## How much a bone has to change for a take to count as moving. The same
 ## thresholds the inventory's own census used, so a take this file calls dead is
@@ -36,7 +46,7 @@ const SAMPLES: Array = [0.0, 0.25, 0.5, 0.75, 0.98]
 
 
 func _library() -> AnimationLibrary:
-	return PigeonAnimationsScript.build()
+	return BirdAnimationsScript.build(SPECIES)
 
 
 ## The imported model, in the tree, with its own AnimationPlayer and skeleton.
@@ -46,9 +56,9 @@ func _library() -> AnimationLibrary:
 ## would make every take in this file read as still. Returns null rather than
 ## half a rig, so the caller has one thing to check and one thing to free.
 func _rig():
-	if not ResourceLoader.exists(PigeonAnimationsScript.MODEL_PATH):
+	if not ResourceLoader.exists(SPECIES.model_path):
 		return null
-	var packed := ResourceLoader.load(PigeonAnimationsScript.MODEL_PATH) as PackedScene
+	var packed := ResourceLoader.load(SPECIES.model_path) as PackedScene
 	if packed == null:
 		return null
 	var scene := packed.instantiate() as Node3D
@@ -70,9 +80,9 @@ func _rig():
 	if player == null or skeleton == null:
 		_drop(scene)
 		return null
-	if player.has_animation_library(PigeonAnimationsScript.LIBRARY):
-		player.remove_animation_library(PigeonAnimationsScript.LIBRARY)
-	player.add_animation_library(PigeonAnimationsScript.LIBRARY, _library())
+	if player.has_animation_library(SPECIES.library):
+		player.remove_animation_library(SPECIES.library)
+	player.add_animation_library(SPECIES.library, _library())
 	return {"scene": scene, "player": player, "skeleton": skeleton}
 
 
@@ -115,9 +125,9 @@ func _travel(player: AnimationPlayer, skeleton: Skeleton3D, take: String) -> Dic
 func test_the_library_holds_every_take_the_table_names() -> void:
 	var library := _library()
 	var missing := PackedStringArray()
-	for row in PigeonAnimationsScript.TAKES:
-		if not library.has_animation(StringName(row[1])):
-			missing.append("%s (the pack's `%s`)" % [row[1], row[0]])
+	for take in SPECIES.takes:
+		if not library.has_animation(take.take_name):
+			missing.append("%s (the pack's `%s`)" % [take.take_name, take.source_name])
 	assert_eq(missing.size(), 0, "; ".join(missing))
 
 
@@ -127,30 +137,32 @@ func test_the_library_holds_every_take_the_table_names() -> void:
 func test_nothing_beyond_the_thirteen_arrived() -> void:
 	var library := _library()
 	assert_eq(
-		library.get_animation_list().size(), PigeonAnimationsScript.TAKES.size(),
+		library.get_animation_list().size(), SPECIES.takes.size(),
 		"the library holds %d takes against the %d in the table: %s" % [
-			library.get_animation_list().size(), PigeonAnimationsScript.TAKES.size(),
+			library.get_animation_list().size(), SPECIES.takes.size(),
 			", ".join(Array(library.get_animation_list()))]
 	)
 
 
 ## The lengths, against the frame ranges in the inventory.
 ##
-## This is what catches an `animation/trimming` that has come back on. Godot
-## trims leading and trailing stillness by default, and the crow's perch file
-## imported 100 frames long instead of 183 that way -- silently, and every number
-## that depended on it slid.
+## This is what catches an `animation/trimming` that has gone the wrong way. This
+## pack needs it ON, which is the opposite of the crow's -- every clip is its own
+## `AnimationStack` but all thirteen sit on one shared timeline, so a stack
+## running 120..215 imports as 0..215 with five seconds of nothing on the front.
+## The symptom is a pigeon that lands on a wire and stands perfectly still before
+## its idle begins, and it errors nothing.
 func test_every_take_is_the_length_the_pack_authored_it_at() -> void:
 	var library := _library()
 	var offenders := PackedStringArray()
-	for row in PigeonAnimationsScript.TAKES:
-		var take := library.get_animation(StringName(row[1]))
-		if take == null:
-			offenders.append("%s is missing" % row[1])
+	for take in SPECIES.takes:
+		var built := library.get_animation(take.take_name)
+		if built == null:
+			offenders.append("%s is missing" % take.take_name)
 			continue
-		if absf(take.length - float(row[3])) > 0.01:
+		if absf(built.length - take.seconds) > 0.01:
 			offenders.append("%s imports at %.3f s, the pack authored %.3f s" % [
-				row[1], take.length, float(row[3])])
+				take.take_name, built.length, take.seconds])
 	assert_eq(offenders.size(), 0, "; ".join(offenders))
 
 
@@ -160,13 +172,13 @@ func test_every_take_is_the_length_the_pack_authored_it_at() -> void:
 func test_the_takes_that_should_cycle_do_and_the_ones_that_should_not_do_not() -> void:
 	var library := _library()
 	var offenders := PackedStringArray()
-	for row in PigeonAnimationsScript.TAKES:
-		var take := library.get_animation(StringName(row[1]))
-		if take == null:
+	for take in SPECIES.takes:
+		var built := library.get_animation(take.take_name)
+		if built == null:
 			continue
-		var loops: bool = take.loop_mode != Animation.LOOP_NONE
-		if loops != bool(row[2]):
-			offenders.append("%s loops=%s, the table says %s" % [row[1], loops, row[2]])
+		var loops: bool = built.loop_mode != Animation.LOOP_NONE
+		if loops != take.loops:
+			offenders.append("%s loops=%s, the table says %s" % [take.take_name, loops, take.loops])
 	assert_eq(offenders.size(), 0, "; ".join(offenders))
 
 
@@ -178,14 +190,14 @@ func test_the_takes_that_should_cycle_do_and_the_ones_that_should_not_do_not() -
 ## would then be asserting against its own previous run.
 func test_building_the_library_does_not_edit_the_imported_takes() -> void:
 	var _first := _library()
-	var source := PigeonAnimationsScript.source_takes()
+	var source := BirdAnimationsScript.animations_in(SPECIES.model_path)
 	var edited := PackedStringArray()
-	for row in PigeonAnimationsScript.TAKES:
-		if not bool(row[2]):
+	for take in SPECIES.takes:
+		if not take.loops:
 			continue
-		var raw: Animation = source.get(row[0], null)
+		var raw: Animation = source.get(take.source_name, null)
 		if raw != null and raw.loop_mode != Animation.LOOP_NONE:
-			edited.append("%s" % row[0])
+			edited.append("%s" % take.source_name)
 	assert_eq(edited.size(), 0, "the imported take(s) %s were changed in place" % ", ".join(edited))
 
 
@@ -195,31 +207,28 @@ func test_building_the_library_does_not_edit_the_imported_takes() -> void:
 func test_every_name_the_pigeon_plays_is_in_the_library() -> void:
 	var library := _library()
 	var missing := PackedStringArray()
-	for asked in Pigeon.TRANSLATION.values():
+	for asked in SPECIES.roles.values():
 		if not library.has_animation(asked as StringName):
 			missing.append(String(asked))
-	assert_true(Pigeon.TRANSLATION.size() >= 7, "the translation table lost rows")
+	assert_true(SPECIES.roles.size() >= 7, "the role map lost rows")
 	assert_eq(missing.size(), 0, "the pigeon plays %s, which the library does not hold" % ", ".join(missing))
 
 
-## Every one of the crow's seven take names is translated. A name that fell
-## through would be played verbatim out of the pigeon library, find nothing, and
-## leave the bird in whatever pose it was already in.
+## Every one of the seven roles the timeline plays has a take. A role with no row
+## leaves the bird in whatever pose it was already in -- which is the right
+## behaviour for a species that genuinely lacks one, and a silent defect for a
+## species that does not.
 func test_every_take_the_crow_state_machine_plays_is_translated() -> void:
 	var untranslated := PackedStringArray()
-	for name in [
-		CrowAnimations.PERCH, CrowAnimations.LOOK, CrowAnimations.FLAP,
-		CrowAnimations.TAKE_OFF, CrowAnimations.FLY, CrowAnimations.GLIDE,
-		CrowAnimations.LAND,
-	]:
-		if not Pigeon.TRANSLATION.has(name):
-			untranslated.append(String(name))
+	for role in BirdSpecies.ROLES:
+		if SPECIES.take_for(role) == &"":
+			untranslated.append(String(role))
 	assert_eq(untranslated.size(), 0, "%s has no pigeon take" % ", ".join(untranslated))
 
 
 func test_a_name_the_table_does_not_carry_reports_no_length() -> void:
-	assert_true(PigeonAnimationsScript.length_of(&"soaring") < 0.0, "an unknown take must not report a length")
-	assert_almost_eq(PigeonAnimationsScript.length_of(PigeonAnimations.FLY), 0.583, 0.001, "the flight cycle")
+	assert_true(SPECIES.length_of(&"soaring") < 0.0, "an unknown take must not report a length")
+	assert_almost_eq(SPECIES.length_of(&"fly"), 0.583, 0.001, "the flight cycle")
 
 
 # --- and the one that matters -------------------------------------------------
@@ -235,19 +244,19 @@ func test_every_take_moves_the_bird() -> void:
 	var skeleton: Skeleton3D = rig["skeleton"]
 	var still := PackedStringArray()
 	var played := 0
-	for row in PigeonAnimationsScript.TAKES:
-		var take := "%s/%s" % [PigeonAnimationsScript.LIBRARY, row[1]]
+	for row in SPECIES.takes:
+		var take := "%s/%s" % [SPECIES.library, row.take_name]
 		if not player.has_animation(take):
-			still.append("%s is not in the library at all" % row[1])
+			still.append("%s is not in the library at all" % row.take_name)
 			continue
 		played += 1
 		var travel := _travel(player, skeleton, take)
 		if float(travel["rotation"]) <= MOVED_RADIANS and float(travel["position"]) <= MOVED_METRES:
 			still.append("%s never leaves the bind pose (best bone: %.5f rad, %.5f m)" % [
-				row[1], travel["rotation"], travel["position"]])
+				row.take_name, travel["rotation"], travel["position"]])
 	_drop(rig["scene"])
-	assert_eq(played, PigeonAnimationsScript.TAKES.size(), "only %d of %d takes were playable" % [
-		played, PigeonAnimationsScript.TAKES.size()])
+	assert_eq(played, SPECIES.takes.size(), "only %d of %d takes were playable" % [
+		played, SPECIES.takes.size()])
 	assert_eq(still.size(), 0, "; ".join(still))
 
 
@@ -265,8 +274,7 @@ func test_the_motion_test_reports_a_still_take_as_still() -> void:
 	# A take of the right length whose every track holds one key: it plays, it
 	# appears in the list, and it has no pose to give -- exactly the shape of the
 	# four junk `Take 001` stacks the inventory found.
-	var held := (player.get_animation("%s/%s" % [
-		PigeonAnimationsScript.LIBRARY, PigeonAnimations.FLY]) as Animation).duplicate(true)
+	var held := (player.get_animation("%s/%s" % [SPECIES.library, "fly"]) as Animation).duplicate(true)
 	for track in range(held.get_track_count()):
 		while held.track_get_key_count(track) > 1:
 			held.track_remove_key(track, held.track_get_key_count(track) - 1)

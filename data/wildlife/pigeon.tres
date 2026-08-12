@@ -1,0 +1,117 @@
+[gd_resource type="Resource" script_class="BirdSpecies" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/bird_species.gd" id="1_o0mc4"]
+[ext_resource type="Script" path="res://src/definitions/bird_take.gd" id="2_1bh8h"]
+
+[sub_resource type="Resource" id="Resource_623i4"]
+script = ExtResource("2_1bh8h")
+take_name = &"idle_left"
+source_name = "Dove_Idle Left"
+loops = true
+seconds = 3.958
+
+[sub_resource type="Resource" id="Resource_eitex"]
+script = ExtResource("2_1bh8h")
+take_name = &"idle_right"
+source_name = "Dove_Idle Right"
+loops = true
+seconds = 3.958
+
+[sub_resource type="Resource" id="Resource_mcr7l"]
+script = ExtResource("2_1bh8h")
+take_name = &"idle_to_walk"
+source_name = "Dove_Idle to Walk"
+seconds = 0.417
+
+[sub_resource type="Resource" id="Resource_vps3s"]
+script = ExtResource("2_1bh8h")
+take_name = &"walk"
+source_name = "Dove_Walk"
+loops = true
+seconds = 1.167
+
+[sub_resource type="Resource" id="Resource_l1lr6"]
+script = ExtResource("2_1bh8h")
+take_name = &"walk_to_idle"
+source_name = "Dove_Walk to Idle"
+seconds = 0.417
+
+[sub_resource type="Resource" id="Resource_v1mwk"]
+script = ExtResource("2_1bh8h")
+take_name = &"idle_to_run"
+source_name = "Dove_Idle to Run"
+seconds = 0.292
+
+[sub_resource type="Resource" id="Resource_ohy8h"]
+script = ExtResource("2_1bh8h")
+take_name = &"run"
+source_name = "Dove_Run"
+loops = true
+seconds = 0.583
+
+[sub_resource type="Resource" id="Resource_p14wa"]
+script = ExtResource("2_1bh8h")
+take_name = &"run_to_idle"
+source_name = "Dove_Run to Idle "
+seconds = 0.292
+
+[sub_resource type="Resource" id="Resource_8pobr"]
+script = ExtResource("2_1bh8h")
+take_name = &"take_off"
+source_name = "Dove_Idle to Fly"
+seconds = 0.375
+
+[sub_resource type="Resource" id="Resource_08njh"]
+script = ExtResource("2_1bh8h")
+take_name = &"fly"
+source_name = "Dove_Fly"
+loops = true
+seconds = 0.583
+
+[sub_resource type="Resource" id="Resource_p1bes"]
+script = ExtResource("2_1bh8h")
+take_name = &"land"
+source_name = "Dove_Fly to Idle"
+seconds = 0.417
+
+[sub_resource type="Resource" id="Resource_k5soh"]
+script = ExtResource("2_1bh8h")
+take_name = &"peck"
+source_name = "Dove_Atttack"
+seconds = 1.667
+
+[sub_resource type="Resource" id="Resource_kohmi"]
+script = ExtResource("2_1bh8h")
+take_name = &"death"
+source_name = "Dove_Death"
+seconds = 0.875
+
+[resource]
+script = ExtResource("1_o0mc4")
+species_name = "pigeon"
+model_path = "res://assets/models/characters/pigeon/pigeon.fbx"
+library = &"pigeon"
+source_fps = 24.0
+model_yaw = 3.141592653589793
+palette_index = 1
+takes = Array[ExtResource("2_1bh8h")]([SubResource("Resource_623i4"), SubResource("Resource_eitex"), SubResource("Resource_mcr7l"), SubResource("Resource_vps3s"), SubResource("Resource_l1lr6"), SubResource("Resource_v1mwk"), SubResource("Resource_ohy8h"), SubResource("Resource_p14wa"), SubResource("Resource_8pobr"), SubResource("Resource_08njh"), SubResource("Resource_p1bes"), SubResource("Resource_k5soh"), SubResource("Resource_kohmi")])
+roles = {
+&"flap": &"take_off",
+&"fly": &"fly",
+&"glide": &"fly",
+&"land": &"land",
+&"look": &"idle_right",
+&"perch": &"idle_left",
+&"take_off": &"take_off"
+}
+launch_seconds = 0.375
+crouch_fraction = 0.45
+launch_climb_m = 0.22
+land_seconds = 0.417
+mill_speed = 4.2
+cruise_speed = 9.0
+fewest = 2
+most = 6
+flush_radius_m = 5.0
+daylight_only = false
+avoids_occupied_perches = true
