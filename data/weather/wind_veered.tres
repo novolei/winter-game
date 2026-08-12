@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="WindProfile" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/wind_profile.gd" id="1_ooup1"]
+
+[resource]
+script = ExtResource("1_ooup1")
+id = &"wind_veered"
+display_name = "Veered"
+prevailing_degrees = 172.35399999999998

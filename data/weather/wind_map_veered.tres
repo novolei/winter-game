@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="WindMap" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/wind_profile.gd" id="1_6dthy"]
+[ext_resource type="Resource" path="res://data/weather/wind_veered.tres" id="2_6lrp6"]
+[ext_resource type="Script" path="res://src/definitions/wind_map.gd" id="3_qwp2c"]
+
+[resource]
+script = ExtResource("3_qwp2c")
+profiles = Array[ExtResource("1_6dthy")]([ExtResource("2_6lrp6")])
+default_id = &"wind_veered"

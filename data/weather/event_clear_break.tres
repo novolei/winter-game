@@ -1,0 +1,36 @@
+[gd_resource type="Resource" script_class="WeatherEventDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/weather_event_definition.gd" id="1_sagux"]
+[ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="2_sfml6"]
+[ext_resource type="Script" path="res://src/definitions/weather_tell.gd" id="3_8ow7x"]
+[ext_resource type="Resource" path="res://data/weather/wind_map_calm.tres" id="4_cqvib"]
+
+[sub_resource type="Resource" id="Resource_hxwx4"]
+script = ExtResource("2_sfml6")
+target_stat = &"core_temperature"
+source_id = &"clear_break"
+operation = 1
+value = 0.55
+
+[sub_resource type="Resource" id="Resource_bum6d"]
+script = ExtResource("3_8ow7x")
+sound = &"weather_tell_clear_break"
+lighting_preset = &"pale_day"
+wind_speed_multiplier = 0.8
+snowfall_rate = 0.05
+
+[resource]
+script = ExtResource("1_sagux")
+id = &"clear_break"
+display_name = "Clear break"
+tell_duration_range = Vector2(20, 30)
+active_duration_range = Vector2(120, 200)
+fade_duration = 25.0
+tell = SubResource("Resource_bum6d")
+stat_modifiers = Array[ExtResource("2_sfml6")]([SubResource("Resource_hxwx4")])
+visibility_multiplier = 1.4
+wind_speed_multiplier = 0.6
+snowfall_rate = 0.02
+lighting_preset = &"sunrise"
+lighting_fade_seconds = 12.0
+wind_map = ExtResource("4_cqvib")

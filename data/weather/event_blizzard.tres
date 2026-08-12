@@ -1,0 +1,40 @@
+[gd_resource type="Resource" script_class="WeatherEventDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/weather_event_definition.gd" id="1_k441t"]
+[ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="2_4vqkb"]
+[ext_resource type="Script" path="res://src/definitions/weather_tell.gd" id="3_4sdyw"]
+[ext_resource type="Resource" path="res://data/weather/wind_map_gale.tres" id="4_o6kmo"]
+
+[sub_resource type="Resource" id="Resource_6iuwa"]
+script = ExtResource("2_4vqkb")
+target_stat = &"core_temperature"
+source_id = &"blizzard"
+operation = 1
+value = 2.0
+
+[sub_resource type="Resource" id="Resource_yu26n"]
+script = ExtResource("3_4sdyw")
+sound = &"weather_tell_blizzard"
+lighting_preset = &"nightfall"
+wind_map = ExtResource("4_o6kmo")
+wind_speed_multiplier = 1.3
+snowfall_rate = 0.42
+flushes_wildlife = true
+
+[resource]
+script = ExtResource("1_k441t")
+id = &"blizzard"
+display_name = "Blizzard"
+tell_duration_range = Vector2(24, 36)
+active_duration_range = Vector2(150, 240)
+fade_duration = 20.0
+tell = SubResource("Resource_yu26n")
+stat_modifiers = Array[ExtResource("2_4vqkb")]([SubResource("Resource_6iuwa")])
+visibility_multiplier = 0.25
+wind_speed_multiplier = 1.6
+snowfall_rate = 1.0
+lighting_preset = &"whiteout"
+lighting_fade_seconds = 10.0
+wind_map = ExtResource("4_o6kmo")
+extinguishes_beacons = true
+min_beacons_extinguished = 1

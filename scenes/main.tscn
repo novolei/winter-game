@@ -33,6 +33,7 @@
 [ext_resource type="Script" path="res://src/entities/wildlife/crow_flock.gd" id="34_crows"]
 [ext_resource type="PackedScene" path="res://scenes/effects/wind.tscn" id="31_wind"]
 [ext_resource type="PackedScene" path="res://scenes/effects/chimney_smoke.tscn" id="35_smoke"]
+[ext_resource type="Script" path="res://src/systems/weather_system.gd" id="36_weather"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_room_main"]
 size = Vector3(6.88, 3.2, 5.68)
@@ -211,3 +212,6 @@ script = ExtResource("34_crows")
 [node name="Snowfall" parent="." unique_id=130002654 instance=ExtResource("27_snowfall")]
 
 [node name="Wind" parent="." unique_id=130002655 instance=ExtResource("31_wind")]
+
+[node name="Weather" type="Node" parent="."]
+script = ExtResource("36_weather")
