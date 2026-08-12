@@ -41,6 +41,7 @@
 [ext_resource type="Script" path="res://src/ui/vitals.gd" id="41_vitals"]
 [ext_resource type="Script" path="res://src/ui/threshold_surfacing.gd" id="42_surfacing"]
 [ext_resource type="Script" path="res://src/entities/wildlife/pigeon_flock.gd" id="40_pigeons"]
+[ext_resource type="Script" path="res://src/audio/ambience_director.gd" id="44_ambience"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_room_main"]
 size = Vector3(6.88, 3.2, 5.68)
@@ -251,6 +252,9 @@ script = ExtResource("36_weather")
 
 [node name="Aurora" type="Node" parent="."]
 script = ExtResource("37_aurora")
+
+[node name="Ambience" type="Node3D" parent="."]
+script = ExtResource("44_ambience")
 
 [node name="UI" type="CanvasLayer" parent="."]
 script = ExtResource("40_uilayer")

@@ -1,0 +1,86 @@
+[gd_resource type="Resource" script_class="AmbienceMap" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/ambience_cue.gd" id="1_i8lhq"]
+[ext_resource type="Script" path="res://src/definitions/ambience_layer.gd" id="2_ffwpp"]
+[ext_resource type="Script" path="res://src/definitions/ambience_map.gd" id="3_awaxu"]
+
+[sub_resource type="Resource" id="Resource_1367m"]
+script = ExtResource("1_i8lhq")
+cue_id = &"weather_tell_blizzard"
+gain_db = -9.0
+notes = "Weather tell, named by data/weather/. No .gd file anywhere knows this id."
+
+[sub_resource type="Resource" id="Resource_o4s4c"]
+script = ExtResource("1_i8lhq")
+cue_id = &"weather_tell_clear_break"
+gain_db = -9.0
+notes = "Weather tell, named by data/weather/. No .gd file anywhere knows this id."
+
+[sub_resource type="Resource" id="Resource_4tcbg"]
+script = ExtResource("1_i8lhq")
+cue_id = &"weather_tell_cold_snap"
+gain_db = -9.0
+notes = "Weather tell, named by data/weather/. No .gd file anywhere knows this id."
+
+[sub_resource type="Resource" id="Resource_i5bel"]
+script = ExtResource("1_i8lhq")
+cue_id = &"weather_tell_freezing_rain"
+gain_db = -9.0
+notes = "Weather tell, named by data/weather/. No .gd file anywhere knows this id."
+
+[sub_resource type="Resource" id="Resource_h0gcj"]
+script = ExtResource("1_i8lhq")
+cue_id = &"weather_tell_snow_fog"
+gain_db = -9.0
+notes = "Weather tell, named by data/weather/. No .gd file anywhere knows this id."
+
+[sub_resource type="Resource" id="Resource_uulub"]
+script = ExtResource("1_i8lhq")
+cue_id = &"weather_tell_wind_shift"
+gain_db = -9.0
+notes = "Weather tell, named by data/weather/. No .gd file anywhere knows this id."
+
+[sub_resource type="Resource" id="Resource_4a5ff"]
+script = ExtResource("2_ffwpp")
+layer_id = &"wind_low"
+enters_at = 0.09
+gain_db = -14.0
+pitch_scale = 0.97
+pitch_at_full = 1.02
+notes = "The body of the air. Silent below 0.09, which is 97.6% of a still night and 22.3% of a valley day."
+
+[sub_resource type="Resource" id="Resource_wrkrd"]
+script = ExtResource("2_ffwpp")
+layer_id = &"wind_mid"
+enters_at = 0.26
+full_at = 0.52
+pitch_scale = 0.98
+pitch_at_full = 1.05
+withdraws_near_danger = true
+notes = "The gust. Enters just under wind_valley's own gust_threshold of 0.30, so it arrives with the event."
+
+[sub_resource type="Resource" id="Resource_0m576"]
+script = ExtResource("2_ffwpp")
+layer_id = &"wind_high"
+enters_at = 0.55
+full_at = 0.88
+gain_db = -15.0
+pitch_at_full = 1.09
+withdraws_near_danger = true
+notes = "The squall's top. 5.4% of a valley day, 46.3% of a gale."
+
+[sub_resource type="Resource" id="Resource_2p8l6"]
+script = ExtResource("2_ffwpp")
+layer_id = &"snow_fall"
+source = 1
+enters_at = 0.16
+full_at = 0.62
+gain_db = -17.0
+pitch_at_full = 1.06
+withdraws_near_danger = true
+notes = "Falling snow, driven by Snowfall.snowfall_rate() rather than by the wind."
+
+[resource]
+script = ExtResource("3_awaxu")
+layers = Array[ExtResource("2_ffwpp")]([SubResource("Resource_4a5ff"), SubResource("Resource_wrkrd"), SubResource("Resource_0m576"), SubResource("Resource_2p8l6")])
+cues = Array[ExtResource("1_i8lhq")]([SubResource("Resource_1367m"), SubResource("Resource_o4s4c"), SubResource("Resource_4tcbg"), SubResource("Resource_i5bel"), SubResource("Resource_h0gcj"), SubResource("Resource_uulub")])

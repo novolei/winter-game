@@ -456,3 +456,23 @@ All three were measured on this project while adopting animals out of Unity pack
 **3. `Mesh.get_aabb()` does not report life size.** The four Blender-authored characters here measure at roughly **1/100** of their real dimensions through it — the bear at 0.029 m, the wanderer at 0.016 m — while their scene transforms are correct. A scale gate written naively against `get_aabb()` fires on every one of them, **and the obvious fix — loosening the band until they pass — would then admit the 15 mm wolf that motivated the gate.**
 
 That third one is the shape worth remembering beyond this case: **when a new check fires on things you know are correct, the reflex to widen it is usually wrong.** The check is measuring something other than what you meant. Find out what, or the fix will pass exactly the defect you built it for.
+
+### Trap 16 — `set_wind()` is a claimed name, and taking it makes you a wind consumer
+
+`WindSystem._collect()` sweeps the **whole tree** every couple of seconds and adopts every node that answers `set_wind` or `set_wind_strength`. It then calls `consumer.set_wind(velocity())` — a `Vector3`, in m/s² — sixty times a second, for the rest of the run.
+
+So a node that declares `set_wind()` as its own **injector** does not get injected. It gets overwritten:
+
+```gdscript
+func set_wind(wind) -> void:    # meant as "here is the WindSystem"
+    _wind = wind                # receives Vector3(0.29, 0, 0.12) instead
+```
+
+Measured on the ambience director. `is_instance_valid()` is **false for a non-Object**, so every subsequent `if _wind == null or not is_instance_valid(_wind): return 0.0` guard fired and the whole system returned zero for the rest of the run. **No error, no warning, and every unit test passed** — because unit tests inject the collaborator by hand and no `WindSystem` is anywhere near them.
+
+It was found by running the real scene and **printing what the node had actually resolved**, which is the same habit trap 9 ends on. Two rules follow:
+
+- **Name an injector after the thing, not after the quantity**: `set_wind_system()`, not `set_wind()`. `WeatherSystem` already had it right.
+- **A duck-typed sweep makes method names shared vocabulary across the whole project.** Before declaring a setter on a `Node`, grep for `has_method("<name>")` — anything that finds you will drive you.
+
+The general shape, and it is the third instance in this file: **a system that discovers collaborators by method name has an API surface much larger than its class.** Traps 3 and 13 are the same lesson from other directions — a mechanism you did not know was running silently did half your work for you, wrongly.
