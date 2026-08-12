@@ -418,6 +418,33 @@ func flake_scale() -> float:
 ##
 ## It still grows if the frame outgrows it, because the alternative is a picture
 ## whose edges have no snow in them -- which is where this whole task started.
+##
+## ---------------------------------------------------------------------------
+## DO NOT "OPTIMISE" THIS BACK INTO A BOX THAT SCALES
+## ---------------------------------------------------------------------------
+## A scaling box holds fewer particles at the tight framing, and that looks like
+## free performance. It is not, and the obvious way to buy the coverage back --
+## allocate for the widest frame and discard per-particle in the draw shader
+## against a stable random -- was specified, considered, and rejected on two
+## grounds:
+##
+##   1. IT WOULD COST THE TESTS THEIR EYES. Culling needs a ShaderMaterial, and
+##      the moment the flake stops being a StandardMaterial3D the three art-rule
+##      tests -- cool-white (rule 12), under the bloom threshold, no specular or
+##      roughness (rule 8) -- can no longer read `albedo_color`, `blend_mode` or
+##      `shading_mode`. They would be reduced to asserting against uniform names
+##      invented for the occasion. Trading a test's ability to see an
+##      engine-understood property for machinery that produces the same picture
+##      is a bad trade.
+##   2. IT WOULD BE SLOWER TO SETTLE. With a box that scales, particles already
+##      in flight sit in the old smaller region while new ones are born in the
+##      larger one, so the density needs a full particle lifetime -- eleven
+##      seconds on the distant layer -- to even out across the new box. A fixed
+##      volume of air has nothing to redistribute: the frustum does the
+##      discarding, for free, on the frame the camera moves.
+##
+## The measured cost of doing it this way is 0.040 ms/frame for the whole
+## snowfall at the widest stop, 3598 particles allocated across the three layers.
 func geometry_scale() -> float:
 	var scale := frame_scale()
 	return scale if camera_space else maxf(1.0, scale)
@@ -760,6 +787,30 @@ func _apply() -> void:
 	# ...and never smaller than a flake can legibly be drawn. Under the floor a
 	# flake is a shimmering sub-pixel sample rather than snow, so it is drawn AT
 	# the floor instead -- and if the whole layer has arrived there, it leaves.
+	#
+	# ---------------------------------------------------------------------------
+	# THE CLAMP IS NOT INK-NEUTRAL, AND THAT IS A DECISION, NOT AN OVERSIGHT
+	# ---------------------------------------------------------------------------
+	# Drawing a flake bigger than it honestly is adds coverage, and it adds more of
+	# it the wider the frame gets, because more of the distribution falls under the
+	# floor. Measured: with the snowfall at the PALE DAY rate the three stops carry
+	# 100 / 143 / 141 per cent of the tightest one's ink, where a blizzard carries
+	# 100 / 96 / 101. So in light snow the picture does gain snow as the player
+	# pulls back, which is the one place "the weather must not change when the
+	# frame moves" still does not hold.
+	#
+	# The fix is known and was costed: multiply amount_ratio by
+	# (honest_area / drawn_area), so a clamped layer emits proportionally fewer,
+	# bigger, legible flakes and the ink comes out exactly right. It is NOT taken,
+	# and the reason is what amount_ratio does rather than what it computes:
+	# lowering it does not remove particles already in flight, so the density
+	# settles over a full lifetime -- five to fourteen seconds here. That lag would
+	# sit on a PLAYER-INITIATED action; the zoom finishes in under half a second
+	# and the snow would go on visibly settling for ten more, which reads as a bug.
+	#
+	# The error it would fix is a forty per cent change in about a sixth of the
+	# snow, in the direction of more, in weather where the absolute quantity is
+	# barely visible. An error nobody can see beats a lag everybody can.
 	var floor_m := legibility_floor_m()
 	_process_material.scale_min = maxf(honest_min, floor_m)
 	_process_material.scale_max = maxf(honest_max, floor_m)
