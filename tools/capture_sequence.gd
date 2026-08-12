@@ -216,10 +216,16 @@ func _state(index: int) -> String:
 	if fader != null and fader.has_method("report"):
 		line += "  " + String(fader.report())
 	# The other thing a still cannot carry: whether the first step out of a drift
-	# throws more snow than the fourth. LegSnow's load and last shed, per frame.
-	var legs := get_node_or_null("/root/LegSnow")
-	if legs != null and legs.has_method("report"):
-		line += "  " + String(legs.report())
+	# throws more snow than the fourth, and how high up his legs this particular
+	# crossing reached. LegSnow's own numbers, per frame.
+	#
+	# Under the walker rather than at /root: it is a child of the body it dresses,
+	# because the crust is a parameter on that body's own mesh and one global node
+	# could only ever whiten one set of legs.
+	if player != null:
+		var legs := player.get_node_or_null("LegSnow")
+		if legs != null and legs.has_method("report"):
+			line += "  " + String(legs.report())
 	var reveal := get_node_or_null("Main/Farmhouse/InteriorReveal")
 	if reveal != null and reveal.has_method("fade"):
 		line += "  reveal=%.2f" % reveal.fade()

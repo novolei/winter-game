@@ -4,20 +4,22 @@
 
 ; The snow a walker carries out of a drift, and sheds step by step.
 ;
-; A SCENE AND NOT A NODE IN scenes/main.tscn, and registered as an autoload
-; rather than placed. Two reasons, and the second is the one that matters:
+; A SCENE SO IT CAN BE DROPPED UNDER A BODY, and that is the whole of it: this
+; node belongs to ONE walker, because the crust it drives is a material
+; parameter on that walker's own mesh.
 ;
-;   * It is not a place in the world. Both emitters run in WORLD space and are
-;     positioned by the footfall that made them, so this node's own transform is
-;     nothing but a culling box that follows the walker.
-;   * It finds its subject through the ServiceRegistry -- the same way
-;     OccluderFader, which is also an autoload and also a rendering system, finds
-;     the same subject. So it works in scenes/main.tscn and in every capture
-;     harness under tools/ without either of them naming it.
+; It was an autoload, and an autoload cannot do this job. One global instance can
+; whiten one set of legs, and the reason this effect takes its footfalls off the
+; EventBus rather than calling into the player is so the bear in Wave 4 and the
+; hungry man in Wave 5 get leg snow for free. Free means adding this scene as a
+; child of the bear -- no export to point, no service to register, no `.gd` to
+; change -- and a single autoload could not have delivered any of it.
 ;
-; A second walker -- the bear in Wave 4, the hungry man in Wave 5 -- gets leg
-; snow by registering itself as a service and instancing this scene with
-; `subject_service` pointed at it. No `.gd` changes anywhere.
+; Placed under the body rather than beside it in scenes/main.tscn for the same
+; reason: it finds its subject by looking up, so where it sits IS the wiring.
+; Both emitters still run in WORLD space and are still positioned by the footfall
+; that made them; this node's own transform is nothing but a culling box, which
+; its parent now carries between footfalls for free.
 
 [node name="LegSnow" type="Node3D"]
 script = ExtResource("1_legsnow")

@@ -16,6 +16,7 @@ extends TestCase
 
 const LegSnowScript := preload("res://src/entities/leg_snow.gd")
 const SnowFieldScript := preload("res://src/systems/snow_field.gd")
+const CameraRigScript := preload("res://src/rendering/camera_rig.gd")
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
 const SHADER_PATH := "res://assets/shaders/leg_snow.gdshader"
 
@@ -25,6 +26,17 @@ const SHADER_PATH := "res://assets/shaders/leg_snow.gdshader"
 ## snow, and a test that adds noise to the console is worse than one that names
 ## its number.
 const GLOW_HDR_THRESHOLD := 0.95
+
+## SnowfallLayer.min_flake_pixels, copied for exactly the reason above: building
+## a SnowfallLayer to read one number costs a GPUParticles3D and its noise, and
+## the figure itself is derived at length in that file's header. Under about this
+## a particle stops being an object and becomes a shimmering sub-pixel sample.
+const MIN_GRAIN_PIXELS := 2.5
+
+## The frame height the shipped captures and the judged frames are taken at.
+## Trap 10: this is `Window.size`, the number that describes the PICTURE, not the
+## canvas rect or the render target.
+const FRAME_PIXELS := 800.0
 
 ## Deep enough to load a leg, and not. Both sides of SnowField.deep_depth_m.
 const DEEP := 0.5
@@ -193,28 +205,47 @@ func test_the_two_directions_are_the_same_fraction_rule() -> void:
 
 # --- the two populations -------------------------------------------------------
 
-## Drag is the ONLY difference between the mist and the clumps, and the wind
+## Drag is the ONLY difference between the mist and the grains, and the wind
 ## response falls out of it rather than being decided twice. A gust must carry
-## the powder and barely move a clump.
-func test_the_wind_reaches_the_powder_and_hardly_touches_a_clump() -> void:
+## the mist and barely move a grain.
+func test_the_wind_reaches_the_mist_and_hardly_touches_a_grain() -> void:
 	var legs := _fresh()
 	var powder: float = LegSnowScript.wind_response(legs.mist_damping)
-	var lump: float = LegSnowScript.wind_response(legs.clump_damping)
+	var lump: float = LegSnowScript.wind_response(legs.grain_damping)
 	assert_true(
 		powder > lump * 3.0,
-		"powder takes %f of the wind and a clump %f: they are not separated by drag" % [powder, lump]
+		"mist takes %f of the wind and a grain %f: they are not separated by drag" % [powder, lump]
 	)
-	assert_true(lump < 0.25, "a clump takes %f of the wind; it is meant to be ballistic" % lump)
+	assert_true(lump < 0.25, "a grain takes %f of the wind; it is meant to be ballistic" % lump)
 	assert_true(powder < 1.0, "no particle may outrun the air it is in")
 	assert_almost_eq(LegSnowScript.wind_response(0.0), 0.0, 0.0001, "a dragless particle cannot be blown")
 	_free(legs)
 
 
-## The mist and the clumps are two populations and not one, and the clumps are
-## the rare half. The whole point of `burst_count` is that a fractional
-## expectation becomes an OCCASIONAL whole clump rather than a permanent dribble.
-func test_a_fraction_of_a_clump_is_a_chance_of_one_not_a_fraction_of_one() -> void:
-	assert_eq(LegSnowScript.burst_count(0.4, 0.2), 1, "a low roll must produce the clump")
+## THE MIX. Snow packed onto a leg by wading is compacted crystal, and a footfall
+## breaks it into grains -- only the finest fraction of it ever goes airborne. So
+## the grains lead and the mist accompanies, and the first version of this had it
+## the other way round, which read as steam off a boot.
+func test_the_shed_is_mostly_grains_and_only_a_little_mist() -> void:
+	var legs := _fresh()
+	assert_true(
+		legs.grains_per_shed > legs.mist_per_shed * 2.5,
+		"a full shed throws %f grains against %f puffs of mist: mist in the majority "
+			% [legs.grains_per_shed, legs.mist_per_shed]
+			+ "reads as steam off a boot rather than as snow breaking off it"
+	)
+	# And the mist is not deleted. It softens the leading edge of the burst and it
+	# is the part that catches a low sun; a shed of bare dots has nothing behind it.
+	assert_true(legs.mist_per_shed > 0.0, "the mist fraction was removed rather than reduced")
+	_free(legs)
+
+
+## A fractional expectation is a CHANCE of a particle, which is what keeps the
+## tail of a shed honest: by the twelfth stride out of a drift both populations
+## expect well under one, and rounding would give either one every step or none
+## ever.
+func test_a_fraction_of_a_particle_is_a_chance_of_one_not_a_fraction_of_one() -> void:
+	assert_eq(LegSnowScript.burst_count(0.4, 0.2), 1, "a low roll must produce the particle")
 	assert_eq(LegSnowScript.burst_count(0.4, 0.9), 0, "a high roll must produce none")
 	assert_eq(LegSnowScript.burst_count(2.4, 0.9), 2, "the whole part must always be emitted")
 	assert_eq(LegSnowScript.burst_count(2.4, 0.2), 3)
@@ -222,36 +253,85 @@ func test_a_fraction_of_a_clump_is_a_chance_of_one_not_a_fraction_of_one() -> vo
 	assert_eq(LegSnowScript.burst_count(-1.0, 0.0), 0)
 
 
-## The powder floats and the clumps fall, and the emitters have to say so.
-func test_the_powder_hangs_and_the_clumps_drop() -> void:
+## The mist floats and the grains fall, and the emitters have to say so.
+func test_the_mist_hangs_and_the_grains_drop() -> void:
 	var legs := _fresh()
 	var mist: GPUParticles3D = legs._mist
-	var clumps: GPUParticles3D = legs._clumps
+	var grains: GPUParticles3D = legs._grains
 	assert_not_null(mist)
-	assert_not_null(clumps)
+	assert_not_null(grains)
 	assert_true(
-		absf(legs._clump_material.gravity.y) > absf(legs._mist_material.gravity.y) * 4.0,
-		"a clump falls at %f against the powder's %f; they are the same particle"
-			% [legs._clump_material.gravity.y, legs._mist_material.gravity.y]
+		absf(legs._grain_material.gravity.y) > absf(legs._mist_material.gravity.y) * 4.0,
+		"a grain falls at %f against the mist's %f; they are the same particle"
+			% [legs._grain_material.gravity.y, legs._mist_material.gravity.y]
 	)
 	assert_true(
-		legs._mist_material.damping_min > legs._clump_material.damping_min * 4.0,
-		"the powder is not draggier than the clumps, so nothing separates them"
+		legs._mist_material.damping_min > legs._grain_material.damping_min * 4.0,
+		"the mist is not draggier than the grains, so nothing separates them"
 	)
-	assert_true(mist.lifetime > clumps.lifetime, "the mist must outlive the clumps that land")
+	assert_true(mist.lifetime > grains.lifetime, "the mist must outlive the grains that land")
 	_free(legs)
 
 
-## WORLD SPACE IS THE EFFECT. A puff knocked off a boot stays where it was
-## knocked off and the walker leaves it behind him; in local space every puff
+## THEY ARE THROWN, NOT RELEASED, and that trajectory is most of what separates
+## grit off a boot from fog out of one. Every grain leaves with real speed, over
+## a wide cone about the way he is walking -- so no two of a hundred go the same
+## way, and none of them merely drops.
+func test_the_grains_spray_rather_than_drift() -> void:
+	var legs := _fresh()
+	var heading := Vector2(1.0, 0.0)
+	var slowest := INF
+	var widest := 0.0
+	var lowest_rise := INF
+	for _index in range(200):
+		var velocity: Vector3 = legs._grain_velocity(heading)
+		var flat := Vector2(velocity.x, velocity.z)
+		slowest = minf(slowest, flat.length())
+		widest = maxf(widest, absf(flat.angle_to(heading)))
+		lowest_rise = minf(lowest_rise, velocity.y)
+	assert_true(
+		slowest > 0.5,
+		"the slowest of two hundred grains left the boot at %f m/s: an impact throws "
+			% slowest
+			+ "what it breaks off, and anything this slow is being released rather than thrown"
+	)
+	assert_true(
+		widest > deg_to_rad(45.0),
+		"two hundred grains spread only %f degrees either side of the walk: a narrow "
+			% rad_to_deg(widest)
+			+ "cone reads as a jet rather than as a crust breaking"
+	)
+	# EVERY GRAIN LEAVES UPWARD, and that is a correction rather than a stylistic
+	# choice. The ground it has to land on is the snow SURFACE, which is drawn
+	# above the walker's own origin -- so a grain thrown level or downward is under
+	# the mesh within a frame or two and is never seen at all. Ten a step were
+	# being emitted, flying correctly and rendering nothing until gravity was
+	# switched off to find them. The arc is what makes them visible; gravity below
+	# is what brings them back.
+	assert_true(
+		lowest_rise > 0.0,
+		"the flattest of two hundred grains left at %f m/s vertically: a grain thrown "
+			% lowest_rise
+			+ "level is under the snow surface before it has been drawn twice"
+	)
+	assert_true(
+		legs._grain_material.gravity.y < -3.0,
+		"a grain falls at only %f: it has to come back down, or it is not a grain"
+			% legs._grain_material.gravity.y
+	)
+	_free(legs)
+
+
+## WORLD SPACE IS THE EFFECT. A grain knocked off a boot stays where it was
+## knocked off and the walker leaves it behind him; in local space every particle
 ## drags along with the leg and the shed reads as a smear on his shins.
 func test_the_shed_is_left_behind_in_world_space() -> void:
 	var legs := _fresh()
-	assert_false(legs._mist.local_coords, "the powder follows the leg instead of being left behind")
-	assert_false(legs._clumps.local_coords, "the clumps follow the leg instead of landing")
+	assert_false(legs._mist.local_coords, "the mist follows the leg instead of being left behind")
+	assert_false(legs._grains.local_coords, "the grains follow the leg instead of landing")
 	# And the automatic rate is off: every particle arrives on a footfall.
-	assert_false(legs._mist.emitting, "the powder emitter runs a rate of its own, so the shed is on a clock")
-	assert_false(legs._clumps.emitting, "the clump emitter runs a rate of its own")
+	assert_false(legs._mist.emitting, "the mist emitter runs a rate of its own, so the shed is on a clock")
+	assert_false(legs._grains.emitting, "the grain emitter runs a rate of its own")
 	_free(legs)
 
 
@@ -259,14 +339,14 @@ func test_the_shed_is_left_behind_in_world_space() -> void:
 func test_the_wind_hook_moves_both_populations_by_their_own_drag() -> void:
 	var legs := _fresh()
 	var still_mist: Vector3 = legs._mist_material.gravity
-	var still_clump: Vector3 = legs._clump_material.gravity
+	var still_grain: Vector3 = legs._grain_material.gravity
 	legs.set_wind(Vector3(4.0, 0.0, 0.0))
 	var blown_mist: Vector3 = legs._mist_material.gravity - still_mist
-	var blown_clump: Vector3 = legs._clump_material.gravity - still_clump
-	assert_true(blown_mist.x > 0.0, "the wind hook did not reach the powder")
+	var blown_grain: Vector3 = legs._grain_material.gravity - still_grain
+	assert_true(blown_mist.x > 0.0, "the wind hook did not reach the mist")
 	assert_true(
-		blown_mist.x > blown_clump.x * 3.0,
-		"the wind moved the powder by %f and a clump by %f" % [blown_mist.x, blown_clump.x]
+		blown_mist.x > blown_grain.x * 3.0,
+		"the wind moved the mist by %f and a grain by %f" % [blown_mist.x, blown_grain.x]
 	)
 	assert_eq(legs.wind(), Vector3(4.0, 0.0, 0.0))
 	_free(legs)
@@ -290,46 +370,158 @@ func test_the_air_temperature_hook_is_inert_until_something_drives_it() -> void:
 
 # --- the look ------------------------------------------------------------------
 
-## Art Bible rule 12 reserves the warm pixels for the fire, the windows, the
-## beacon, the truck and the scarf. Snow off a boot is none of those, and it sits
-## right next to the scarf.
-func test_every_part_of_the_shed_is_a_cool_colour_from_the_palette() -> void:
+## THE SHED IS NEAR-WHITE, AND THAT IS A CORRECTION.
+##
+## The first version drew it from the palette's snow entry barely taken toward
+## white, and on the character it read as a blue film. The palette's blue
+## describes the snow FIELD -- a huge area at distance under a blue sky, through
+## the aerial perspective this project builds on purpose -- and a patch of snow
+## on a dark coat a metre from the lens is a different lighting situation that
+## scatters white. The owner reported the blue outright.
+##
+## So this pins the corrected requirement rather than the old one: nearly
+## neutral, never warm, and still derived from the palette rather than typed in.
+func test_every_part_of_the_shed_is_a_near_white_and_never_a_warm_one() -> void:
 	var legs := _fresh()
 	var bible = load(PALETTE_PATH)
 	assert_not_null(bible, "the palette must load for this test to mean anything")
-	for entry in [
-		["powder", legs._mist.draw_pass_1.material],
-		["clump", legs._clumps.draw_pass_1.material],
-	]:
-		var surface: StandardMaterial3D = entry[1]
-		var tone: Color = surface.albedo_color
-		assert_false(bible.is_warm(Color(tone.r, tone.g, tone.b)), "%s is a warm tone" % entry[0])
-		assert_true(
-			tone.b > tone.r + 0.05,
-			"%s is %s -- rule 12 keeps the warm pixels, and that is not cool" % [entry[0], tone.to_html(false)]
-		)
 	var crust: ShaderMaterial = legs.crust_material()
-	var snow: Color = crust.get_shader_parameter(&"snow_color")
-	assert_true(snow.b > snow.r + 0.05, "the crust on his legs is not a cool white: %s" % snow.to_html(false))
-	# Not white either: white is off the palette in the other direction.
-	assert_true(snow.r < 1.0 and snow.g < 1.0, "the crust is pure white rather than a palette snow tone")
+	for entry in [
+		["mist", (legs._mist.draw_pass_1.material as StandardMaterial3D).albedo_color],
+		["grain", (legs._grains.draw_pass_1.material as StandardMaterial3D).albedo_color],
+		["crust", crust.get_shader_parameter(&"snow_color") as Color],
+	]:
+		var tone: Color = entry[1]
+		var rgb := Color(tone.r, tone.g, tone.b)
+		assert_false(bible.is_warm(rgb), "%s is a warm tone" % entry[0])
+		# Near-neutral: a faint cool cast is right, a blue cast is the defect. The
+		# palette's own snow_tones[0] spans 1.51 between its red and its blue,
+		# which is exactly what this must NOT be.
+		var high := maxf(tone.r, maxf(tone.g, tone.b))
+		var low := minf(tone.r, minf(tone.g, tone.b))
+		assert_true(
+			high / maxf(low, 0.0001) < 1.10,
+			"%s is %s -- its brightest channel is %f times its dimmest, which reads as "
+				% [entry[0], rgb.to_html(false), high / maxf(low, 0.0001)]
+				+ "blue snow rather than as snow"
+		)
+		assert_true(tone.b >= tone.r, "%s is not even faintly cool" % entry[0])
+	# And the premise of that check: the palette entry it is mixed FROM really is
+	# blue enough for the mix to have done the work.
+	var source: Color = bible.snow_tones[0]
+	assert_true(source.b / source.r > 1.4, "snow_tones[0] is not blue, so this test proves nothing")
 	_free(legs)
 
 
-## Bloom belongs to the fire and the windows. A boot-height puff backlit by a
+## OPAQUE WHERE IT EXISTS. The crust used to scale its ALPHA by the load, and
+## pale snow at half alpha over a dark navy coat is a wash -- a blue transparent
+## film painted over his legs, which is exactly how it was reported. What varies
+## now is coverage, and every patch that carries snow is solid.
+func test_the_crust_varies_its_coverage_rather_than_its_transparency() -> void:
+	var legs := _fresh()
+	var crust: ShaderMaterial = legs.crust_material()
+	assert_almost_eq(
+		crust.get_shader_parameter(&"max_opacity"), 1.0, 0.0001,
+		"the crust is drawn part-transparent, so pale snow over dark cloth is a wash"
+	)
+	var text := FileAccess.get_file_as_string(SHADER_PATH)
+	# The mechanism, not just the number: a threshold on a noise field is what
+	# makes patches appear and go out one at a time instead of the whole crust
+	# dimming, and it is the only thing that can produce a patchy silhouette.
+	assert_true(
+		text.contains("smoothstep(threshold - width, threshold + width, field)")
+			and text.contains("mix(1.0 + width, -width, coverage)"),
+		"%s does not threshold its noise against the coverage, so the crust cannot "
+			% SHADER_PATH
+			+ "break up into patches -- it can only fade"
+	)
+	assert_true(
+		text.contains("crease_map"),
+		"%s does not read the character's own normal map, so the snow cannot collect "
+			% SHADER_PATH
+			+ "in the folds and seams that make it read as caught in cloth"
+	)
+	_free(legs)
+
+
+## The grains are the crisp half and the mist is the soft half, and that is not
+## decoration: a small blob with a soft falloff reads as fog whatever size it is
+## drawn at, so soft edges belong to the mist fraction alone.
+func test_a_grain_has_an_edge_on_it_and_a_puff_does_not() -> void:
+	var legs := _fresh()
+	var grain: GradientTexture2D = (legs._grains.draw_pass_1.material as StandardMaterial3D).albedo_texture
+	var mist: GradientTexture2D = (legs._mist.draw_pass_1.material as StandardMaterial3D).albedo_texture
+	# Alpha at 60% of the way out from the centre. A hard-edged disc is still
+	# solid there; a bell is well down its slope.
+	var grain_mid: float = grain.gradient.sample(0.6).a
+	var mist_mid: float = mist.gradient.sample(0.6).a
+	assert_true(
+		grain_mid > 0.95,
+		"a grain is already down to %f alpha at 60 percent of its radius, which is "
+			% grain_mid
+			+ "a smudge rather than a fleck"
+	)
+	assert_true(
+		mist_mid < 0.6,
+		"the mist is %f alpha at 60 percent of its radius, so it has a shoulder and "
+			% mist_mid
+			+ "reads as a disc rather than as vapour"
+	)
+	_free(legs)
+
+
+## Under about 2.5 px a particle stops being an object and starts being a
+## shimmering sub-pixel sample -- SnowfallLayer.min_flake_pixels is this
+## project's own figure, copied here for the reason GLOW_HDR_THRESHOLD above is
+## copied. A grain under the floor does not read as grit, it reads as haze, which
+## is the one thing this population exists not to be.
+##
+## Checked against the SMALLEST grain in the spread, because a floor only the
+## average clears is not a floor.
+func test_the_smallest_grain_is_still_big_enough_to_be_seen() -> void:
+	var rig: Node3D = CameraRigScript.new()
+	var framing: float = rig.orthographic_size
+	# Node, not RefCounted (briefing section 2.2).
+	rig.free()
+	var legs := _fresh()
+	var smallest: float = legs._grain_material.scale_min
+	var pixels: float = smallest * (FRAME_PIXELS / framing)
+	assert_true(
+		pixels >= MIN_GRAIN_PIXELS,
+		"the smallest grain is %f m, which at the %f m game framing over a %d px frame "
+			% [smallest, framing, int(FRAME_PIXELS)]
+			+ "is %f px against a floor of %f" % [pixels, MIN_GRAIN_PIXELS]
+	)
+	# And it is not solved by making them boulders.
+	assert_true(legs.grain_size_m < 0.09, "a grain %f m across is a snowball" % legs.grain_size_m)
+	_free(legs)
+
+
+## Bloom belongs to the fire and the windows. A boot-height particle backlit by a
 ## 21.5-degree sun is the easiest thing in the frame to bloom by accident.
+##
+## THE EXPOSURE IS IN THIS SUM NOW, and it was not before, which made the old
+## version of this check pass a value that would have bloomed. Both populations
+## are unshaded, so their albedo goes to the HDR buffer untouched by any light --
+## and the buffer the glow is extracted from is post-exposure. PALE DAY is the
+## brightest of the six at 1.38, so it is the one that has to clear.
 func test_the_shed_cannot_reach_the_bloom_threshold() -> void:
 	var legs := _fresh()
+	var brightest = load("res://data/lighting/pale_day.tres")
+	assert_not_null(brightest, "the brightest preset must load for this test to mean anything")
+	var exposure: float = brightest.tonemap_exposure
+	assert_true(exposure > 1.0, "pale_day's exposure is %f; this test assumes it is the brightest" % exposure)
 	for entry in [
-		["powder", legs._mist.draw_pass_1.material],
-		["clump", legs._clumps.draw_pass_1.material],
+		["mist", legs._mist.draw_pass_1.material],
+		["grain", legs._grains.draw_pass_1.material],
 	]:
 		var surface: StandardMaterial3D = entry[1]
 		var linear: Color = surface.albedo_color.srgb_to_linear()
-		var peak: float = maxf(maxf(linear.r, linear.g), linear.b) * surface.albedo_color.a
+		var peak: float = maxf(maxf(linear.r, linear.g), linear.b) \
+			* surface.albedo_color.a * exposure
 		assert_true(
 			peak < GLOW_HDR_THRESHOLD,
-			"%s peaks at %f against a threshold of %f: the shed will glow"
+			"%s reaches the HDR buffer at %f against a threshold of %f: the shed will glow"
 				% [entry[0], peak, GLOW_HDR_THRESHOLD]
 		)
 		assert_eq(
@@ -367,23 +559,153 @@ func test_the_crust_shader_refuses_ambient_like_every_other_shader() -> void:
 	assert_false(text.contains("void light("), "the crust must not write its colour a second time in light()")
 
 
-## The crust is driven by the same scalar the shedding drains, and it reaches
-## further up the leg the more there is. That rise is what reads as cleaning up
-## rather than switching off.
-func test_the_crust_line_rises_with_the_load_and_stops_below_the_knee() -> void:
-	var legs := _fresh()
-	# Measured off the shipped rig: the knee sits at 25.7% of the figure.
-	const KNEE := 0.257
-	assert_true(legs.boot_line < legs.shin_line, "the crust cannot reach lower when there is more of it")
-	assert_true(
-		legs.shin_line < KNEE,
-		"a full load reaches %f of the figure and the knee is at %f" % [legs.shin_line, KNEE]
-	)
-	var crust: ShaderMaterial = legs.crust_material()
-	assert_almost_eq(crust.get_shader_parameter(&"boot_line"), legs.boot_line, 0.0001)
-	assert_almost_eq(crust.get_shader_parameter(&"shin_line"), legs.shin_line, 0.0001)
+# --- the crust line is the depth he waded ---------------------------------------
+
+## THE ONE THIS CHANGE IS ABOUT. A shallow crossing must mark him a little and a
+## deep one a lot -- and it is that DIFFERENCE, not the crust itself, that an eye
+## at the game camera can catch. A fixed band said nothing: a man out of a full
+## drift came out with a crust at his ankle, exactly like a man out of a puddle.
+##
+## The two depths are 0.43 and 0.48 rather than the field's own 0.42 and 0.60,
+## and that is not dodging. With no body to ask, `snow_line_on_the_leg()` falls
+## back to the raw depth -- there is no sink to subtract -- so these two stand in
+## for the lines the game actually produces: 0.42 m and 0.60 m of snow, minus the
+## three quarters of it the body sinks through, is 0.32 m to 0.45 m on the leg.
+## Feeding the raw depths here would instead test the knee cap, which
+## test_the_crust_can_never_climb_past_the_knee already does on its own.
+func test_a_deeper_crossing_leaves_a_higher_crust_line() -> void:
+	var shallow := _fresh()
+	_walk(shallow, 0.43, 4)
+	var deep := _fresh()
+	_walk(deep, 0.48, 4)
 	assert_almost_eq(
-		crust.get_shader_parameter(&"load"), 0.0, 0.0001,
-		"a clean leg starts out already wearing snow"
+		shallow.carried(), deep.carried(), 0.0001,
+		"the two crossings must load the same, or this is measuring the load"
+	)
+	assert_true(
+		deep.crust_top_fraction() > shallow.crust_top_fraction() + 0.02,
+		"a 0.48 m crossing reached %f of the figure and a 0.43 m one reached %f: the "
+			% [deep.crust_top_fraction(), shallow.crust_top_fraction()]
+			+ "crust is not recording how deep he waded"
+	)
+	# And it IS the depth, not a curve fitted to it.
+	assert_almost_eq(deep.wade_line_m(), 0.48, 0.0001, "the recorded line is not the depth he waded")
+	assert_almost_eq(shallow.wade_line_m(), 0.43, 0.0001)
+	# Both under the knee, so this is measuring the measurement and not the cap.
+	assert_true(
+		deep.crust_top_fraction() < deep.knee_line,
+		"the deep crossing is sitting on the cap, so this test is checking the cap"
+	)
+	_free(shallow)
+	_free(deep)
+
+
+## The deepest part of the crossing, not the last part of it. A man who crosses
+## the shoulder of a drift and then a hollow comes out wearing the hollow: snow
+## does not leave a leg because the next step was shallower, it leaves when the
+## leg hits the ground, and that is the other branch entirely.
+func test_the_line_records_the_deepest_step_of_the_crossing() -> void:
+	var legs := _fresh()
+	legs.step(Vector3.ZERO, 0.58, Vector2.RIGHT)
+	legs.step(Vector3.ZERO, 0.44, Vector2.RIGHT)
+	assert_almost_eq(
+		legs.wade_line_m(), 0.58, 0.0001,
+		"a shallower step in the same drift pulled the crust line down with it"
+	)
+	legs.step(Vector3.ZERO, 0.60, Vector2.RIGHT)
+	assert_almost_eq(legs.wade_line_m(), 0.60, 0.0001, "a deeper step did not raise the line")
+	_free(legs)
+
+
+## And it is forgotten when the crossing is over. Once his legs are clean the
+## next drift gets to leave its own mark rather than inheriting the last one's.
+func test_the_line_is_forgotten_once_the_legs_are_clean() -> void:
+	var legs := _fresh()
+	_walk(legs, DEEP, 5)
+	assert_true(legs.wade_line_m() > 0.0, "the deep crossing recorded nothing")
+	_walk(legs, THIN, 30)
+	assert_almost_eq(
+		legs.wade_line_m(), 0.0, 0.0001,
+		"thirty clean strides left the crossing's line still on the legs"
+	)
+	# The next crossing is its own.
+	_walk(legs, 0.45, 4)
+	assert_almost_eq(legs.wade_line_m(), 0.45, 0.0001, "the new crossing inherited the old one's line")
+	_free(legs)
+
+
+## The crust retreats to the boot as he sheds, and stops there. That retreat is
+## most of what reads as cleaning up -- an edge that stayed put and only faded
+## would read as the effect being switched off.
+func test_the_crust_edge_retreats_to_the_boot_as_he_sheds() -> void:
+	var legs := _fresh()
+	_walk(legs, DEEP, 6)
+	var loaded: float = legs.crust_top_fraction()
+	var previous := loaded
+	for _step in range(8):
+		legs.step(Vector3.ZERO, THIN, Vector2.RIGHT)
+		var now: float = legs.crust_top_fraction()
+		assert_true(now <= previous, "the crust climbed his leg while he was shedding")
+		previous = now
+	assert_true(previous < loaded, "eight clean strides did not lower the crust line at all")
+	assert_true(
+		previous >= legs.boot_line - 0.0001,
+		"the line retreated past the boot to %f; the last of it clings to the boot" % previous
 	)
 	_free(legs)
+
+
+## A cap at the measured knee, so the field can be retuned deeper without this
+## having to be re-checked by eye. A crust over the knee is not snow off a drift.
+func test_the_crust_can_never_climb_past_the_knee() -> void:
+	var legs := _fresh()
+	# Absurd on purpose: three metres of snow is not a thing this field can hold,
+	# and the point is that the cap does not depend on it not being.
+	_walk(legs, 3.0, 6)
+	assert_true(
+		legs.crust_top_fraction() <= legs.knee_line + 0.0001,
+		"three metres of snow put the crust at %f of the figure, past the knee at %f"
+			% [legs.crust_top_fraction(), legs.knee_line]
+	)
+	# Measured off the shipped rig: the knee sits at 25.7% of the figure.
+	assert_almost_eq(legs.knee_line, 0.257, 0.0001, "the cap moved off the measured knee")
+	assert_true(legs.boot_line < legs.knee_line, "the crust cannot reach lower when there is more of it")
+	_free(legs)
+
+
+## The shader is handed both ends and the measured line, and starts clean.
+func test_the_crust_material_carries_the_line_the_node_measured() -> void:
+	var legs := _fresh()
+	_walk(legs, 0.55, 5)
+	var crust: ShaderMaterial = legs.crust_material()
+	assert_almost_eq(crust.get_shader_parameter(&"boot_line"), legs.boot_line, 0.0001)
+	assert_almost_eq(
+		crust.get_shader_parameter(&"wade_line"), legs.wade_fraction(), 0.0001,
+		"the shader was not given the line the node measured"
+	)
+	assert_true(
+		float(crust.get_shader_parameter(&"wade_line")) > legs.boot_line,
+		"a 0.55 m crossing handed the shader a line no higher than a clean boot"
+	)
+	_free(legs)
+
+
+## The spray comes off the band the crust is actually occupying, so the particles
+## and the crust are one statement rather than two.
+func test_the_spray_leaves_from_the_band_the_crust_is_on() -> void:
+	var legs := _fresh()
+	_walk(legs, 0.60, 6)
+	var deep_top: float = legs._leg_top_m()
+	var shallow := _fresh()
+	_walk(shallow, 0.45, 6)
+	assert_true(
+		deep_top > shallow._leg_top_m(),
+		"the deep crossing throws its snow off the same height as the shallow one: %f against %f"
+			% [deep_top, shallow._leg_top_m()]
+	)
+	assert_almost_eq(
+		deep_top, legs.crust_top_fraction() * legs._subject_height(), 0.0001,
+		"the spray does not leave from where the crust reaches"
+	)
+	_free(legs)
+	_free(shallow)

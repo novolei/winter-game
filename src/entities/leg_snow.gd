@@ -1,7 +1,24 @@
 extends Node3D
 
-## Autoload "LegSnow". Snow packs onto a walker's boots and shins in a drift,
-## and he knocks it off again, step by step, until his legs are clean.
+## A CHILD OF A WALKER. Snow packs onto his boots and shins in a drift, and he
+## knocks it off again, step by step, until his legs are clean.
+##
+## ---------------------------------------------------------------------------
+## WHY IT IS A CHILD AND NOT AN AUTOLOAD
+## ---------------------------------------------------------------------------
+## The crust is a material parameter on one particular mesh, so ONE instance can
+## only ever whiten ONE character's legs. An autoload is one instance. That is
+## the whole argument: this effect subscribes to `player.footprint` rather than
+## calling into the player precisely so the bear in Wave 4 and the hungry man in
+## Wave 5 get leg snow for free, and a single global node cannot deliver them.
+##
+## So it is a node under the body it belongs to. It finds its subject by looking
+## UP -- its nearest Node3D ancestor is the walker it dresses -- which means
+## giving the bear leg snow is adding one child node to the bear and nothing
+## else: no registry entry, no export to point, no `.gd` change anywhere. It
+## still takes its footfalls off the bus and still ignores the ones that landed
+## too far away to be its own, so two walkers in one scene each shed their own
+## snow.
 ##
 ## ---------------------------------------------------------------------------
 ## THE MODEL: IT COMES OFF BY IMPACT, NOT BY THE PASSAGE OF TIME
@@ -27,27 +44,70 @@ extends Node3D
 ## arithmetic.
 ##
 ## ---------------------------------------------------------------------------
-## TWO POPULATIONS, SEPARATED BY DRAG AND BY NOTHING ELSE
+## TWO POPULATIONS, SEPARATED BY DRAG AND BY NOTHING ELSE -- AND GRAINS ARE THE
+## MAJORITY
 ## ---------------------------------------------------------------------------
-##   FINE POWDER  high drag. It barely falls, it hangs, it spreads, and it goes
-##                out as a soft mist. This is the 雾状 the effect is for.
-##   CLUMPS       low drag. Few, heavy, thrown down and forward, and they arrive
-##                somewhere. Fewer than the powder by an order of magnitude.
+##   GRAINS  low drag, and most of the shed. Snow packed onto a leg by wading is
+##           compacted crystal; a footfall breaks it into crumbs. They are thrown
+##           -- outward and forward, over a wide angle -- they fall, and they
+##           ARRIVE somewhere. Crisp-edged, opaque, and drawn big enough to be
+##           individually visible at the framing the game is played at.
+##   MIST    high drag, and a small fraction. Only the finest part of a crust is
+##           light enough to become airborne at all. It barely falls, it hangs,
+##           it spreads, and it goes out soft.
 ##
-## Mist alone reads weightless -- steam off a boot. Clumps alone read dirty --
-## gravel. Both together read true, and the reason they behave differently is
-## one number each, `mist_damping` and `clump_damping`. The wind hook then falls
-## out of that same number rather than being a second decision: see
-## `wind_response()`, which is why a gust carries the mist away and hardly
-## touches a clump.
+## THE MIX IS THE POINT AND IT WAS WRONG THE FIRST TIME. Mist in the majority
+## reads as steam off a boot: weightless, and nothing like the granular spray a
+## boot full of packed snow actually throws. Grains alone read as gravel with
+## nothing behind them. So grains lead by roughly four to one, and the mist stays
+## on to soften the leading edge of the burst and to catch the low sun.
+##
+## The reason the two behave differently is one number each, `grain_damping` and
+## `mist_damping`. The wind hook then falls out of that same number rather than
+## being a second decision: see `wind_response()`, which is why a gust carries
+## the mist away and hardly deflects a grain.
 ##
 ## ---------------------------------------------------------------------------
-## THE LOAD HAS TO BE VISIBLE ON THE LEG, OR THE PARTICLES ARE MEANINGLESS
+## THE SNOW LINE ON YOUR LEGS IS THE DEPTH YOU WALKED THROUGH
 ## ---------------------------------------------------------------------------
-## The mist is what the player reads as "and now I am losing it". What they read
-## as "I am carrying snow" is the legs themselves going whiter -- a cool white
-## crust up the boot and shin, masked below the knee, driven by the same scalar
-## the shedding drains. `assets/shaders/leg_snow.gdshader` holds it, and it rides
+## That is the one physical fact this whole effect is about, and it is the fact
+## the crust has to state. So the crust's upper edge is not a tuned band: it is
+## the deepest snow he actually waded through this crossing, MEASURED, remembered
+## until his legs are clean again, and reset when they are.
+##
+## It is measured rather than assumed because the number that matters is not the
+## snow's depth -- it is how far up the DRAWN figure the snow reached, and those
+## are not the same. `PlayerController` sinks the body through a fraction of the
+## depth so the figure looks like it is standing IN the drift rather than on it,
+## so his soles are drawn some way above the true ground. `snow_line_on_the_leg()`
+## therefore asks the field where the surface is and the body where its feet are,
+## and subtracts. Nothing here holds a copy of the sink, and nothing here can
+## drift out of step with it.
+##
+## Two things fall out of that, and both matter:
+##
+##   * WHILE HE IS IN THE DRIFT THE CRUST IS EXACTLY BURIED. Its top coincides
+##     with the snow surface by construction, so there is nothing to see until he
+##     steps out -- which is correct, his legs are under the snow, and it is what
+##     the effect looked like before this was measured rather than guessed.
+##   * IT IS VARIABLE. A shallow crossing marks him a little and a deep one marks
+##     him a lot, and the difference is several times the area. A constant band
+##     reads as texture and disappears at the game camera; a quantity that
+##     changes between two crossings is the thing an eye at that distance can
+##     actually catch.
+##
+## The spray is what the player reads as "and now I am losing it". What they read
+## as "I am carrying snow" is the legs themselves going whiter -- opaque
+## near-white patches from the boot up to that line, capped under the knee,
+## broken up by noise and thinning out as they climb.
+##
+## PATCHES AND NOT A BAND, AND OPAQUE AND NOT A WASH. The first version varied
+## its ALPHA with the load, and pale snow at half alpha over a dark coat is a
+## blue transparent film -- which is what it looked like, and it was reported as
+## exactly that. What varies now is COVERAGE: how much of the leg carries snow at
+## all. Every patch that does is solid, bare fabric shows between them, and as he
+## sheds the patches go out one at a time instead of the whole crust dimming.
+## `assets/shaders/leg_snow.gdshader` holds it, and it rides
 ## `GeometryInstance3D.material_overlay` so that neither the character's Meshy
 ## maps nor the x-ray ghost already in his `next_pass` is disturbed.
 ##
@@ -57,9 +117,7 @@ extends Node3D
 ## Everything above is driven by `player.footprint` off the EventBus, which
 ## `PlayerController` emits deliberately so that nothing needs to know about the
 ## player -- its own comment says the bear will emit the same event in Wave 4.
-## So this file makes no edits to the player, contains no reference to him, and
-## a second walker gets leg snow by registering itself as a service and dropping
-## a second copy of `scenes/effects/leg_snow.tscn` in. No `.gd` changes.
+## So this file makes no edits to the player and contains no reference to him.
 ##
 ## The depth that loads a leg is `SnowField.deep_depth_m`, read off the field
 ## rather than restated here. It is the same 0.42 m that already means "reduced
@@ -70,11 +128,6 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 const CRUST_SHADER_PATH := "res://assets/shaders/leg_snow.gdshader"
 const FOOTPRINT_EVENT := &"player.footprint"
 
-## Who is carrying the snow. Resolved through the ServiceRegistry, the same way
-## OccluderFader, CameraRig and InteriorReveal find him -- and the same reason:
-## nothing may hold a node path into somebody else's scene.
-@export var subject_service: StringName = &"player"
-
 ## How near a footfall has to be to count as this walker's.
 ##
 ## The footprint payload carries no publisher, and it should not: it is a fact
@@ -83,8 +136,8 @@ const FOOTPRINT_EVENT := &"player.footprint"
 ## stride and much narrower than the distance between two characters who are not
 ## standing on each other.
 ##
-## WITH NO SUBJECT RESOLVED THIS CLAIMS EVERYTHING, which is the useful default
-## rather than the safe-looking one: a scene with one walker and no registry
+## WITH NO SUBJECT ABOVE IT THIS CLAIMS EVERYTHING, which is the useful default
+## rather than the safe-looking one: an instance built by a test with no parent
 ## still sheds snow, and the alternative -- an effect that silently does nothing
 ## when a lookup fails -- is the failure mode this project has been bitten by
 ## most.
@@ -130,26 +183,113 @@ const FOOTPRINT_EVENT := &"player.footprint"
 ## Where on the leg it sits
 ## ---------------------------------------------------------------------------
 ## As fractions of the subject's height. Measured off the shipped rig rather than
-## chosen: its ankle sits at 7.9% of the figure and its knee at 25.7%, so a crust
-## running to 21% is on the shin and under the knee, and the powder is thrown off
-## the band between the boot and there.
+## chosen: its toe sits at 2.2% of the figure, its ankle at 7.9% and its knee at
+## 25.7%.
+##
+## ONLY THE TWO ENDS ARE AUTHORED. Where the crust actually reaches is
+## `wade_fraction()` -- the snow line he waded through, measured -- and these two
+## are the floor and the ceiling it lives between:
+##
+##   `boot_line`  what a nearly-clean leg still wears. The last of it clings to
+##                the boot, so the line RETREATS to here as he sheds rather than
+##                merely fading, which is what reads as cleaning up rather than
+##                as an effect being switched off.
+##   `knee_line`  the measured knee, and a hard cap. A crust over the knee is not
+##                snow off a drift, it is a costume change, and the field can be
+##                retuned deeper without this having to be re-checked by eye.
 @export var boot_line := 0.10
-@export var shin_line := 0.21
+@export var knee_line := 0.257
 
 ## Fallback height for a subject that publishes no `body_height`.
 @export var subject_height := 1.9
 
 ## ---------------------------------------------------------------------------
-## The powder
+## The grains -- the majority, and what the shed IS
 ## ---------------------------------------------------------------------------
-## Particles in one burst at a full shed. The count scales with the shed, so this
-## is the FIRST stride out of a drift and every later one is a fraction of it.
-@export var mist_per_shed := 26.0
+## Grains in one burst at a full shed. The count scales with the shed, so this is
+## the FIRST stride out of a drift and every later one is a fraction of it.
+@export var grains_per_shed := 60.0
 
-## How long a puff of powder survives, and how fast it leaves the boot. Slow: it
-## is knocked loose, not thrown.
-@export var mist_life := 1.5
-@export var mist_speed := 0.85
+## Short. A grain is knocked loose, thrown, and lands; it has no business still
+## being in the air a second later.
+@export var grain_life := 0.5
+
+## How hard it comes off, in metres a second before the spread below is applied.
+## This is an IMPACT: the foot hits the ground and the crust that was on it keeps
+## going. Nothing here drifts out of anything.
+@export var grain_speed := 2.3
+
+## How wide the spray opens, in degrees either side of the direction of travel.
+## Wide, because a boot hitting packed snow throws it sideways as much as
+## forwards, and a narrow cone reads as a jet rather than as something breaking.
+@export var grain_spread_degrees := 70.0
+
+## Nearly no drag: a grain is ballistic, which is what makes it ARRIVE somewhere.
+## This is also the whole of its difference from the mist -- see `wind_response()`
+## -- so a gust carries the mist away and hardly deflects a grain.
+@export var grain_damping := 0.22
+
+## What is left of gravity once the air has had its say -- and the number that
+## decides whether a grain is SEEN at all.
+##
+## Measured, not chosen. At a full 9.8 a crumb thrown off a boot 20 cm up is back
+## down in 0.2 s, and the ground it lands on is a displaced mesh drawn above the
+## body's own origin -- so it does not land, it goes THROUGH the surface and
+## disappears. Ten grains a step were being emitted, flying correctly, and were
+## invisible in every frame; switching gravity off entirely was what showed them
+## still there. At 6.0 the same crumb arcs for about 0.4 s and travels half a
+## metre, which is a flight the eye can follow, and `grain_life` below ends just
+## after it reaches the snow.
+##
+## It is not a cheat: a 5 cm crumb of snow has a great deal of surface for its
+## mass, and this is what is left of its weight after the air.
+@export var grain_fall := 6.0
+
+## How wide a grain is DRAWN, in metres -- and it is a legibility figure rather
+## than a size.
+##
+## Under about 2.5 px a particle stops being an object and becomes a sub-pixel
+## sample that shimmers. `SnowfallLayer.min_flake_pixels` is this project's own
+## figure and its header derives it at length; a grain that falls under it does
+## not read as grit, it reads as haze, which is the exact failure this population
+## exists to avoid. Fewer grains that can be seen beat more that cannot.
+##
+## The arithmetic, against the framing the game is played at -- CameraRig's
+## `orthographic_size` of 10.5 m over an 800 px frame, so 76.2 px per metre. The
+## size spread below runs to 0.85 of this at the small end, so the SMALLEST grain
+## in a burst is 0.0425 m and 3.2 px, and the largest is 4.4 px. The floor is
+## checked against the smallest, because a floor that only the average clears is
+## not a floor.
+##
+## At CameraRig's widest framing stop of 17.0 m the smallest grain falls to about
+## 2.0 px, under the floor. That is a deliberate line rather than an oversight:
+## the wide stop is a zoom-out and everything in it gets smaller. Sizing for it
+## instead would put 8 cm lumps of snow on his boots at the framing he is
+## actually played at.
+@export var grain_size_m := 0.05
+
+## How much a grain's size varies within one burst, either side of the size
+## above. Narrow, unlike the mist's: the floor above has to hold for the smallest
+## grain in the spread, and a wide spread spends most of its range below it.
+@export var grain_size_spread := 0.15
+
+## ---------------------------------------------------------------------------
+## The mist -- the minority, and an accompaniment rather than the effect
+## ---------------------------------------------------------------------------
+## Snow packed onto a leg by wading is compacted crystal, and a footfall breaks
+## it into grains. Only the finest fraction of that ever becomes airborne, so
+## this count is a small fraction of the grains' and it must stay that way: mist
+## in the majority is what makes a shed read as steam off a boot.
+##
+## It still earns its place. It softens the leading edge of the burst and it is
+## the part that catches a 21.5-degree sun, so the spray has something behind it
+## rather than being a handful of dots in clear air.
+@export var mist_per_shed := 7.0
+
+## How long a puff survives, and how fast it leaves the boot. Slow: this fraction
+## is carried off, not thrown.
+@export var mist_life := 1.4
+@export var mist_speed := 0.75
 
 ## The drag, and it is the whole difference between the two populations. High
 ## enough that the kick off the boot is spent in about a third of a second and
@@ -157,7 +297,7 @@ const FOOTPRINT_EVENT := &"player.footprint"
 @export var mist_damping := 2.6
 
 ## What is left of gravity once the air is holding it up. Not 9.8 and not
-## pretending to be: a powder grain reaches terminal velocity immediately, and
+## pretending to be: a mote this fine reaches terminal velocity immediately, and
 ## against the damping above this settles at about 35 cm a second, which is a
 ## puff sinking rather than a stone dropping.
 @export var mist_fall := 0.9
@@ -167,47 +307,87 @@ const FOOTPRINT_EVENT := &"player.footprint"
 ## and this is the part the wind hook then adds to rather than replaces.
 @export var mist_drift := Vector3(0.16, 0.0, 0.06)
 
-## Birth and death radius of one puff, in metres. It EXPANDS -- powder disperses,
+## Birth and death radius of one puff, in metres. It EXPANDS -- fine snow
+## disperses,
 ## so the oldest puff in a shed is the biggest and the faintest. BreathFog makes
 ## the same point about vapour at greater length and it is the same physics.
-@export var mist_radius_birth := 0.055
-@export var mist_radius_death := 0.34
+@export var mist_radius_birth := 0.05
+@export var mist_radius_death := 0.18
 
-## How far the palette's lightest snow is taken toward white, and the most alpha
-## a puff ever carries. Both are bloom controls as much as colour ones: Art Bible
-## rule 12 gives the glow to the fire and the windows, and the product of these
-## two has to stay under the environment's HDR threshold or a boot-height puff
-## backlit by a 21.5-degree sun blooms.
-@export var mist_whiteness := 0.55
-@export var mist_alpha := 0.62
+## The most alpha a puff ever carries. The mist is the ONLY soft-edged, part-
+## transparent thing here: a small blob with a soft falloff reads as fog whatever
+## size it is drawn at, which is right for this fraction and wrong for every
+## other part of the effect.
+@export var mist_alpha := 0.45
 
 ## ---------------------------------------------------------------------------
-## The clumps
+## What the shed is drawn in -- one hue, three values
 ## ---------------------------------------------------------------------------
-## Expected clumps in one burst at a full shed. Under one on purpose for anything
-## but the first stride out of a drift -- see `burst_count()`, which turns a
-## fractional expectation into an occasional whole clump rather than into a
-## permanent dribble.
-@export var clumps_per_shed := 3.2
-@export var clump_life := 0.9
-@export var clump_speed := 1.3
+## THE HUE IS NEARLY WHITE, AND THAT IS A CORRECTION RATHER THAN A DRIFT.
+##
+## The palette's snow entry describes the snow FIELD: a huge area seen at
+## distance under a blue sky, through the aerial perspective this project builds
+## on purpose. Its blue comes from that situation. A patch of snow on a dark coat
+## a metre from the lens is in a different one -- lit directly, scattering white
+## -- and taking the field's blue there is what produced a crust that read as a
+## blue transparent film over his legs rather than as snow on them.
+##
+## So the tone is that palette entry taken almost all the way to white. It is
+## still not a literal and still moves if the palette moves; it is simply
+## acknowledged that the entry was never a claim about this case. The character
+## is already exempt from the Art Bible's surface rules by the owner's ruling,
+## so nothing new is being excused here.
+@export var shed_whiteness := 0.88
 
-## The other half of the drag pair. Nearly nothing: a clump is ballistic, which
-## is what makes it land.
-@export var clump_damping := 0.18
-@export var clump_fall := 9.2
-@export var clump_radius := 0.035
-@export var clump_whiteness := 0.42
-@export var clump_alpha := 0.9
+## And three VALUES, because the same white has to be drawn three different ways.
+##
+## Value is separated from hue because the two answer different questions. The
+## hue answers "what colour is snow on a coat" and is shared. The value answers
+## "how bright may this be drawn before Art Bible rule 12's glow -- which belongs
+## to the fire, the windows, the beacon, the truck and the scarf -- starts coming
+## off a boot", and that has a different answer for a lit surface than for an
+## unshaded billboard, because the two reach the screen by different routes.
+@export var crust_value := 0.42
+@export var grain_value := 0.86
+@export var mist_value := 0.74
 
 ## ---------------------------------------------------------------------------
 ## The crust on the leg
 ## ---------------------------------------------------------------------------
-@export var crust_whiteness := 0.55
-@export var crust_opacity := 0.86
+## OPAQUE WHERE IT EXISTS. The crust used to vary its alpha with the load, which
+## is what made it read as a blue film: at half alpha you see the dark coat
+## through pale snow, and pale-over-dark is a wash. What varies now is COVERAGE
+## -- how many patches of the leg carry snow at all -- and every patch that does
+## is solid. Bare fabric shows BETWEEN the patches, not THROUGH them.
+@export var crust_opacity := 1.0
+
+## How big the patches are, as a frequency over the character's UVs. Higher is
+## finer grit; lower is bigger slabs.
+@export var patch_scale := 42.0
+
+## How hard the edges of the patches are against the noise's own distribution. At
+## 1 the noise is used raw and the threshold sweeps a soft, gradual field; higher
+## stretches it so patches appear and disappear as WHOLE patches, which is the
+## breaking-up read the shed is supposed to have.
+@export var patch_contrast := 2.1
+
+## How far below the crust's upper line the coverage ramp runs, as a fraction of
+## the figure. This is what makes it thick low down and scattered at the top
+## rather than a band with an edge: at the sole the coverage is full and every
+## patch is present; approaching the line only the luckiest few are.
+@export var patch_scatter := 0.16
+
+## How strongly the character's own normal map decides WHERE it catches.
+##
+## Snow settles on the upward-facing side of every crease and seam, and the
+## figure already carries a normal map with all of them in it -- see
+## `_crease_map_of()`, which takes it off whatever material is already on the
+## mesh rather than naming a file, so a bear with its own map gets its own
+## creases and a subject with no map gets plain noise.
+@export var crease_bias := 0.42
 
 ## How much drag has to be present before the air can carry a particle at all.
-## The mist and the clumps get their wind response from this one expression
+## The mist and the grains get their wind response from this one expression
 ## rather than from two hand-set numbers, which is what keeps them a single
 ## physical claim -- see `wind_response()`.
 const WIND_COUPLING_REFERENCE := 1.0
@@ -220,12 +400,16 @@ var _registry: Node
 var _snow: Node
 var _subject: Node3D
 var _mist: GPUParticles3D
-var _clumps: GPUParticles3D
+var _grains: GPUParticles3D
 var _mist_material: ParticleProcessMaterial
-var _clump_material: ParticleProcessMaterial
+var _grain_material: ParticleProcessMaterial
 var _crusts: Array[ShaderMaterial] = []
 var _dressed: Array[MeshInstance3D] = []
 var _load := 0.0
+## How far up his legs the snow reached at the DEEPEST point of this crossing, in
+## world metres above his soles. See the header: this is the whole of what the
+## crust's upper edge says, and it is remembered until the legs are clean.
+var _wade_line_m := 0.0
 var _last_shed := 0.0
 var _steps_since_drift := 0
 var _wind := Vector3.ZERO
@@ -276,11 +460,11 @@ static func shed_by_a_step(carried: float, retention: float) -> float:
 ## How much of a wind a particle with this much drag picks up, 0 .. 1.
 ##
 ## The two populations differ in ONE property and everything else follows from
-## it. Drag is what couples a particle to the air it is in, so a grain of powder
-## -- which stops dead in a third of a second -- is carried, and a clump, which
+## it. Drag is what couples a particle to the air it is in, so a mote of mist
+## -- which stops dead in a third of a second -- is carried, and a grain, which
 ## is ballistic, is barely deflected. Writing two hand-tuned wind strengths would
 ## have got the same picture out of two decisions that could drift apart; this
-## way there is one decision and it is `mist_damping` against `clump_damping`.
+## way there is one decision and it is `mist_damping` against `grain_damping`.
 static func wind_response(damping: float) -> float:
 	var drag := maxf(damping, 0.0)
 	return drag / (drag + WIND_COUPLING_REFERENCE)
@@ -288,12 +472,13 @@ static func wind_response(damping: float) -> float:
 
 ## Turns an expected particle count into a whole one.
 ##
-## THE FRACTIONAL PART IS A PROBABILITY, and that is what makes the clumps
-## OCCASIONAL rather than continuous. At an expectation of 0.4 a clump is thrown
-## on two steps in five and no clump at all on the other three, which is what a
-## boot shedding lumps of packed snow actually does. Rounding instead would give
-## either a clump every single step or none ever, depending on which side of a
-## half the tuning happened to land.
+## THE FRACTIONAL PART IS A PROBABILITY, and that is what keeps the tail of a
+## shed HONEST rather than continuous. At an expectation of 0.4 a particle is
+## thrown on two steps in five and none at all on the other three, which is what
+## a boot with almost nothing left on it actually does. Rounding instead would
+## give either a particle every single step or none ever, depending on which side
+## of a half the tuning happened to land -- and by the twelfth stride out of a
+## drift both expectations are well under one.
 ##
 ## Takes the roll rather than making it, so a test can pin both branches.
 static func burst_count(expected: float, roll: float) -> int:
@@ -321,19 +506,50 @@ func last_shed() -> float:
 	return _last_shed
 
 
+## How far up his legs the snow reached at the deepest point of this crossing, in
+## metres. Zero once the legs are clean and the crossing is over.
+func wade_line_m() -> float:
+	return _wade_line_m
+
+
+## Where the crust reaches at a FULL load, as a fraction of the figure: the snow
+## line he waded, held between the boot and the knee.
+##
+## The floor is not a safety clamp -- it is the last of the crust clinging to the
+## boot. The ceiling is: `SnowField.max_depth_m` is a number somebody may raise,
+## and a crust above the knee stops being snow off a drift.
+func wade_fraction() -> float:
+	var height := _subject_height()
+	if height <= 0.0:
+		return boot_line
+	return clampf(_wade_line_m / height, boot_line, knee_line)
+
+
+## Where the crust's upper edge is RIGHT NOW, as a fraction of the figure. It
+## starts at the line he waded and retreats to the boot as he sheds -- the same
+## journey the shader makes, computed here so a test can read it without a GPU.
+func crust_top_fraction() -> float:
+	return lerpf(boot_line, wade_fraction(), clampf(_load, 0.0, 1.0))
+
+
 ## One line for tools/capture_sequence.gd. A still cannot show whether the first
-## step bursts and the fourth does not; the numbers beside the frames can.
+## step bursts and the fourth does not; the numbers beside the frames can. `line`
+## is the crust's own height in centimetres, which is what makes a deep crossing
+## and a shallow one comparable across two sequences rather than only by eye.
 func report() -> String:
-	return "legsnow[load=%.2f shed=%.2f steps=%d]" % [_load, _last_shed, _steps_since_drift]
+	return "legsnow[load=%.2f shed=%.2f steps=%d wade=%.0fcm line=%.0fcm]" % [
+		_load, _last_shed, _steps_since_drift,
+		_wade_line_m * 100.0, crust_top_fraction() * _subject_height() * 100.0,
+	]
 
 
 # --- the hooks ----------------------------------------------------------------
 
 ## THE WIND HOOK, in the vocabulary BreathFog and SnowfallLayer already use for
 ## the identical hook. `src/systems/wind_system.gd` is Wave 3; until it exists
-## this is called by nobody and the value stays zero, and the powder drifts on
+## this is called by nobody and the value stays zero, and the mist drifts on
 ## `mist_drift` alone. Both populations are driven from it through
-## `wind_response()`, so one call moves the mist a long way and the clumps
+## `wind_response()`, so one call moves the mist a long way and the grains
 ## hardly at all.
 func set_wind(velocity: Vector3) -> void:
 	_wind = velocity
@@ -359,6 +575,8 @@ func set_snow_field(field: Node) -> void:
 	_snow = field
 
 
+## Overrides the walker found by looking up the tree. For a test, and for anyone
+## who wants this node somewhere other than under the body it dresses.
 func set_subject(subject: Node3D) -> void:
 	_undress()
 	_subject = subject
@@ -389,6 +607,12 @@ func step(spot: Vector3, depth: float, heading: Vector2) -> void:
 	var deep := _deep_depth()
 	if depth >= deep:
 		_load = loaded_after(_load, pack_per_step)
+		# THE HIGH-WATER MARK, and the reason it is a max rather than the latest
+		# reading: a man who crosses a shoulder of the drift and then a hollow
+		# comes out wearing the hollow. Snow does not come off a leg because the
+		# next step was shallower -- it comes off when the leg hits the ground, and
+		# that is the other branch.
+		_wade_line_m = maxf(_wade_line_m, snow_line_on_the_leg(spot, depth))
 		_last_shed = 0.0
 		_steps_since_drift = 0
 		_place(spot)
@@ -400,9 +624,46 @@ func step(spot: Vector3, depth: float, heading: Vector2) -> void:
 	_place(spot)
 	if _load + shed < shed_floor:
 		# Long clean. Nothing left to knock off, and the crust below the floor is
-		# already fading to nothing on its own.
+		# already fading to nothing on its own -- so the crossing is over, and the
+		# next drift gets to leave its own mark rather than inheriting this one's.
+		_wade_line_m = 0.0
 		return
 	_throw(spot, shed, heading)
+
+
+## How far up his legs the snow he is standing in actually reaches, in metres.
+##
+## NOT THE DEPTH. The depth is how thick the snow is; this is how far up the
+## figure the camera can see it climb, and the two differ by the sink --
+## `PlayerController` draws the body some way down INTO the drift so it reads as
+## standing in the snow rather than on it, which puts his soles above the true
+## ground by exactly the part of the depth he has sunk through.
+##
+## So it is not calculated from the sink, it is measured either side of it: the
+## field is asked where its surface is and the body is asked where its feet are.
+## Nothing here holds a copy of `sink_fraction`, so nothing here can fall out of
+## step with it -- and the crust's top lands exactly ON the snow line, which is
+## what keeps it invisible while he is still in the drift and correct the instant
+## he leaves it.
+##
+## With no field or no body to ask -- a unit test, a walker in an empty scene --
+## the depth IS the answer, because with nothing sunk there is nothing to
+## subtract.
+## Capped at the depth itself, which is not a safety clamp but the same physical
+## statement said twice: the snow on your leg cannot be deeper than the snow.
+##
+## It earns its place on a transient. The body eases DOWN into a drift over about
+## a third of a second while the surface under it rises at once, so for the first
+## stride or two of a crossing the gap between them is wider than the snow really
+## is -- and this records a maximum, so an over-read on the entry stride would
+## stick for the whole crossing.
+func snow_line_on_the_leg(spot: Vector3, depth: float) -> float:
+	var deepest := maxf(depth, 0.0)
+	if _snow != null and _subject != null and is_instance_valid(_subject) \
+			and _subject.is_inside_tree():
+		var above_the_soles := float(_snow.surface_height_at(spot)) - _subject.global_position.y
+		return clampf(above_the_soles, 0.0, deepest)
+	return deepest
 
 
 ## The depth at which a leg starts collecting snow.
@@ -439,7 +700,8 @@ static func _heading_of(data: Dictionary) -> Vector2:
 
 # --- throwing it --------------------------------------------------------------
 
-## The burst: powder first, then whatever clumps this step happened to earn.
+## The burst: the grains that are the shed, and the little mist that goes with
+## them.
 ##
 ## Emitted one particle at a time, in WORLD space, at a transform this file
 ## chooses. That is what lets the count be exactly proportional to the shed --
@@ -447,19 +709,19 @@ static func _heading_of(data: Dictionary) -> Vector2:
 ## by `emit_particle()` rather than by a rate. A rate would put the burst on a
 ## clock, and the clock is the one thing this effect must not have.
 func _throw(spot: Vector3, shed: float, heading: Vector2) -> void:
-	if _mist == null or _clumps == null:
+	if _mist == null or _grains == null:
 		return
 	var top := _leg_top_m()
-	var count := burst_count(mist_per_shed * shed, randf())
-	for _index in range(count):
-		_mist.emit_particle(
+	var thrown := burst_count(grains_per_shed * shed, randf())
+	for _index in range(thrown):
+		_grains.emit_particle(
 			Transform3D(Basis.IDENTITY, _birth_point(spot, top)),
-			_powder_velocity(heading), Color.WHITE, Color.WHITE, EMIT_PLACED)
-	var lumps := burst_count(clumps_per_shed * shed, randf())
-	for _index in range(lumps):
-		_clumps.emit_particle(
+			_grain_velocity(heading), Color.WHITE, Color.WHITE, EMIT_PLACED)
+	var puffs := burst_count(mist_per_shed * shed, randf())
+	for _index in range(puffs):
+		_mist.emit_particle(
 			Transform3D(Basis.IDENTITY, _birth_point(spot, top * 0.8)),
-			_clump_velocity(heading), Color.WHITE, Color.WHITE, EMIT_PLACED)
+			_powder_velocity(heading), Color.WHITE, Color.WHITE, EMIT_PLACED)
 
 
 ## Somewhere on the boot or the shin. Spread over the whole band rather than
@@ -467,7 +729,7 @@ func _throw(spot: Vector3, shed: float, heading: Vector2) -> void:
 func _birth_point(spot: Vector3, top: float) -> Vector3:
 	return spot + Vector3(
 		randf_range(-0.055, 0.055),
-		randf_range(0.02, maxf(top, 0.06)),
+		randf_range(0.06, maxf(top, 0.1)),
 		randf_range(-0.055, 0.055))
 
 
@@ -480,20 +742,36 @@ func _powder_velocity(heading: Vector2) -> Vector3:
 	return (throw + scatter + rise) * mist_speed
 
 
-## Down and forward. A clump leaves the boot on the same swing the powder does
-## and then does what its mass says: it falls.
-func _clump_velocity(heading: Vector2) -> Vector3:
-	var throw := Vector3(heading.x, 0.0, heading.y) * randf_range(0.3, 0.9)
-	var scatter := Vector3(randf_range(-1.0, 1.0), 0.0, randf_range(-1.0, 1.0)) * 0.25
-	var drop := Vector3(0.0, randf_range(-0.6, -0.1), 0.0)
-	return (throw + scatter + drop) * clump_speed
+## THROWN, not released. A grain leaves the boot with the speed the impact gave
+## it, over a wide cone about the way he is walking, and then does what its mass
+## says: it falls, and it lands.
+##
+## The cone is the part that reads. A narrow one is a jet and a zero-width one is
+## a line of dots; `grain_spread_degrees` either side of the heading is a boot
+## breaking a crust rather than aiming it. The vertical component is small and
+## can go either way -- some of it is flicked up off the toe and the rest is
+## simply shaken off the side -- because a spray that all rises reads as a puff
+## and one that all drops reads as a leak.
+func _grain_velocity(heading: Vector2) -> Vector3:
+	var forward := heading if heading.length_squared() > 0.0001 else Vector2.RIGHT
+	var fan := deg_to_rad(grain_spread_degrees)
+	var aimed := forward.rotated(randf_range(-fan, fan))
+	# Square-rooted so the speeds bunch toward the top of the range rather than
+	# spreading evenly: most of what a footfall throws is thrown hard, and the
+	# slow tail is the few crumbs that merely fall off.
+	var speed := grain_speed * sqrt(randf_range(0.18, 1.0))
+	# Mostly up, and never far down. It has to clear the snow surface -- which is
+	# drawn ABOVE the body's own origin -- or the arc ends before it has begun.
+	var rise := randf_range(0.05, 0.75)
+	return Vector3(aimed.x, rise, aimed.y) * speed
 
 
-## Where the crust reaches on this subject, in world metres. Read off the body it
-## is actually on rather than assumed, so a bear with different proportions gets
-## its own number from its own height.
+## Where the crust reaches on this subject RIGHT NOW, in world metres. The shed
+## comes off the band the crust is actually occupying, so a deep crossing throws
+## it off the whole shin and a nearly-clean leg throws it off the boot -- the
+## particles and the crust are one statement, not two.
 func _leg_top_m() -> float:
-	return _subject_height() * shin_line
+	return _subject_height() * crust_top_fraction()
 
 
 ## How tall the walker says he is, in metres. Published by PlayerController as
@@ -514,6 +792,10 @@ func _subject_height() -> float:
 ## out of existence the moment the walker got 4 m from wherever this node started.
 ## Moving the node does not drag the particles: that is the point of world space,
 ## and it is the same arrangement Snowfall uses to place its layers.
+##
+## As a child of the walker the parent already carries the box between footfalls;
+## this re-anchors it on the FOOT rather than the body's centre, and keeps an
+## instance that was parented somewhere else working.
 func _place(spot: Vector3) -> void:
 	# global_position asserts is_inside_tree() and prints an engine ERROR when it
 	# fails, which the suite's pristine-output rule turns into a failure a long way
@@ -534,8 +816,15 @@ func _process(_delta: float) -> void:
 	if _subject != null and is_instance_valid(_subject):
 		feet = _subject.global_position.y
 	var fill: Color = ambient_fill()
+	var line := wade_fraction()
 	for crust in _crusts:
 		crust.set_shader_parameter(&"load", _load)
+		# THE DEPTH HE WALKED THROUGH, and the one number that makes this effect
+		# say anything. Written every frame beside the load because the pair is
+		# what the shader mixes: the line is where the crust reaches when he is
+		# fully loaded, and the load is how far back down toward the boot it has
+		# retreated since.
+		crust.set_shader_parameter(&"wade_line", line)
 		# Every frame, not once: his feet move, and a crust anchored to a stale
 		# height would ride up his legs the moment he walked downhill.
 		crust.set_shader_parameter(&"origin_y", feet)
@@ -564,22 +853,52 @@ func _dress(subject: Node3D) -> void:
 			continue
 		var crust := crust_material()
 		crust.set_shader_parameter(&"figure_height", _subject_height())
+		# THE CREASES THE SNOW CATCHES IN, taken off whatever the mesh is already
+		# wearing. Snow does not lie evenly on cloth: it collects on the upward
+		# side of every fold and seam, and the figure's own normal map already has
+		# every one of those in it, in the same UVs this shader is reading.
+		var creases := _crease_map_of(mesh)
+		if creases != null:
+			crust.set_shader_parameter(&"crease_map", creases)
 		mesh.material_overlay = crust
 		_dressed.append(mesh)
 		_crusts.append(crust)
 
 
+## The normal map already on a mesh, or null.
+##
+## Read off the material the mesh is wearing rather than loaded from a path, so
+## this file still names no character and no texture: the wanderer's four Meshy
+## maps arrive because PlayerController put them there, a bear's arrive because
+## whoever built the bear put those there, and a subject with no normal map gets
+## plain unbiased noise rather than an error.
+static func _crease_map_of(mesh: MeshInstance3D) -> Texture2D:
+	var worn: Material = mesh.material_override
+	if worn == null and mesh.mesh != null and mesh.mesh.get_surface_count() > 0:
+		worn = mesh.get_active_material(0)
+	var pbr := worn as BaseMaterial3D
+	if pbr == null or not pbr.normal_enabled:
+		return null
+	return pbr.normal_texture
+
+
 ## The Environment's ambient fill, in linear light.
 ##
 ## READ OFF THE LIVE ENVIRONMENT, never restated. The crust's shader declares
-## `ambient_light_disabled` because every shader in this project must -- see
-## `tests/art/test_character_lighting.gd`, which is the gate holding that rule
-## shut -- and on this character that rule removes very nearly all of his light,
-## because the sun sits nearly behind the lens and the fill is what is actually
-## lighting him. So the fill is handed to the shader and added back as emission
-## on that one material. Reading it here rather than copying the number is what
-## stops the crust and the coat drifting into two different lights the first time
-## somebody retunes the Environment.
+## `ambient_light_disabled` because `tests/art/test_character_lighting.gd`
+## requires it of every shader in the project -- a rule about WORLD shaders, whose
+## whole purpose is to keep the Environment's fill a CHARACTER control. This is
+## the first shader that lives on the character, so it is the first place the rule
+## takes light away from the one surface the fill was authored for.
+##
+## The coat beside it is a stock StandardMaterial3D and has always received
+## ambient natively; nothing is mis-wired. So the fill is read here and handed to
+## the shader, which adds it back as emission on that one material. Measured
+## three ways -- see the shader's own note and the `ambient-*` frames beside the
+## task report -- the result is identical to letting Godot apply ambient itself.
+##
+## Read every frame rather than copied because the six lighting presets each
+## carry their own ambient, and a copy would be right for one of them.
 ##
 ## Returns black when there is no ambient to have, which is the right answer
 ## rather than a guard: the crust is then lit by the sun and the key alone, which
@@ -624,49 +943,67 @@ func _undress() -> void:
 func crust_material() -> ShaderMaterial:
 	var crust := ShaderMaterial.new()
 	crust.shader = load(CRUST_SHADER_PATH)
-	crust.set_shader_parameter(&"snow_color", _cool_white(crust_whiteness))
+	crust.set_shader_parameter(&"snow_color", snow_tone(crust_value))
 	crust.set_shader_parameter(&"boot_line", boot_line)
-	crust.set_shader_parameter(&"shin_line", shin_line)
+	crust.set_shader_parameter(&"wade_line", wade_fraction())
 	crust.set_shader_parameter(&"max_opacity", crust_opacity)
+	crust.set_shader_parameter(&"patch_scale", patch_scale)
+	crust.set_shader_parameter(&"patch_contrast", patch_contrast)
+	crust.set_shader_parameter(&"patch_scatter", patch_scatter)
+	crust.set_shader_parameter(&"crease_bias", crease_bias)
 	crust.set_shader_parameter(&"load", _load)
 	return crust
 
 
-## The palette's lightest snow, taken part of the way to white.
+## The colour the whole shed is drawn in, at a given value.
 ##
-## NOT a literal, and not white. Every colour in this game comes out of
-## `data/palette/color_bible.tres`, and Art Bible rule 12 reserves the warm
-## pixels for the fire, the windows, the beacon, the truck and the scarf -- snow
-## off a boot is none of those, so it stays firmly in the cool tones. Lerping
-## toward white keeps it there: white is neutral, so the blue stays above the red
-## the whole way.
-func _cool_white(toward_white: float) -> Color:
+## NEARLY WHITE, AND NOT A LITERAL. The hue comes off
+## `data/palette/color_bible.tres` and is taken almost all the way to white by
+## `shed_whiteness` -- see that export for why nearly-white is the correct
+## reading of the palette here rather than a departure from it. The value is then
+## how bright this particular surface may be drawn, which is a separate question
+## with a separate answer per surface.
+##
+## Multiplied in sRGB rather than in linear, because that is the space these
+## values are authored and read back in: every number in this file that a person
+## tunes is an sRGB one, and a knob that behaves differently from the colour
+## picker it is compared against is a knob nobody can set.
+func snow_tone(value: float) -> Color:
+	var white := _near_white()
+	var v := clampf(value, 0.0, 1.0)
+	return Color(white.r * v, white.g * v, white.b * v)
+
+
+func _near_white() -> Color:
 	var bible = load(PALETTE_PATH)
 	if bible == null:
-		return Color(0.8, 0.86, 0.93)
+		return Color(0.95, 0.96, 0.98)
 	var snow: Color = bible.snow_tones[0]
-	return snow.lerp(Color.WHITE, clampf(toward_white, 0.0, 1.0))
+	return snow.lerp(Color.WHITE, clampf(shed_whiteness, 0.0, 1.0))
 
 
 # --- the emitters -------------------------------------------------------------
 
 func _build() -> void:
+	# The grains first, and with the bigger buffer: they are the majority of every
+	# burst, and a buffer too small does not warn -- it silently drops the tail of
+	# the biggest shed in the run, which is the one stride anybody would look at.
+	_grains = _build_population(
+		"Grains", 128, grain_life, grain_damping, grain_size_m, grain_size_spread,
+		null, _grain_ramp(), _grain_texture(), snow_tone(grain_value), 1.0)
+	_grain_material = _grains.process_material as ParticleProcessMaterial
 	_mist = _build_population(
-		"Powder", 96, mist_life, mist_damping, mist_radius_birth,
+		"Mist", 32, mist_life, mist_damping, mist_radius_birth, 0.3,
 		_swell_curve(mist_radius_death / maxf(mist_radius_birth, 0.0001)),
-		_powder_ramp(), _powder_texture(), _cool_white(mist_whiteness), mist_alpha)
+		_powder_ramp(), _powder_texture(), snow_tone(mist_value), mist_alpha)
 	_mist_material = _mist.process_material as ParticleProcessMaterial
-	_clumps = _build_population(
-		"Clumps", 24, clump_life, clump_damping, clump_radius,
-		null, _clump_ramp(), _clump_texture(), _cool_white(clump_whiteness), clump_alpha)
-	_clump_material = _clumps.process_material as ParticleProcessMaterial
 	_apply_wind()
 
 
 func _build_population(
 		name_of: String, buffer: int, life: float, damping: float, radius: float,
-		swell: CurveTexture, ramp: GradientTexture1D, dot: GradientTexture2D,
-		tone: Color, alpha: float) -> GPUParticles3D:
+		size_spread: float, swell: CurveTexture, ramp: GradientTexture1D,
+		dot: GradientTexture2D, tone: Color, alpha: float) -> GPUParticles3D:
 	var emitter := GPUParticles3D.new()
 	emitter.name = name_of
 	# THE WHOLE EFFECT, and the one line here that cannot go wrong quietly. A puff
@@ -693,19 +1030,19 @@ func _build_population(
 	# sheds nothing for minutes at a time.
 	emitter.emitting = false
 	# Rule 10 makes the long shadows the subject of the frame, cast at 8192 across
-	# four splits. A hundred grains of powder do not belong in that map.
+	# four splits. A hundred crumbs of snow do not belong in that map.
 	emitter.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	emitter.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
 	# Around the walker, who this node follows. Generous enough to cover where the
-	# powder drifts to over its life and where a clump lands.
+	# mist drifts to over its life and where a grain lands.
 	emitter.visibility_aabb = AABB(Vector3(-3.0, -1.5, -3.0), Vector3(6.0, 4.5, 6.0))
 
 	var motion := ParticleProcessMaterial.new()
 	motion.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_POINT
 	motion.damping_min = damping * 0.8
 	motion.damping_max = damping * 1.2
-	motion.scale_min = radius * 0.7
-	motion.scale_max = radius * 1.3
+	motion.scale_min = radius * (1.0 - size_spread)
+	motion.scale_max = radius * (1.0 + size_spread)
 	motion.color_ramp = ramp
 	if swell != null:
 		motion.scale_curve = swell
@@ -739,7 +1076,7 @@ func _surface(tone: Color, alpha: float, dot: GradientTexture2D) -> StandardMate
 	return surface
 
 
-## A smooth bell, centre to rim, for the powder.
+## A smooth bell, centre to rim, for the mist -- and the only soft edge here.
 ##
 ## The same shape and the same reasoning as `BreathFog._puff_texture()`, and
 ## deliberately not a different one: a disc has a shoulder in it, and where two
@@ -752,12 +1089,18 @@ func _powder_texture() -> GradientTexture2D:
 		PackedFloat32Array([1.0, 0.9, 0.62, 0.28, 0.0]))
 
 
-## A clump is not a bell. It is a lump with an edge on it, and at the size these
-## are drawn the core has to hold nearly to the rim or there is nothing left.
-func _clump_texture() -> GradientTexture2D:
+## A GRAIN HAS AN EDGE ON IT, and that edge is most of why it reads as grit.
+##
+## A small blob with a soft falloff is fog whatever size it is drawn at -- the
+## eye reads the gradient, not the dot. So this is flat to nine tenths of the
+## radius and then gone, which at 4 px across leaves a hard-edged fleck with one
+## texel of anti-aliasing round it rather than a smudge. The bell above is the
+## opposite shape for the opposite reason, and the two textures are the whole
+## visual difference between the populations once the physics has separated them.
+func _grain_texture() -> GradientTexture2D:
 	return _radial(
-		PackedFloat32Array([0.0, 0.6, 0.85, 1.0]),
-		PackedFloat32Array([1.0, 1.0, 0.5, 0.0]))
+		PackedFloat32Array([0.0, 0.88, 0.97, 1.0]),
+		PackedFloat32Array([1.0, 1.0, 0.0, 0.0]))
 
 
 func _radial(offsets: PackedFloat32Array, alphas: PackedFloat32Array) -> GradientTexture2D:
@@ -786,13 +1129,13 @@ func _powder_ramp() -> GradientTexture1D:
 		PackedFloat32Array([0.0, 1.0, 0.86, 0.46, 0.15, 0.0]))
 
 
-## A clump is opaque until it is gone. It does not disperse -- it lands, and the
-## short fade at the end is the only concession, so it does not blink out in
-## mid-air.
-func _clump_ramp() -> GradientTexture1D:
+## A grain is opaque for the whole of its life. It does not disperse -- it lands
+## -- so there is no fade at all until the last tenth, and that last tenth is
+## only there so it does not blink out in mid-air.
+func _grain_ramp() -> GradientTexture1D:
 	return _ramp(
-		PackedFloat32Array([0.0, 0.1, 0.8, 1.0]),
-		PackedFloat32Array([0.9, 1.0, 1.0, 0.0]))
+		PackedFloat32Array([0.0, 0.85, 1.0]),
+		PackedFloat32Array([1.0, 1.0, 0.0]))
 
 
 func _ramp(offsets: PackedFloat32Array, alphas: PackedFloat32Array) -> GradientTexture1D:
@@ -831,25 +1174,47 @@ func _apply_wind() -> void:
 	if _mist_material != null:
 		_mist_material.gravity = Vector3(mist_drift.x, -mist_fall, mist_drift.z) \
 			+ _wind * wind_response(mist_damping)
-	if _clump_material != null:
-		_clump_material.gravity = Vector3(0.0, -clump_fall, 0.0) \
-			+ _wind * wind_response(clump_damping)
+	if _grain_material != null:
+		_grain_material.gravity = Vector3(0.0, -grain_fall, 0.0) \
+			+ _wind * wind_response(grain_damping)
 
 
 # --- resolution ---------------------------------------------------------------
 
+## The subject is found by looking UP and the snow field by looking sideways, and
+## the difference is the whole of item 3: a walker is a PLACE IN THE TREE -- this
+## node is part of him -- while the snow field is a service the world publishes
+## and every walker in it shares.
+##
+## Looking up rather than at an exported path also means a second walker needs no
+## configuration at all: drop the scene under the bear and it dresses the bear.
+##
 ## get_node_or_null, NOT Engine.get_singleton: a project [autoload] entry is a
 ## node under /root and never enters the engine's singleton registry (briefing
 ## trap 3).
 func _resolve() -> void:
-	if _registry == null and is_inside_tree():
-		_registry = get_node_or_null("/root/ServiceRegistry")
-	if _registry == null:
-		return
-	if _snow == null:
-		_snow = _registry.get_service(&"snow_field") as Node
 	if _subject == null or not is_instance_valid(_subject):
-		_subject = _registry.get_service(subject_service) as Node3D
+		_subject = _walker_above()
+	if _snow != null or not is_inside_tree():
+		return
+	if _registry == null:
+		_registry = get_node_or_null("/root/ServiceRegistry")
+	if _registry != null:
+		_snow = _registry.get_service(&"snow_field") as Node
+
+
+## The body this node is a part of: its nearest Node3D ancestor.
+##
+## Null is a legal answer and means "nobody" rather than "error" -- a test builds
+## this with `.new()` and never parents it, and `claim_radius_m` documents what
+## an unparented instance then does.
+func _walker_above() -> Node3D:
+	var above := get_parent()
+	while above != null:
+		if above is Node3D:
+			return above as Node3D
+		above = above.get_parent()
+	return null
 
 
 static func _meshes_of(node: Node, found: Array[MeshInstance3D]) -> void:
