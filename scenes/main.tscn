@@ -37,6 +37,9 @@
 [ext_resource type="PackedScene" path="res://scenes/effects/chimney_smoke.tscn" id="35_smoke"]
 [ext_resource type="Script" path="res://src/systems/weather_system.gd" id="36_weather"]
 [ext_resource type="Script" path="res://src/systems/aurora_system.gd" id="37_aurora"]
+[ext_resource type="Script" path="res://src/ui/ui_layer.gd" id="40_uilayer"]
+[ext_resource type="Script" path="res://src/ui/vitals.gd" id="41_vitals"]
+[ext_resource type="Script" path="res://src/ui/threshold_surfacing.gd" id="42_surfacing"]
 [ext_resource type="Script" path="res://src/entities/wildlife/pigeon_flock.gd" id="40_pigeons"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_room_main"]
@@ -248,3 +251,12 @@ script = ExtResource("36_weather")
 
 [node name="Aurora" type="Node" parent="."]
 script = ExtResource("37_aurora")
+
+[node name="UI" type="CanvasLayer" parent="."]
+script = ExtResource("40_uilayer")
+
+[node name="Vitals" type="Control" parent="UI"]
+script = ExtResource("41_vitals")
+
+[node name="ThresholdSurfacing" type="Node" parent="UI"]
+script = ExtResource("42_surfacing")

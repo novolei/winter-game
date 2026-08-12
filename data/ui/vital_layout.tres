@@ -1,0 +1,59 @@
+[gd_resource type="Resource" script_class="VitalLayout" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/vital_readout.gd" id="1_lcuf8"]
+[ext_resource type="Script" path="res://src/definitions/vital_layout.gd" id="2_bnwsx"]
+
+[sub_resource type="Resource" id="Resource_habya"]
+script = ExtResource("1_lcuf8")
+stat = &"core_temperature"
+label = "体温"
+track_weight = 1.4
+ring_degrees = 110.0
+glyph = &"heat"
+
+[sub_resource type="Resource" id="Resource_bge13"]
+script = ExtResource("1_lcuf8")
+stat = &"hunger"
+label = "饥饿"
+order = 1
+glyph = &"hunger"
+
+[sub_resource type="Resource" id="Resource_8m2qk"]
+script = ExtResource("1_lcuf8")
+stat = &"thirst"
+label = "口渴"
+order = 2
+glyph = &"thirst"
+
+[sub_resource type="Resource" id="Resource_hg1ff"]
+script = ExtResource("1_lcuf8")
+stat = &"fatigue"
+label = "疲劳"
+order = 3
+glyph = &"fatigue"
+
+[sub_resource type="Resource" id="Resource_bhsay"]
+script = ExtResource("1_lcuf8")
+stat = &"frostbite_hands"
+label = "冻伤"
+limb = "手"
+order = 4
+track_weight = 0.72
+ring_degrees = 34.0
+ring_anchor = 1
+glyph = &"unresolved"
+
+[sub_resource type="Resource" id="Resource_8ohb5"]
+script = ExtResource("1_lcuf8")
+stat = &"frostbite_feet"
+label = "冻伤"
+limb = "足"
+order = 5
+track_weight = 0.72
+ring_degrees = 34.0
+ring_anchor = 2
+glyph = &"unresolved"
+
+[resource]
+script = ExtResource("2_bnwsx")
+readouts = Array[ExtResource("1_lcuf8")]([SubResource("Resource_habya"), SubResource("Resource_bge13"), SubResource("Resource_8m2qk"), SubResource("Resource_hg1ff"), SubResource("Resource_bhsay"), SubResource("Resource_8ohb5")])

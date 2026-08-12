@@ -1,0 +1,113 @@
+[gd_resource type="Resource" script_class="ThresholdCopyMap" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/threshold_copy.gd" id="1_qw1it"]
+[ext_resource type="Script" path="res://src/definitions/threshold_copy_map.gd" id="2_otl3d"]
+
+[sub_resource type="Resource" id="Resource_6ifi0"]
+script = ExtResource("1_qw1it")
+stat = &"core_temperature"
+threshold = 0.5
+effect = "breath:rate ×1.25"
+text = "呼吸变快了"
+
+[sub_resource type="Resource" id="Resource_tb5dc"]
+script = ExtResource("1_qw1it")
+stat = &"core_temperature"
+threshold = 0.35
+effect = "手足冻伤开始累积"
+text = "手脚开始发僵"
+
+[sub_resource type="Resource" id="Resource_k1bcv"]
+script = ExtResource("1_qw1it")
+stat = &"core_temperature"
+threshold = 0.2
+effect = "breath:rate ×1.5"
+text = "牙齿在打颤"
+
+[sub_resource type="Resource" id="Resource_7fn8e"]
+script = ExtResource("1_qw1it")
+stat = &"core_temperature"
+threshold = 0.15
+effect = "冻伤速率 ×2.0"
+text = "四肢正在失去知觉"
+
+[sub_resource type="Resource" id="Resource_p1ohp"]
+script = ExtResource("1_qw1it")
+stat = &"hunger"
+threshold = 0.3
+effect = "core_temperature 漏失 ×1.5"
+text = "身体产不出热了"
+
+[sub_resource type="Resource" id="Resource_h7ymf"]
+script = ExtResource("1_qw1it")
+stat = &"hunger"
+threshold = 0.05
+effect = "core_temperature 漏失 ×2.0"
+text = "身体在烧自己取暖"
+
+[sub_resource type="Resource" id="Resource_fhnag"]
+script = ExtResource("1_qw1it")
+stat = &"thirst"
+threshold = 0.3
+effect = "fatigue:recovery ×0.5 · vision:focus ×0.85"
+text = "眼前有些发花"
+
+[sub_resource type="Resource" id="Resource_siwuu"]
+script = ExtResource("1_qw1it")
+stat = &"thirst"
+threshold = 0.05
+effect = "fatigue:recovery ×0.0"
+text = "再怎么歇也缓不过来"
+
+[sub_resource type="Resource" id="Resource_mmgmg"]
+script = ExtResource("1_qw1it")
+stat = &"fatigue"
+threshold = 0.3
+effect = "locomotion:speed ×0.85 · snow_cost ×1.35"
+text = "腿开始沉"
+
+[sub_resource type="Resource" id="Resource_7hd0m"]
+script = ExtResource("1_qw1it")
+stat = &"fatigue"
+threshold = 0.1
+effect = "locomotion:speed ×0.85（叠乘）"
+text = "每一步都要想一下"
+
+[sub_resource type="Resource" id="Resource_lr5op"]
+script = ExtResource("1_qw1it")
+stat = &"fatigue"
+threshold = 0.02
+effect = "locomotion:run_speed ×0.0"
+text = "跑不动了"
+
+[sub_resource type="Resource" id="Resource_m3pay"]
+script = ExtResource("1_qw1it")
+stat = &"frostbite_hands"
+threshold = 0.5
+effect = "ignition:speed ×0.6 · aim:steadiness ×0.7"
+text = "手指不听使唤了"
+
+[sub_resource type="Resource" id="Resource_b86ws"]
+script = ExtResource("1_qw1it")
+stat = &"frostbite_hands"
+threshold = 0.2
+effect = "ignition:speed ×0.5 · aim:steadiness ×0.6"
+text = "手已经不算是手了"
+
+[sub_resource type="Resource" id="Resource_0jno0"]
+script = ExtResource("1_qw1it")
+stat = &"frostbite_feet"
+threshold = 0.5
+effect = "fatigue 漏失 ×1.25 · locomotion:speed ×0.85"
+text = "脚底没有知觉"
+
+[sub_resource type="Resource" id="Resource_nkwpf"]
+script = ExtResource("1_qw1it")
+stat = &"frostbite_feet"
+threshold = 0.2
+effect = "locomotion:speed ×0.8"
+text = "每一步都踩在别人的脚上"
+
+[resource]
+script = ExtResource("2_otl3d")
+entries = Array[ExtResource("1_qw1it")]([SubResource("Resource_6ifi0"), SubResource("Resource_tb5dc"), SubResource("Resource_k1bcv"), SubResource("Resource_7fn8e"), SubResource("Resource_p1ohp"), SubResource("Resource_h7ymf"), SubResource("Resource_fhnag"), SubResource("Resource_siwuu"), SubResource("Resource_mmgmg"), SubResource("Resource_7hd0m"), SubResource("Resource_lr5op"), SubResource("Resource_m3pay"), SubResource("Resource_b86ws"), SubResource("Resource_0jno0"), SubResource("Resource_nkwpf")])
