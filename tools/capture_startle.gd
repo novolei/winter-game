@@ -57,11 +57,11 @@ extends Node
 
 const SETTLE_FRAMES := 40
 
-## How fast he walks, and from how far out. A steady pace matters: the shot
-## yields to a man who stops, so a capture whose walker stuttered would be
-## photographing condition 2 firing rather than the shot.
+## How fast he walks, and from how far out. He has to START OUTSIDE the shot's
+## own trigger radius (12 m) or the sequence fires on frame one and there is no
+## approach to photograph -- written as 9 m first, which is inside it.
 const WALK_SPEED := 1.5
-const APPROACH_M := 9.0
+const APPROACH_M := 22.0
 
 ## Which wires are close enough to be worth landing a flock on.
 const NEAR_M := 11.0
@@ -102,6 +102,7 @@ var _reversed := false
 var _watch_return := false
 var _returning := false
 var _return_shot := 0
+var _watch_the_wire := Vector3.INF
 ## What the shot drew, printed once so the three runs can be compared as numbers
 ## and not only as pictures.
 var _drawn := ""
@@ -143,6 +144,8 @@ func _process(delta: float) -> void:
 	if _sky_stage > 0:
 		_sky_step()
 		return
+	if _watch_the_wire != Vector3.INF:
+		_rig.global_position = _watch_the_wire
 	_walk(delta)
 	if not _fired:
 		return
@@ -199,6 +202,8 @@ func _start() -> void:
 	_startle.chance = 1.0
 	_startle.cooldown_seconds = 0.0
 	_startle.attach()
+	print("capture_startle: shot triggers at %.1f m, the flock flushes at %.1f m" % [
+		_startle.trigger_radius_m, _flock.flush_radius_m])
 
 	_frame_at(_stop)
 
@@ -243,15 +248,14 @@ func _walk(delta: float) -> void:
 	_man.global_position = at
 	if not _fired and _startle.is_running():
 		_fired = true
-		_drawn = "shot %.2f s, tilt %.1f deg, swing %.1f deg, rise %.2f m, push x%.3f" % [
-			_startle.get("_seconds"), rad_to_deg(_startle.get("_tilt")),
-			rad_to_deg(_startle.get("_swing")), _startle.get("_rise"), _startle.get("_push")]
+		_drawn = "shot %.2f s, pitch up to %.1f deg below level, frame share %.2f, widen x%.3f" % [
+			_startle.get("_seconds"),
+			_rig.pitch_degrees - rad_to_deg(_startle.get("_tilt")),
+			_startle.get("_share"), _startle.get("_widen")]
 		# Spread the shots across the shot's own length, whatever it drew.
 		_every = float(_startle.get("_seconds")) / float(_shots - 1)
 		_next = 0.0
 		print("capture_startle: %s" % _drawn)
-		_print_the_flock()
-		_print_the_calls()
 
 
 func _capture() -> void:
@@ -277,14 +281,20 @@ func _capture() -> void:
 	var lift := _upper_luminance(get_viewport().get_texture().get_image())
 	if _shot == 0:
 		_luminance_before = lift
-	print("shot %02d  t=%5.2f  lean %+6.2f/%+6.2f deg  frame %5.2f m  aim +%.2f m  upper %.3f  birds %d wire / %d lifting / %d wheeling / %d away" % [
+	print("shot %02d  t=%5.2f  pitch %+6.2f deg  swing %+6.2f deg  frame %5.2f m  him in shot: %s  upper %.3f  birds %d wire / %d lifting / %d wheeling / %d away" % [
 		_shot, _clock,
-		rad_to_deg(_rig.lean().x), rad_to_deg(_rig.lean().y),
-		_rig.framed_size(), _rig.aim_offset().y, lift,
+		rad_to_deg(_rig.rotation.x), rad_to_deg(_rig.lean().y),
+		_rig.framed_size(), "yes" if _startle.frames_him() else "NO", lift,
 		feet, lifting, wheeling, committed])
 	_luminance_peak = maxf(_luminance_peak, lift)
 	_shot += 1
 	if _shot == _peak_shot and not _sky_done:
+		# AFTER the burst, not at the top of the shot: the calls are scheduled when
+		# the birds are told to go, which is a third of the way in. Printed before
+		# that, the schedule is empty and the capture reports "0 caws" for a burst
+		# that has three.
+		_print_the_flock()
+		_print_the_calls()
 		_sky_stage = 1
 
 
@@ -460,7 +470,22 @@ func _start_the_return() -> void:
 	_every = 0.45
 	_clock = 0.0
 	_next = 0.0
-	print("capture_startle: --return -- shortening the WAIT to 2.5 s; the approach itself is the game's own")
+	# PIN THE CAMERA ON THE WIRE. The game camera follows the man, and the man has
+	# to walk away or the birds call the landing off -- so the game's own framing
+	# of the return is sixty metres of empty snow, which is CORRECT and is not
+	# evidence. Photographed the other way first and got exactly that.
+	#
+	# This is the capture looking somewhere, not the shot leaning: `lean` is
+	# printed on every frame below and stays at 0.00, which is the claim.
+	var middle := Vector3.ZERO
+	var perches := _flock.available_perches()
+	for perch in perches:
+		middle += perch["at"] as Vector3
+	if not perches.is_empty():
+		middle /= float(perches.size())
+	_watch_the_wire = Vector3(middle.x, 4.6, middle.z)
+	print("capture_startle: --return -- WAIT shortened to 2.5 s (the approach is the game's own); camera pinned on the wire at (%.1f, %.1f)" % [
+		_watch_the_wire.x, _watch_the_wire.z])
 
 
 func _capture_return() -> void:
