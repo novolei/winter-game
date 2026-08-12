@@ -34,6 +34,15 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 
 const FRAME := 1.0 / 60.0
 
+## The farmhouse's main roof is a 33.7 degree pitch -- tools/blender/
+## build_farmhouse.py, MAIN_RISE 2.40 over a 3.60 half-span -- so its world
+## normal's Y is cos(33.7) = 0.832. The wings are the same pitch. This is the
+## surface the owner looks at, so it is the one the opening state is judged on.
+const FARMHOUSE_PITCH_Y := 0.832
+
+## A full day and a night at day 1's lengths (data/schedule/day_01.tres).
+const A_WHOLE_DAY := 900.0
+
 var _snow: SnowAccumulation
 var _sky: WeatherStandIn
 
@@ -77,6 +86,16 @@ func _run(seconds: float) -> Dictionary:
 		covers.append(_snow.cover())
 		rates.append(_snow.rate())
 	return {"cover": covers, "rate": rates}
+
+
+## The same, for the runs that last minutes rather than seconds: stepped at a
+## tenth of a second and keeping nothing, because a 900 s trace at 60 Hz is
+## 54000 entries and none of these tests looks at the shape of it.
+func _elapse(seconds: float) -> void:
+	var elapsed := 0.0
+	while elapsed < seconds:
+		_snow.advance(0.1)
+		elapsed += 0.1
 
 
 func _largest_jump(values: PackedFloat32Array) -> float:
@@ -344,17 +363,114 @@ func test_wind_takes_settled_snow_off_again() -> void:
 	)
 
 
-## The run opens on the weather day 1 actually has. A world that whitened over
-## the first three minutes of play would be the feature working perfectly and
-## reading as the world assembling itself.
-func test_the_first_frame_opens_on_the_weather_the_day_has() -> void:
+## The run opens on a world that has already had a winter in it, and the depth
+## it opens at is AUTHORED rather than derived.
+##
+## This test used to assert `cover() == equilibrium()`, and that assertion was
+## the defect. The equilibrium is where the CURRENT weather is taking the snow;
+## it says nothing about what fell before the run began, and day 1's weather is
+## the lightest in the game. The world opened at whatever three minutes of pale
+## day implies, which is a world with no winter behind it.
+func test_the_first_frame_opens_on_the_world_that_was_authored() -> void:
 	_sky.snowfall = 0.12
 	_snow.settle()
 	assert_almost_eq(
-		_snow.cover(), _snow.equilibrium(), 0.0001,
-		"the world does not start at the cover its weather asks for"
+		_snow.cover(), _snow.opening_cover, 0.0001,
+		"the world does not open at the cover it was authored to open at"
 	)
 	assert_almost_eq(_snow.rate(), 0.0, 0.0001, "it starts already moving")
+
+
+## THE DEFECT EVERY TEST ABOVE MISSED, and the reason it missed it: they all
+## assert that the cover MOVES smoothly and not one of them asserted where it
+## starts. Measured in the shipped build, not inferred -- day 1 opened at cover
+## 0.359 and held it, unmoving, for the whole 600 s of daylight. At 0.359 the
+## shader lays no snow at all on a 33.7 degree roof, none on a 45 degree pitch,
+## and 7% of a flat top. The owner played it and reported no snow on the roofs,
+## the car roof or the power poles, while this file was green and the capture
+## harness showed accumulation working perfectly -- because the harness set its
+## own weather and had never once photographed day 1.
+##
+## So this asserts the PICTURE at the opening state, through the same shader
+## arithmetic the rest of this file mirrors, on the surface the owner named.
+func test_the_world_opens_with_snow_already_lying_on_the_roofs() -> void:
+	# PALE DAY, 0.12: what day 1 actually opens on, from Snowfall.storm_by_preset.
+	_sky.snowfall = 0.12
+	_snow.settle()
+	var cover := _snow.cover()
+	assert_true(
+		_lying(FARMHOUSE_PITCH_Y, 1.0, cover) > 0.99,
+		"at the cover the run opens on (%.3f) the snowiest point of the farmhouse roof is only "
+			% cover
+			+ "%.2f covered -- the player arrives at a bare roof in the middle of winter"
+				% _lying(FARMHOUSE_PITCH_Y, 1.0, cover)
+	)
+	# ...and it must NOT be finished, or there is nowhere for the week to go and
+	# Art Bible rule 10's ridge line is buried on the first frame.
+	assert_true(
+		_lying(FARMHOUSE_PITCH_Y, -1.0, cover) < 0.01,
+		"the roof opens completely white, so the week has nothing left to bury and the ridge "
+		+ "line is already gone"
+	)
+	# A flat top: the crossarm on the power pole, a window sill, the truck's
+	# bonnet, a fence rail. These are the surfaces snow lies on most readily and
+	# they must read as snow-covered from the first frame.
+	assert_true(
+		_lying(1.0, 0.0, cover) > 0.9,
+		"a flat up-facing surface is only %.2f covered at the opening cover, so the crossarms "
+			% _lying(1.0, 0.0, cover)
+			+ "and the sills open bare"
+	)
+
+
+## THE MODELLING ERROR BEHIND IT. `shed` ran unconditionally at a 420 s time
+## constant, which is a MELT rate charged to a world that is never above
+## freezing. Snow on a cold roof does not leave because it stopped snowing --
+## it sits there for days. The shipped model took 88% of it off across one game
+## day of clear weather, which is why every daylight phase un-buried the world
+## it had buried the night before.
+func test_cold_still_air_leaves_the_snow_where_it_is() -> void:
+	_sky.snowfall = 0.12
+	_snow.settle()
+	var opened := _snow.cover()
+	# The sky clears completely, the air is dead still, and it stays below
+	# freezing -- which is every hour of this game that is not a storm.
+	_sky.snowfall = 0.0
+	_sky.wind = 0.0
+	_elapse(A_WHOLE_DAY)
+	var left := _snow.cover() / opened
+	assert_true(
+		left > 0.75,
+		"a whole game day of cold, still, snow-free weather left %.0f%% of the snow on the roof. "
+			% (left * 100.0)
+			+ "Below freezing it does not leave because it stopped snowing"
+	)
+
+
+## ...and what DOES take it off. The loss is gated on the things that actually
+## remove snow, so the model has to be able to remove it when one of them is
+## present -- otherwise "cold and still holds it" is indistinguishable from a
+## shed term somebody simply deleted.
+func test_it_takes_a_thaw_to_get_the_snow_off_a_roof() -> void:
+	_sky.snowfall = 0.0
+	_sky.wind = 0.0
+	_snow.settle()
+	var opened := _snow.cover()
+	_elapse(300.0)
+	var cold_loss := opened - _snow.cover()
+
+	# The same five minutes, the same weather, one thing different.
+	_snow.settle()
+	_snow.set_thaw(1.0)
+	_elapse(300.0)
+	var thawed_loss := opened - _snow.cover()
+
+	assert_true(
+		thawed_loss > cold_loss * 5.0,
+		"five minutes above freezing took %.4f of cover off against cold air's %.4f, so the "
+			% [thawed_loss, cold_loss]
+			+ "loss is not actually gated on anything"
+	)
 
 
 ## A weather system taking the wheel must take it completely -- two things

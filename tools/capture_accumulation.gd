@@ -23,6 +23,10 @@ extends Node
 ## Arguments:
 ##   --out <prefix>     writes <prefix>-00.png, -01.png, ...   (required)
 ##   --covers "a;b;c"   the accumulations to shoot, in order
+##   --live             TOUCH NOTHING. Boot the game and photograph what the
+##                      RUN actually does, at --at seconds of play
+##   --at "0;120;300"   when to shoot in --live mode, in simulated seconds
+##   --speed <x>        Engine.time_scale for --live       (default 10)
 ##   --transition       shoot a live weather cut instead: settle at --from,
 ##                      cut the weather to --to, and shoot every --every
 ##                      simulated seconds for --frames shots
@@ -39,6 +43,22 @@ extends Node
 ## the model has walked where it is going. A harness that poked the scalar
 ## directly would photograph a state the game can never be in, and would be
 ## unable to see the exact defect it exists to look for.
+##
+## ---------------------------------------------------------------------------
+## ...AND WHY THAT WAS STILL NOT ENOUGH -- read this before trusting a capture
+## ---------------------------------------------------------------------------
+## Every mode above sets the snowfall itself, on `--from`, `--to` or a rate
+## solved back out of `--covers`. So every one of them photographs a weather the
+## HARNESS chose. The one weather it could not photograph was the game's own,
+## and that is the one the owner plays: the shipped build showed no snow on the
+## roofs while these captures showed accumulation working perfectly, because the
+## captures were never looking at day 1.
+##
+## `--live` is the mode that closes that hole. It sets NOTHING -- no snowfall, no
+## cover, no preset -- boots scenes/main.tscn, lets RunBoot start the clock and
+## LightingDirector pick day 1's own look, and photographs whatever the run does.
+## If a capture and the running game ever disagree again, this is the mode that
+## says which one is lying.
 
 const STEP := 0.05
 const FAST_FORWARD_BUDGET := 200000
@@ -47,6 +67,9 @@ const FAST_FORWARD_BUDGET := 200000
 var _out := ""
 var _covers: Array[float] = []
 var _transition := false
+var _live := false
+var _at: Array[float] = []
+var _speed := 10.0
 var _from := 0.12
 var _to := 1.0
 var _frames := 12
@@ -58,12 +81,21 @@ var _shot := 0
 var _busy := false
 var _done := false
 var _started := false
+## Simulated seconds since boot, which is what --at is measured in. Summed from
+## the scaled delta rather than read off the wall clock, so it is the same time
+## the accumulation itself is integrating against whatever --speed is set to.
+var _sim := 0.0
 
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
 	_out = _arg(args, "--out", "")
 	_transition = args.has("--transition")
+	_live = args.has("--live")
+	_speed = maxf(float(_arg(args, "--speed", str(_speed))), 0.01)
+	for entry in _arg(args, "--at", "0;120;300;600;900").split(";", false):
+		_at.append(maxf(float(entry), 0.0))
+	_at.sort()
 	_from = float(_arg(args, "--from", str(_from)))
 	_to = float(_arg(args, "--to", str(_to)))
 	_frames = int(_arg(args, "--frames", str(_frames)))
@@ -96,15 +128,22 @@ func _snow() -> Node:
 	return registry.get_service(&"snow_accumulation") as Node
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	# Outside every guard: the shooting coroutine suspends across frames, and the
+	# clock it is waiting on has to go on running while it does.
+	_sim += delta
 	if _done or _busy:
 		return
 	if not _started:
 		_started = true
+		if _live:
+			Engine.time_scale = _speed
 		_frame_the_shot()
 		return
 	_busy = true
-	if _transition:
+	if _live:
+		await _shoot_live()
+	elif _transition:
 		await _shoot_transition()
 	else:
 		await _shoot_stops()
@@ -182,6 +221,41 @@ func _shoot_stops() -> void:
 		await _capture(snow, "stop %.3f" % wanted)
 
 
+## THE RUN, PHOTOGRAPHED. Sets nothing and waits: the clock, the lighting and
+## the weather are all the game's own, and the only thing this does is hold the
+## camera still and open the shutter at `--at`.
+func _shoot_live() -> void:
+	var snow := _snow()
+	if snow == null:
+		push_error("capture_accumulation: no snow_accumulation service")
+		return
+	for when in _at:
+		while _sim < when:
+			await RenderingServer.frame_post_draw
+		await _capture(snow, "LIVE t=%.0fs of play  %s" % [_sim, _weather()])
+
+
+## What the game -- not the harness -- has the weather doing at this instant.
+func _weather() -> String:
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry == null:
+		return ""
+	var sky = registry.get_service(&"snowfall")
+	var light = registry.get_service(&"lighting")
+	var clock := get_node_or_null("/root/WorldClock")
+	var preset := "-"
+	if light != null and light.has_method("active_preset"):
+		var look = light.active_preset()
+		if look != null:
+			preset = str(look.id)
+	var phase := "-"
+	if clock != null and clock.has_method("current_day") and clock.has_method("is_night"):
+		phase = "day %d %s" % [clock.current_day(), "night" if clock.is_night() else "daylight"]
+	return "%s  %s  snowfall=%.3f" % [
+		phase, preset, (sky.snowfall_rate() if sky != null else -1.0),
+	]
+
+
 ## Sets the weather that has `wanted` as its destination and then runs the model
 ## until it gets there. Nothing is assigned: the cover arrives where it arrives
 ## by integrating, exactly as it does in play, only faster than real time.
@@ -190,8 +264,12 @@ func _fast_forward_to(snow: Node, wanted: float) -> void:
 	# `wanted` is the one making gain = shed * wanted / (1 - wanted). Solved
 	# rather than searched, and clamped because a cover of exactly 1 has no
 	# finite weather that reaches it -- which is the whole point of the model.
-	var reachable := clampf(wanted, 0.0, 0.97)
-	var shed: float = 1.0 / float(snow.shed_seconds)
+	# ...and the ceiling is asked for rather than assumed. The heaviest snowfall
+	# there is has its own equilibrium, and a `--covers` entry above it would burn
+	# the whole budget walking toward somewhere the model cannot go.
+	var shed: float = 1.0 / float(snow.creep_seconds)
+	var hardest: float = 1.0 / float(snow.settle_seconds)
+	var reachable := clampf(wanted, 0.0, hardest / (hardest + shed) - 0.005)
 	var gain: float = shed * reachable / maxf(1.0 - reachable, 0.0001)
 	snow.set_snowfall_rate(clampf(gain * float(snow.settle_seconds), 0.0, 1.0))
 	var budget := FAST_FORWARD_BUDGET
@@ -211,7 +289,13 @@ func _shoot_transition() -> void:
 		push_error("capture_accumulation: no snow_accumulation service")
 		return
 	snow.set_snowfall_rate(_from)
-	var settle := int(snow.shed_seconds * 8.0 / STEP)
+	# Eight time constants of the weather being settled at, rather than eight of
+	# any one term: the creep alone is seventy minutes and soaking against it
+	# would spend a million steps arriving somewhere it reached in a tenth of them.
+	var tau: float = 1.0 / maxf(
+		_from / float(snow.settle_seconds) + 1.0 / float(snow.creep_seconds), 0.00001
+	)
+	var settle := int(tau * 8.0 / STEP)
 	for _step in range(settle):
 		snow.advance(STEP)
 	await _capture(snow, "before the cut, snowfall %.2f" % _from)

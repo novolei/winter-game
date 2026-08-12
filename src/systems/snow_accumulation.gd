@@ -35,16 +35,15 @@ extends Node
 ##     moves `_night`, which moves the target rate, which the two integrators
 ##     absorb exactly like everything else.
 ##
-## A design that assigned a depth from the weather and then tuned an ease onto
-## it would look identical on a good day and pop on the first frame nobody
-## tested. This one has no assignment to pop from -- see settle() for the single
-## exception, which happens before the first frame is drawn.
+## `settle()` is the single exception and it happens before the first frame is
+## drawn. Authoring the state the world OPENS in is not a pop: it is the world
+## already being what it is when the player arrives.
 ##
 ## ---------------------------------------------------------------------------
 ## THE MODEL
 ## ---------------------------------------------------------------------------
 ##     gain = snowfall / settle_seconds
-##     shed = day_or_night / shed_seconds  +  wind / scour_seconds
+##     shed = creep + wind / scour_seconds + thaw / melt_seconds
 ##     rate = gain * (1 - cover)  -  shed * cover
 ##
 ## Three things worth saying about that middle line.
@@ -63,10 +62,49 @@ extends Node
 ## time constant of 1 / (gain + shed). That is the "缓慢" -- minutes, not
 ## frames, and never a destination it arrives at abruptly.
 ##
-## Nothing here melts. It is well below freezing in this game and snow on a roof
-## at -20 does not thaw in the sun; what takes it off is consolidation, sliding
-## and wind. So the sun is not an input and `世界时间` reaches the snow through
-## the one thing that honestly changes overnight -- how much of what fell stays.
+## ---------------------------------------------------------------------------
+## WHAT TAKES SNOW OFF A ROOF, which this file got wrong once
+## ---------------------------------------------------------------------------
+## The version that shipped in b9e1490 carried this paragraph:
+##
+##     "Nothing here melts. It is well below freezing in this game and snow on a
+##      roof at -20 does not thaw in the sun."
+##
+## ...and then ran a 420 s decay unconditionally, which is a MELT RATE charged
+## to a world that is never above freezing. The prose was right and the
+## arithmetic did not match it. What that cost, measured in the shipped build
+## rather than reasoned about:
+##
+##   * day 1 opened at cover 0.359 and held it, unmoving, for the whole 600 s of
+##     daylight -- because settle() put the cover exactly at the equilibrium and
+##     the equilibrium of a constant weather is constant
+##   * at 0.359 the cel shader lays NO snow on the farmhouse roof (a 33.7 degree
+##     pitch), none on a 45 degree pitch, and 7% of a flat top
+##   * every daylight phase un-buried the world its night had buried: the cover
+##     ran 0.36 -> 0.66 -> 0.39 -> 0.66 -> 0.62 -> 0.40 across the week, a
+##     sawtooth rather than a winter
+##
+## The owner played it and reported no snow on the roofs, the car roof or the
+## power poles. Every test in this file was green, and the capture harness
+## showed accumulation working perfectly -- because the harness set its own
+## weather and had never once photographed day 1.
+##
+## So the loss is now gated on the three things that actually remove snow, and
+## the normal case in this game is the one where none of them is happening:
+##
+##   COLD AND STILL -> IT STAYS.   creep_seconds, and it is 70 minutes: over a
+##                                 whole game day of clear weather four fifths
+##                                 of the snow is still on the roof. This is the
+##                                 default, not the exception.
+##   WIND           -> SCOUR.      scour_seconds, on the wind hook.
+##   ABOVE FREEZING -> MELT.       melt_seconds, on the thaw hook, which is 0
+##                                 today and belongs to Wave 3.
+##
+## `creep_seconds` is not zero, and that is deliberate rather than a survival of
+## the old term. Settled snow really does consolidate and slide off a pitch, on
+## a time constant far longer than a game day; and a shed that could reach zero
+## would put the equilibrium at exactly 1.0, which is the clamp, which is the
+## one corner this whole design exists to keep out of the curve.
 
 ## THE WEATHER, as this reads it. Both are HOOKS in the vocabulary TrackMask and
 ## Snowfall already share: 0 clear .. 1 heavy, and 0 dead still .. 1 full gale.
@@ -79,64 +117,109 @@ const REGISTRY_NAME := &"snow_accumulation"
 const EVENT_DAY_STARTED := &"clock.day_started"
 const EVENT_NIGHT_STARTED := &"clock.night_started"
 
-## Seconds of the heaviest snowfall it would take to lay a full cover if none of
-## it ever came off again. Together with shed_seconds this fixes both how deep
-## the snow gets at a given weather and how long it takes to get there, so the
-## two are a pair and were tuned as one.
+## HOW DEEP THE WORLD IS WHEN THE PLAYER ARRIVES.
 ##
-## 90 s against a shed of 420 gives a time constant of 74 s in a blizzard and
-## four and a half minutes in the light snow of days 1-2. Measured on the model:
-## the heaviest snowfall there is takes about 170 s to lay nine tenths of its
-## cover. Minutes of game time in every case, which is what 缓慢 has to mean
-## against a daylight phase that is ten minutes long.
-@export var settle_seconds := 90.0
+## GDD day 1 is not the first day of winter. There is a metre of snow on the
+## ground, the valley has been under it for weeks, and the roofs are carrying
+## what fell before the run began. A model that can only ramp from wherever it
+## starts needs its start authored, and this is it.
+##
+## 0.62 IS A NUMBER ABOUT THE PICTURE, not about the weather, and it was chosen
+## against the cel shader's own mapping (CelPainter's SNOW_* constants, measured
+## over 20000 samples of the shader's noise):
+##
+##     cover   farmhouse roof   flat top   45 deg pitch   truck panel
+##     0.359       0%              7%          0%             0%      <- shipped
+##     0.550      12%             74%          1%             0%
+##     0.620      33%             96%          5%             1%      <- here
+##     0.800      98%            100%         61%             7%
+##     0.970     100%            100%        100%            25%
+##
+## At 0.62 the roof carries real snow with the dark slate still reading through
+## it, every flat top is white, and the week has the whole of 0.62..0.97 left to
+## bury it in. Lower and the roof opens bare, which is the defect. Higher and
+## the roof opens finished, which takes Art Bible rule 10's ridge line with it
+## on the first frame.
+@export var opening_cover := 0.62
 
-## The time constant of settled snow leaving again: it consolidates, it slides
-## off a pitch, it blows away. Proportional to how much of it there is, which is
-## what gives every weather an equilibrium instead of a ceiling.
+## Seconds of the heaviest snowfall it would take to lay a full cover on a bare
+## world. Together with creep_seconds this fixes both how deep the snow gets at
+## a given weather and how long it takes to get there, so the two are a pair and
+## were tuned as one.
+##
+## 240 s against a creep of 4200 gives a time constant of 3.8 minutes in a
+## blizzard and 23 minutes in the light snow of days 1-2. Measured on the model:
+## the heaviest snowfall there is takes about 520 s to lay nine tenths of its
+## cover, which is inside a single daylight phase and nowhere near a frame.
+@export var settle_seconds := 240.0
+
+## THE COLD, STILL LOSS: consolidation, and a slab sliding off a pitch. The two
+## things that take snow off a roof at -20, and both of them are slow.
+##
+## 4200 s is seventy minutes -- longer than any single game day, and two thirds
+## of a whole seven-day run. Over one game day of clear weather it leaves 81% of
+## the snow where it was, which is what "below freezing it stays" has to mean as
+## a number. It is NOT zero, for the reason in the header: a shed that reaches
+## zero puts the equilibrium on the clamp.
 ##
 ## The equilibrium cover is gain / (gain + shed), so with these two numbers and
 ## Snowfall's own table the seven days run roughly:
 ##
-##     PALE DAY   0.12 snowfall -> 0.36 by day, 0.48 at night
-##     DEEP NIGHT 0.28          -> 0.57        0.69
-##     NIGHTFALL  0.35          -> 0.62        0.73
-##     WHITEOUT   1.00          -> 0.82        0.89
+##     PALE DAY   0.12 snowfall -> 0.68 by day, 0.78 at night
+##     DEEP NIGHT 0.28          -> 0.83        0.89
+##     NIGHTFALL  0.35          -> 0.86        0.91
+##     WHITEOUT   1.00          -> 0.95        0.97
 ##
-## which is a world that visibly buries itself across the week and still moves
-## every single phase, rather than one that pins at full on day 2 and stops.
+## Simulated across the authored schedules from the opening 0.62, the cover runs
+## 0.62 -> 0.64 -> 0.74 -> 0.72 -> 0.79 -> 0.83 -> ... -> 0.97, moving every
+## single phase and never turning back on itself by more than a lull's worth.
+@export var creep_seconds := 4200.0
+
+## WIND STRIPS AN EXPOSED SURFACE -- the same 风大 TrackMask decays prints with,
+## arriving here through the same hook. At rest this term is exactly zero and
+## the snow keeps everything the creep leaves it.
 ##
-## Day 1's night is 300 s against a night-time time constant of 362, so the
-## cover crosses a little over half the way from its daylight value to its
-## night one before dawn turns it around. It is never still and never arrives.
-@export var shed_seconds := 420.0
+## 900 s rather than the 120 it shipped at. Every other time constant in this
+## file moved by an order of magnitude when the melt came out of the default
+## case, and a scour left at 120 s would have made the wind the only thing in
+## the model that mattered.
+@export var scour_seconds := 900.0
 
-## Wind strips an exposed surface as well as filling a footprint in -- the same
-## 风大 TrackMask decays prints with, arriving here through the same hook. At
-## rest this term is exactly zero and the snow sheds on shed_seconds alone.
-@export var scour_seconds := 120.0
+## ABOVE FREEZING, OR NEAR SOMETHING BURNING: the snow melts. 300 s at a full
+## thaw, so a warm spell takes a roof down about as fast as the heaviest
+## snowfall built it.
+##
+## THIS IS THE TERM THE OLD MODEL APPLIED UNCONDITIONALLY. It is now gated on
+## `thaw`, which is 0 for the whole of the game that exists today: there is no
+## air temperature in this project (see src/entities/snow_load.gd, which reached
+## the same conclusion and left its own air hook at zero), and inventing one
+## here would mean two of them when Wave 3 brings the real one.
+@export var melt_seconds := 300.0
 
-## How much less settled snow sheds at night. Colder, no sun on the pitch, no
+## How much less settled snow creeps at night. Colder, no sun on the pitch, no
 ## thaw-freeze cycle: more of what fell stays. This is the whole of `世界时间`
 ## in this file, and it reaches the snow through the RATE, never through the
 ## depth -- which is why a day rollover needs no code here at all.
-@export var night_shed_factor := 0.6
+@export var night_creep_factor := 0.6
 
 ## The ceiling on how fast the rate itself may change, per second. This is the
 ## second integrator, and it is the reason a weather CUT cannot even put a
 ## crease in the curve.
 ##
-## The rate's whole plausible range is about 0.025 per second wide, so at 0.004
-## it takes six seconds to cross all of it -- imperceptible beside a cover that
-## takes minutes to move, and enough that no input, however abrupt, can put a
-## corner in what is drawn.
-@export var rate_slew := 0.004
+## The rate's plausible range is now about 0.0044 per second wide in the weather
+## the game actually has, so at 0.0008 it takes five and a half seconds to cross
+## all of it -- imperceptible beside a cover that takes minutes to move, and
+## enough that no input, however abrupt, can put a corner in what is drawn. It
+## came down from 0.004 with the rest of the model: a slew ceiling ten times the
+## largest rate there is bounds nothing.
+@export var rate_slew := 0.0008
 
 ## 0..1. Never assigned outside settle(); see the header.
 var _cover := 0.0
 var _rate := 0.0
 var _snowfall := 0.0
 var _wind := 0.0
+var _thaw := 0.0
 var _night := false
 var _settled := false
 var _overridden := false
@@ -184,7 +267,7 @@ func rate() -> float:
 
 
 ## Where the cover is headed at the weather currently set, and the number the
-## table in shed_seconds' comment is computed from. Never assigned to _cover --
+## table in creep_seconds' comment is computed from. Never assigned to _cover --
 ## it exists so a test can state the equilibrium and so a tuner can read it.
 func equilibrium() -> float:
 	var gain := _gain()
@@ -206,6 +289,10 @@ func wind_strength() -> float:
 	return _wind
 
 
+func thaw() -> float:
+	return _thaw
+
+
 # --- the hooks --------------------------------------------------------------
 
 ## THE WEATHER HOOKS, in the vocabulary TrackMask and Snowfall already use.
@@ -221,6 +308,23 @@ func set_snowfall_rate(rate_0_to_1: float) -> void:
 func set_wind_strength(strength: float) -> void:
 	_overridden = true
 	_wind = clampf(strength, 0.0, 1.0)
+
+
+## THE THAW HOOK. 0 hard frost .. 1 above freezing, and it is the ONLY thing in
+## this model that melts anything. Zero for the whole of the game that exists
+## today; Wave 3's temperature owns it.
+##
+## Deliberately NOT read off Snowfall, and not an override: the sky knows how
+## hard it is snowing and how hard it is blowing, and it has no opinion at all
+## about how warm it is.
+##
+## Note what this cannot express. The scalar is one number for the whole world,
+## so "near a heat source" -- a chimney thawing the ridge around it, a stove
+## warming the roof it is under -- is a LOCAL fact and cannot live here. That
+## needs per-object state, which this feature deliberately does not have, and it
+## is a different feature.
+func set_thaw(thaw_0_to_1: float) -> void:
+	_thaw = clampf(thaw_0_to_1, 0.0, 1.0)
 
 
 ## Injected by a test, or by whoever wires the scene. Resolved from the
@@ -246,12 +350,18 @@ func _gain() -> float:
 
 ## Snow leaving, per second, PER UNIT OF COVER -- so the loss term is
 ## _shed() * cover and a bare surface loses nothing.
+##
+## Three terms, and in the weather this game actually has only the first one is
+## ever non-zero. See the header: that is the point of the change, not an
+## oversight in the wiring.
 func _shed() -> float:
 	var shed := 0.0
-	if shed_seconds > 0.0:
-		shed = (night_shed_factor if _night else 1.0) / shed_seconds
+	if creep_seconds > 0.0:
+		shed = (night_creep_factor if _night else 1.0) / creep_seconds
 	if scour_seconds > 0.0:
 		shed += _wind / scour_seconds
+	if melt_seconds > 0.0:
+		shed += _thaw / melt_seconds
 	return shed
 
 
@@ -273,27 +383,29 @@ func advance(delta: float) -> void:
 	# the first frame of a change, and a bound is what the guarantee needs.
 	_rate = clampf(wanted, _rate - step, _rate + step)
 	# The clamp is unreachable by construction -- see the header on why the gain
-	# carries (1 - cover). It is here because "unreachable" should be defended
-	# rather than trusted, not because anything is expected to hit it.
+	# carries (1 - cover) and why the shed can never reach zero. It is here
+	# because "unreachable" should be defended rather than trusted.
 	_cover = clampf(_cover + _rate * delta, 0.0, 1.0)
 
 
 ## THE ONE ASSIGNMENT, and it happens before the first frame is drawn.
 ##
-## Same call and same reasoning as Snowfall.settle(): the run opens on the
-## weather day 1 actually has, rather than on a bare world that whitens over the
-## first three minutes of play. A world assembling itself in front of the player
-## reads as a bug, and it is the only reading of this feature that would.
+## The run opens on `opening_cover` -- the world the player walks into, which
+## has had a winter in it already. NOT on the equilibrium of day 1's weather:
+## the equilibrium says where the CURRENT sky is taking the snow and nothing at
+## all about what fell before the run began, and day 1's sky is the lightest in
+## the game. Opening there is what put the player in front of bare roofs.
 ##
 ## Fired from the first _process rather than from _ready(), because Snowfall is
 ## a sibling further down scenes/main.tscn and a node's _ready() runs before its
 ## later siblings' do -- settling in _ready() would read a sky that has not
-## resolved its own rate yet and start from zero anyway. RunBoot arms itself the
-## same way and for the same reason.
+## resolved its own rate yet. The weather read here no longer decides the depth,
+## but it does decide the rate on the first frame, so the ordering still matters.
+## RunBoot arms itself the same way and for the same reason.
 func settle() -> void:
 	_settled = true
 	_read_weather()
-	_cover = equilibrium()
+	_cover = clampf(opening_cover, 0.0, 1.0)
 	_rate = 0.0
 
 
