@@ -79,6 +79,11 @@ var _track_px := 0.0
 ## True for the one reading that IS the body's heat. See VitalTone.
 var _is_heat := false
 
+## How bright the ground behind this reading is, 0..1. Half until the lighting
+## says otherwise, so a readout built before the world is lit is neither black
+## nor white.
+var _world := 0.5
+
 
 ## Marks this reading as the body's own warmth, which is the only thing in the
 ## interface allowed to be warm (rule 3, and VitalTone.heat_colour_for()).
@@ -329,9 +334,31 @@ func centre() -> Vector2:
 	return size * 0.5
 
 
+## How bright the world is, 0..1. The stroke keeps a fixed contrast step from it
+## rather than being a colour that happens to suit each preset.
+func set_world_value(value: float) -> void:
+	if is_equal_approx(_world, value):
+		return
+	_world = clampf(value, 0.0, 1.0)
+	_apply_reading_colour()
+	queue_redraw()
+
+
 func _apply_reading_colour() -> void:
-	if _paint != null:
-		_paint.set_reserve_colour(VitalTone.colour_for(_tokens, _state, _is_heat))
+	if _paint == null:
+		return
+	# The TOKEN says what the reading means; the adaptation says how light or
+	# dark it has to be to be seen against today's weather. Hue is never touched,
+	# so the warm gauges stay warm through it (rule 3) with no branch here.
+	# One input, two behaviours: the charcoal's strength and the dial's warmth
+	# both come from how bright the world is. The dial keeps its hue family and
+	# falls in value, so it goes OUT at nightfall rather than turning cool --
+	# which would be saying the fire had gone out for a different reason.
+	if _is_heat:
+		_paint.set_reserve_colour(VitalTone.warm_for(_tokens, _world))
+	else:
+		_paint.set_reserve_colour(
+			VitalTone.adapt(VitalTone.colour_for(_tokens, _state, false), _world))
 
 
 func _pad_px() -> float:

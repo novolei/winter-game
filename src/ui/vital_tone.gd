@@ -85,18 +85,15 @@ static func state_for(fraction: float, depleted := false) -> State:
 ##
 ## `is_heat` is true for the ONE reading that is the body's own warmth. See
 ## heat_colour_for().
-static func colour_for(tokens: UITokens, state: State, is_heat := false) -> Color:
-	if tokens == null:
-		return Color.MAGENTA
-	if is_heat:
-		return heat_colour_for(tokens, state)
-	match state:
-		State.ALARM, State.CRITICAL:
-			return tokens.alarm_blood
-		State.EMPTY:
-			# The trough colour, because an emptied stat IS its trough.
-			return tokens.line_hairline
-	return tokens.ink_primary
+## ONE COLOUR, WHATEVER THE READING IS DOING. See CHARCOAL.
+##
+## The state still changes what the gauge looks like -- it changes its FORM and
+## its WEIGHT, which is what rule 3 left available once colour was spent, and
+## what the whole emphasis design already ran on. The colour argument survives
+## only so that a look which does want a per-state colour can be dropped in
+## behind the seam without every caller changing.
+static func colour_for(_tokens: UITokens, _state: State, _is_heat := false) -> Color:
+	return CHARCOAL
 
 
 ## The core-temperature gauge, and the only warm element in the interface.
@@ -224,15 +221,137 @@ static func breathe(tokens: UITokens, elapsed: float) -> float:
 	return 1.0 - amplitude * wave
 
 
-## How frosted a reading should be, given how cold the body is.
+# --- one colour, and the world it has to be seen against ----------------------
+
+## THE COLOUR OF THE WHOLE INTERFACE. There is exactly one.
 ##
-## This is property 5 of the frost direction -- it accumulates and it clears --
-## bound to the thing that makes frost in the first place. The interface is made
-## of the substance that is killing him, so it thickens as he freezes and it
-## melts back when he warms up. Nothing has to drive it; it is already true.
+## 圆环就做成炭黑透明一种颜色就好了，整个 HUD 所有的元素都使用这个单一颜色 -- the
+## owner's ruling. Every arc, every icon, every numeral. It retires the state
+## colour table, the warm ramp and the adaptive-hue scheme in one line.
 ##
-## `cold` is 0 warm .. 1 freezing, which is the inverse of the stat's own
-## polarity (survival_system.gd: every stat is a RESERVE, 1 is healthy). The
-## caller inverts, the same way BreathFog's set_chill() makes its caller invert.
-static func rime_for_cold(cold: float) -> float:
-	return clampf(lerpf(0.30, 1.0, clampf(cold, 0.0, 1.0)), 0.0, 1.0)
+## WHAT IT COSTS, RECORDED SO THE DECISION IS FINDABLE. There is now no warm
+## pixel anywhere in the interface. The day dial and the temperature gauge were
+## to be warm because rule 3 gives warm exactly one meaning and those two
+## readings ARE heat -- and the largest object on screen losing its warmth at
+## nightfall would have said 暖色即生存 without a word. That is gone by choice.
+##
+## Rule 3 is not broken by this. The rule forbids warm from meaning anything but
+## heat, and an interface with no warm in it cannot break that; it simply no
+## longer says the thing warm was there to say.
+##
+## THE SAME SUBSTANCE AS THE OCCLUDER FADE. #16181C is the off-palette neutral
+## already authorised for the fade -- the colour a building turns when it gets
+## out of the player's way. This is deliberately the same value, so the interface
+## and the fade are made of one substance, and that substance is the game
+## stepping politely out of the way. test_vital_tone.gd asserts they agree.
+const CHARCOAL := Color(0.08627451, 0.09411765, 0.10980392)
+
+## How a lighting preset's ambient energy maps to the relative luminance of the
+## ground it produces.
+##
+## EMPIRICAL AND RE-MEASURABLE. Fitted to three frames captured through
+## tools/capture_vitals.tscn with `--preset`, sampling the ground the readouts
+## actually stand on:
+##
+##   deep_night  ambient 1.5  ->  measured 0.093
+##   whiteout    ambient 2.9  ->  measured 0.474   (this line predicts 0.450)
+##   pale_day    ambient 3.2  ->  measured 0.526
+##
+## Ambient rather than sun energy because this game's frame is snow under a flat
+## sky: `pale_day` has no sun term at all and is the brightest of the six. If a
+## preset is retuned, re-run those captures and refit -- the harness prints what
+## it measured, which is the whole reason it does.
+const AMBIENT_TO_LUMINANCE := 0.2547
+const AMBIENT_OFFSET := -0.289
+
+## What the charcoal may fade between. The floor keeps it from becoming a black
+## bar on a bright frame; the ceiling keeps it from becoming a hole on a dark one.
+const OPACITY_FLOOR := 0.42
+const OPACITY_CEILING := 0.88
+
+
+## Relative luminance, the sRGB definition. Used to COMPARE the interface with
+## the ground rather than to look at it, so it has to be the perceptual one.
+static func relative_luminance(colour: Color) -> float:
+	return 0.2126 * _linear(colour.r) + 0.7152 * _linear(colour.g) + 0.0722 * _linear(colour.b)
+
+
+static func _linear(channel: float) -> float:
+	var c := clampf(channel, 0.0, 1.0)
+	return c / 12.92 if c <= 0.04045 else pow((c + 0.055) / 1.055, 2.4)
+
+
+## How bright the world is right now, 0..1, from the blended lighting preset.
+##
+## The LIGHTING, not the clock. Time and brightness mostly agree and sometimes do
+## not -- a whiteout at noon is bright and flat, `pale_day` at noon is bright and
+## blue. LightingDirector.active_preset() returns the BLEND while a crossfade is
+## running, so the interface inherits that eight-second fade for free and moves
+## with the world at the world's own pace, with no pop to engineer around.
+static func world_value(preset) -> float:
+	if preset == null:
+		return 0.5
+	return clampf(
+		float(preset.ambient_energy) * AMBIENT_TO_LUMINANCE + AMBIENT_OFFSET, 0.0, 1.0)
+
+
+## The single colour, at the strength today's weather needs.
+##
+## Charcoal on a bright frame reads at almost any opacity. Charcoal on
+## `deep_night` is dark on dark, which is the earlier contrast problem with the
+## sign flipped -- so the opacity LIFTS as the world darkens until the stroke
+## separates again.
+##
+## This is not a second colour and it is not the adaptive-hue scheme that was
+## rejected. It is the minimum required for ONE colour to survive all six
+## presets, and it is a relationship rather than six tuned numbers.
+static func adapt(_token: Color, world: float) -> Color:
+	var ground := clampf(world, 0.0, 1.0)
+	return Color(CHARCOAL.r, CHARCOAL.g, CHARCOAL.b, opacity_for(ground))
+
+
+## The strength the mark is drawn at, for whatever colour it is.
+static func opacity_for(world: float) -> float:
+	return clampf(lerpf(OPACITY_CEILING, OPACITY_FLOOR, clampf(world, 0.0, 1.0)), 0.0, 1.0)
+
+
+## THE ONE WARM THING, AND IT DRAINS.
+##
+## ---------------------------------------------------------------------------
+## WARM HERE OBEYS RULE 3 RATHER THAN EXCEPTING IT
+## ---------------------------------------------------------------------------
+## 暖色在 UI 里只有一个含义：热量的存在. The day dial is warm because SUNLIGHT IS
+## HEAT -- GDD section 2's first pillar is 暖色即生存 and the sun is the valley's
+## only free source of it. So the largest object on the interface is warm while
+## the sun is up and loses its temperature as the light goes.
+##
+## The ramp is the three warm tones doing exactly what section 2.1 says they
+## mean, ending at the interface's own colour:
+##
+##   life/warm   #FFB257  heat, present          -- full daylight
+##   life/ember  #A05A35  火将熄、余烬             -- the day running down
+##   charcoal    #16181C  the rest of the HUD    -- night
+##
+## Same hue family, falling in value, so the dial does not change colour at
+## nightfall -- it goes OUT, the way a fire does. And it rides the same input the
+## opacity does (LightingDirector's blended preset), so it is two behaviours on
+## one number rather than two mechanisms, and it inherits the eight-second
+## crossfade without a step.
+static func warm_for(tokens: UITokens, world: float) -> Color:
+	if tokens == null:
+		return Color.MAGENTA
+	var day := clampf(world, 0.0, 1.0)
+	# EMBER_AT is where the ramp hands over. Set above the mid-point because a
+	# day that has visibly begun to cool is the information -- a dial that stayed
+	# at full warmth until dusk would announce nightfall at the moment it is too
+	# late to act on it, which is the failure GDD section 7's 预兆 rule exists to
+	# prevent for the weather.
+	const EMBER_AT := 0.62
+	var colour := tokens.life_ember
+	if day >= EMBER_AT:
+		colour = tokens.life_ember.lerp(
+			tokens.life_warm, (day - EMBER_AT) / (1.0 - EMBER_AT))
+	else:
+		colour = CHARCOAL.lerp(tokens.life_ember, day / EMBER_AT)
+	colour.a = opacity_for(day)
+	return colour

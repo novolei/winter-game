@@ -73,7 +73,18 @@ const LARGE_RADIUS_DESIGN_PX := Engraved.LARGE_RADIUS
 const SMALL_RADIUS_DESIGN_PX := Engraved.SMALL_RADIUS
 const CLUSTER_GAP_DESIGN_PX := Engraved.GAP
 
-## How large a glyph stands in a gauge, as a fraction of that gauge's radius.
+## HOW LARGE AN ICON STANDS IN ITS GAUGE, as a fraction of that gauge's radius.
+##
+## The icons will arrive as monochrome white PNGs on transparent, SOLID
+## SILHOUETTES rather than line art -- a thin outline collapses at the size these
+## actually render at, and a solid shape survives. They are tinted here, at
+## runtime: the four small gauges to the single charcoal and the day dial to its
+## warm value, so a file that arrives carrying its own colour is a defect rather
+## than something to compensate for in code.
+##
+## Import them with `filter` ON and mipmaps OFF -- a screen-space element that is
+## scaled DOWN from a large source wants the filter, and never gets minified
+## enough across the window sizes this game runs at to need the mip chain.
 const GLYPH_RATIO := 0.62
 
 ## How long the rest of the cluster stays quiet after one reading surges, and how
@@ -109,6 +120,7 @@ var _viewport := Vector2(1920.0, 1080.0)
 ##
 ## So it lives on the layer, to be composited with everything else, and drives
 ## its own 呵. Section 1.2 still binds: nothing appears instantly.
+var _lighting = null
 var _focus: StringName = &""
 var _focus_left := 0.0
 
@@ -229,7 +241,9 @@ func advance(delta: float) -> void:
 	if _focus_left > 0.0:
 		_focus_left = maxf(_focus_left - delta, 0.0)
 	var focused := _focus_left > 0.0
+	var world := _world_value()
 	for stroke in _strokes:
+		stroke.set_world_value(world)
 		stroke.set_time_scale(scale)
 		stroke.set_attenuation(
 			1.0 if not focused or stroke.stat() == _focus else FOCUS_DIM)
@@ -421,94 +435,29 @@ func _draw() -> void:
 
 
 func _draw_glyph(
-	kind: StringName, centre: Vector2, reach: float, colour: Color, weight: float
+	_kind: StringName, centre: Vector2, reach: float, colour: Color, _weight: float
 ) -> void:
-	match kind:
-		&"heat":
-			# A six-armed radiant: warmth, and a snowflake's own symmetry. The
-			# one glyph that is allowed to be drawn warm, because it is the one
-			# reading that IS heat.
-			for step in range(6):
-				var angle := float(step) * PI / 3.0
-				var arm := Vector2(cos(angle), sin(angle))
-				draw_line(centre + arm * reach * 0.32, centre + arm * reach, colour, weight, true)
-			draw_arc(centre, reach * 0.30, 0.0, TAU, 18, colour, weight, true)
-		&"hunger":
-			# A bowl: a half-circle under a short rim.
-			draw_arc(centre + Vector2(0.0, -reach * 0.20), reach * 0.78,
-				0.0, PI, 20, colour, weight, true)
-			draw_line(
-				centre + Vector2(-reach * 0.9, -reach * 0.20),
-				centre + Vector2(reach * 0.9, -reach * 0.20), colour, weight, true)
-		&"thirst":
-			# A drop: two straight flanks meeting at a point over a round belly.
-			draw_arc(centre + Vector2(0.0, reach * 0.18), reach * 0.62,
-				0.0, PI, 18, colour, weight, true)
-			draw_line(centre + Vector2(0.0, -reach),
-				centre + Vector2(-reach * 0.62, reach * 0.18), colour, weight, true)
-			draw_line(centre + Vector2(0.0, -reach),
-				centre + Vector2(reach * 0.62, reach * 0.18), colour, weight, true)
-		&"fatigue":
-			# A bolt.
-			draw_polyline(PackedVector2Array([
-				centre + Vector2(reach * 0.45, -reach),
-				centre + Vector2(-reach * 0.35, reach * 0.05),
-				centre + Vector2(reach * 0.20, reach * 0.05),
-				centre + Vector2(-reach * 0.45, reach),
-			]), colour, weight, true)
-		&"unresolved":
-			# AN OBVIOUS GAP, NOT A PLAUSIBLE GUESS.
-			#
-			# Frostbite has no settled pictograph -- there is no drawing everyone
-			# reads as "this limb is freezing" -- and inventing something
-			# plausible is much harder to notice and correct later than a hole.
-			# A broken ring reads as unfinished at any size, which is the whole
-			# requirement. Named in the report for the owner to settle.
-			var dashes := 7
-			for step in range(dashes):
-				var from_a := TAU * float(step) / float(dashes)
-				draw_arc(centre, reach * 0.66, from_a, from_a + TAU / float(dashes) * 0.5,
-					6, colour, weight, true)
-		&"crystal_up", &"crystal_down":
-			# A branching crystal, pointing away from the body's middle for the
-			# hands and toward it for the feet. AN HONEST PLACEHOLDER: frostbite
-			# has no settled pictograph, and this says the material and the place
-			# without claiming to say the injury. Flagged rather than guessed.
-			var way := -1.0 if kind == &"crystal_up" else 1.0
-			var tip := centre + Vector2(0.0, way * reach)
-			draw_line(centre + Vector2(0.0, -way * reach * 0.4), tip, colour, weight, true)
-			for side in [-1.0, 1.0]:
-				draw_line(centre + Vector2(0.0, way * reach * 0.15),
-					centre + Vector2(side * reach * 0.62, way * reach * 0.72),
-					colour, weight, true)
-		_:
-			draw_arc(centre, reach * 0.7, 0.0, TAU, 6, colour, weight, true)
+	# A PLACEHOLDER, AND OBVIOUSLY ONE.
+	#
+	# The hand-authored paths that used to be here are gone: the owner is
+	# generating flat icons and will supply PNGs, so anything drawn in the
+	# meantime is going to be thrown away. A plain filled disc is the right
+	# stand-in precisely because nobody could mistake it for finished art -- a
+	# plausible drawing is far harder to notice and replace later than a hole.
+	#
+	# WHAT MATTERS IS THAT THE SLOT IS RIGHT. The disc is drawn at exactly the
+	# extent an icon will occupy, so the frames being generated against it are
+	# generated against the real size. See ICON_SLOT_RATIO.
+	draw_circle(centre, reach, colour)
 
-
-# --- internals ---------------------------------------------------------------
-
-## The canvas the Controls live in, not the window. Under `canvas_items` stretch
-## these are different numbers (briefing trap 10) and a Control is positioned in
-## the first one.
-## How wide the corner cluster is, without needing one to exist.
-##
-## Published so that anything else living in the same corner can keep clear of
-## it without looking this node up by name through the scene tree -- a layout
-## that breaks when somebody renames a node is worse than one constant computed
-## twice from the same data.
-static func cluster_size(
-	tokens: UITokens, layout: VitalLayout, viewport_size: Vector2
-) -> Vector2:
-	if tokens == null:
-		return Vector2.ZERO
-	var large := tokens.design_px(LARGE_RADIUS_DESIGN_PX, viewport_size)
-	var small := tokens.design_px(SMALL_RADIUS_DESIGN_PX, viewport_size)
-	var gap := tokens.design_px(CLUSTER_GAP_DESIGN_PX, viewport_size)
-	var rows := [] if layout == null else layout.ordered()
-	var width := 0.0
-	for row in rows:
-		width += (large if row.stat == layout.frost_source else small) * 2.0 + gap
-	return Vector2(maxf(width - gap, 0.0), large * 2.0)
+func _world_value() -> float:
+	if _lighting == null and is_inside_tree():
+		var registry := get_node_or_null("/root/ServiceRegistry")
+		if registry != null:
+			_lighting = registry.get_service(&"lighting")
+	if _lighting == null or not _lighting.has_method("active_preset"):
+		return 0.5
+	return VitalTone.world_value(_lighting.call("active_preset"))
 
 
 func _canvas_size() -> Vector2:

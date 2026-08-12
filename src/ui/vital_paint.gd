@@ -179,8 +179,8 @@ func draw_into(_item: CanvasItem, _size: Vector2) -> void:
 	pass
 
 
-## The large gauge carries a needle from its centre; the small ones do not. A
-## hierarchy marker on all five marks nothing.
+## Retired by the owner's ruling -- 不要圆环外的分段的指针 -- and kept on the seam
+## as a no-op so a future look can have one without the seam changing shape.
 func set_needle(_on: bool) -> void:
 	pass
 

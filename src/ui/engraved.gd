@@ -17,9 +17,9 @@ extends VitalPaint
 ## is the owner's call. It is recorded here because it is the kind of decision
 ## that gets rediscovered later as a complaint.
 ##
-## The large gauge also carries a thin needle from the centre, pointing at where
-## the arc has reached. The small ones do not: a needle is a hierarchy marker,
-## and five of them would be five things all claiming to be the important one.
+## NOTHING OUTSIDE THE RING. No needle, no threshold marks, no segments -- the
+## owner's ruling: 就只要圆环，不要圆环外的分段的指针. An arc sweeping to show its
+## value, and nothing else.
 ##
 ## There is no filled area anywhere -- no wedge, no disc, no card. Rule 1
 ## (没有矩形) forbids panels; this goes further and has no filled shape at all.
@@ -38,7 +38,7 @@ extends VitalPaint
 ## and everything is derived:
 ##
 ##   small radius     2u = 16          large radius        2 × 2u = 32
-##   small stroke     u/4 = 2          large stroke        2 × u/4 = 4
+##   small stroke     u×0.44 = 3.5     large stroke        2 × that = 7
 ##   rail stroke      u/8 = 1          gap between gauges  u = 8
 ##   halo radius      R + u/2          needle              R - stroke
 ##   glyph box        radius           opening             60°
@@ -72,7 +72,10 @@ const SPAN_RAD := TAU - OPENING_RAD
 
 const SMALL_RADIUS := UNIT * 2.0
 const LARGE_RADIUS := SMALL_RADIUS * RATIO
-const SMALL_STROKE := UNIT * 0.25
+## Widened from u/4 on the owner's note. The RATIO is what the system protects,
+## so both weights moved together rather than one gauge being tuned until it
+## looked right.
+const SMALL_STROKE := UNIT * 0.44
 const LARGE_STROKE := SMALL_STROKE * RATIO
 const RAIL_STROKE := UNIT * 0.125
 const GAP := UNIT
@@ -159,7 +162,6 @@ var _marker_px := 5.0
 
 var _stroke_px := SMALL_STROKE
 var _rail_px := RAIL_STROKE
-var _needle := false
 
 var _attenuation := 1.0
 var _arrival := 0.0
@@ -227,10 +229,10 @@ func set_weights(trough_px: float, fill_px: float, _texture_px: float) -> void:
 	_stroke_px = maxf(fill_px, 1.0)
 
 
-## The needle belongs to the large gauge alone. A hierarchy marker on all five
-## marks nothing.
-func set_needle(on: bool) -> void:
-	_needle = on
+## Retired by the owner's ruling -- 不要圆环外的分段的指针 -- and kept as a no-op so
+## the seam does not change shape for a look that might want one again.
+func set_needle(_on: bool) -> void:
+	pass
 
 
 func set_attenuation(amount: float) -> void:
@@ -341,41 +343,12 @@ func _draw_ring(item: CanvasItem, reserve: Color, _rail: Color) -> void:
 		_cut_arc(item, _radius + HALO_OFFSET * (_radius / LARGE_RADIUS + 0.5),
 			_start, _start + _span, halo, _rail_px, points)
 
-	_draw_markers(item, reserve)
-
-	if _needle and swept > 0.0:
-		# From the middle to where the arc has reached. Thin: it points, it does
-		# not weigh.
-		var angle := _start + _span * swept
-		var out := Vector2(cos(angle), sin(angle))
-		_cut_line(item, _centre + out * (_radius * 0.34),
-			_centre + out * (_radius - width * 0.5), reserve, _rail_px)
-
 	if _mark_on and swept > 0.0:
 		var at := _start + _span * swept
 		var mark := _mark_colour
 		mark.a *= _attenuation
 		item.draw_circle(
 			_centre + Vector2(cos(at), sin(at)) * _radius, _mark_px * 0.5, mark)
-
-
-## Thresholds ride the gauge as a short stroke standing outside it. A triangle
-## would be a filled shape and this look has none.
-func _draw_markers(item: CanvasItem, reserve: Color) -> void:
-	if not _is_ring:
-		return
-	for index in range(4):
-		var at: float = _markers[index]
-		if at < 0.0:
-			continue
-		var angle := _start + _span * clampf(at, 0.0, 1.0)
-		var out := Vector2(cos(angle), sin(angle))
-		var colour := reserve
-		colour.a *= 0.48
-		item.draw_line(
-			_centre + out * (_radius + _stroke_px),
-			_centre + out * (_radius + _stroke_px + _marker_px),
-			colour, _rail_px, true)
 
 
 ## Section 5.2's 短弧, in the same language: one bowed stroke over a dim rail.
@@ -391,7 +364,6 @@ func _draw_stroke(item: CanvasItem, reserve: Color, _rail: Color) -> void:
 		if at <= swept:
 			lit_points.append(_from + along * at + normal * _bow * sin(at * PI))
 	if lit_points.size() > 1:
-		item.draw_polyline(lit_points, _keyline(reserve), _stroke_px + KEYLINE_WIDEN, true)
 		item.draw_polyline(lit_points, reserve, _stroke_px, true)
 
 
@@ -401,21 +373,10 @@ func _cut_arc(
 ) -> void:
 	if absf(to_rad - from_rad) < 0.0001:
 		return
-	item.draw_arc(_centre, radius, from_rad, to_rad, points, _keyline(colour),
-		width + KEYLINE_WIDEN, true)
 	item.draw_arc(_centre, radius, from_rad, to_rad, points, colour, width, true)
 
 
 func _cut_line(
 	item: CanvasItem, from: Vector2, to: Vector2, colour: Color, width: float
 ) -> void:
-	item.draw_line(from, to, _keyline(colour), width + KEYLINE_WIDEN, true)
 	item.draw_line(from, to, colour, width, true)
-
-
-## The dark under-stroke. Full opacity and a hard edge -- anything softer is the
-## gradient rule 1 forbids and the owner rejected on sight.
-func _keyline(colour: Color) -> Color:
-	var keyline := _cut
-	keyline.a *= _attenuation * colour.a
-	return keyline
