@@ -91,10 +91,19 @@ const SUFFIXES: Array[String] = [".ogg", ".wav", ".mp3"]
 ## the wind is coming FROM. See `AmbienceDirector.upwind_of()`.
 @export var radius_m := 7.0
 
-## `AudioStreamPlayer3D.unit_size` for the bed. Large: the distance is carrying
-## direction, not loudness, and a bed that got noticeably louder when the camera
-## drifted would read as a bug.
-@export var unit_size := 26.0
+## `AudioStreamPlayer3D.unit_size` for the bed.
+##
+## SET CLOSE TO `radius_m` ON PURPOSE, so that a layer's authored `gain_db` is
+## very nearly its literal playback level at the distance the bed actually
+## sounds from. Under inverse-distance attenuation the emitter contributes
+## `unit_size / distance`, which at 8 against 7 is +1.2 dB and legible; the 26
+## this started at contributed +11.4 dB and made every authored number in the
+## layer table a lie by an order of magnitude.
+##
+## It also makes the interior move do real work for free. Going inside takes the
+## emitters from 7 m to 19 m, which is -7.5 dB of honest distance rather than a
+## trim somebody chose -- see `interior_gain_db`.
+@export var unit_size := 8.0
 
 ## 0 is fully diffuse, 1 is fully localised. Outdoors the air is everywhere.
 @export_range(0.0, 1.0, 0.01) var panning := 0.35
@@ -112,9 +121,18 @@ const SUFFIXES: Array[String] = [".ogg", ".wav", ".mp3"]
 ## Localised, because inside it arrives through a specific gap.
 @export_range(0.0, 1.0, 0.01) var interior_panning := 0.85
 
-## Trimmed as well, but the trim is the SMALLEST of the four changes. If this is
-## doing most of the work then the acoustic is not, and the room is just quieter.
-@export var interior_gain_db := -5.0
+## Trimmed as well, but the trim is the SMALLEST of the four changes, and it got
+## smaller once `unit_size` was fixed: moving the emitters from 7 m to 19 m is
+## already -7.5 dB of honest distance, so a large trim on top would be counting
+## the same fact twice and would turn the crossing back into a volume change.
+##
+## What makes the crossing an ACOUSTIC rather than a level is that the low-pass
+## treats the layers differently. `wind_low` carries 81% of its energy under
+## 250 Hz and walks through a 620 Hz wall almost untouched; `wind_high` carries
+## 96% of its between 0.8 and 2.5 kHz and is gone. So indoors the player keeps
+## the body of the air and loses its edge -- which is what a wall does, and it
+## falls out of the physics rather than out of a special case.
+@export var interior_gain_db := -2.0
 
 ## How long the crossing takes. Roughly a door swinging shut.
 @export var interior_response_seconds := 0.55
@@ -146,12 +164,23 @@ const SUFFIXES: Array[String] = [".ogg", ".wav", ".mp3"]
 
 @export var fire_stem: StringName = &"fire"
 
-@export var fire_gain_db := -11.0
+## -14 base - 2.0 relative to the bed + 16.9 measured correction = -1.5 * ~ (see
+## `tools/generate_ambience.gd`). The correction is large because the supplied
+## take is peaky -- 36 dB crest -- so its peak reaches the ceiling while its
+## average is still 17 dB under the wind loops. A positive-looking number here
+## is the file being quiet, not the fire being loud.
+##
+## THE ONE VALUE MOST IN NEED OF AN EAR. It is the only layer heard at close
+## range, indoors, for minutes at a time, and it is the only one whose level was
+## derived entirely from measurement with no way to check it.
+@export var fire_gain_db := -1.5
 
 ## Metres. Past this a fire is not worth a voice.
 @export var fire_audible_m := 24.0
 
-@export var fire_unit_size := 6.0
+## Smaller than the bed's, because a stove is a thing you stand two metres from
+## and the bed is the whole valley. At 2.5 m this contributes +1.6 dB.
+@export var fire_unit_size := 3.0
 
 @export_group("Buses")
 

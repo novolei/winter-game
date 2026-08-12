@@ -1098,3 +1098,117 @@ func test_a_missing_map_leaves_it_inert_rather_than_crashing() -> void:
 	director.advance(0.1)
 	assert_eq(director.voice_count(), 0)
 	assert_true(director.is_silent())
+
+
+# --- the bed files on disk ---------------------------------------------------
+#
+# Five loops were cut from the owner's takes by `tools/build_ambience_loops.py`,
+# which verifies the join at build time. These are the gates on everything that
+# can go wrong AFTER that, silently, without anybody re-running the builder.
+
+func _bed_streams() -> Dictionary:
+	var found := {}
+	if _map == null:
+		return found
+	for layer in _map.layers:
+		var path := _map.stream_for_layer(layer)
+		if path == "":
+			continue
+		var stream := ResourceLoader.load(path) as AudioStreamWAV
+		if stream != null:
+			found[layer.layer_id] = stream
+	return found
+
+
+## THE FAILURE THIS PREVENTS IS SILENT AND SLOW. A `.import` file regenerates
+## with `edit/loop_mode` at its default -- which is "Detect From WAV", and these
+## carry no loop marker -- and the bed then stops a few seconds into a run and
+## never comes back. Nothing errors; the valley simply goes quiet and stays
+## quiet, and the player has no reason to think the wind was supposed to return.
+##
+## `AmbienceDirector._make_it_loop()` forces it at load as well, so this is the
+## second of two guards. It is worth having both: the runtime forcing is what
+## makes a newly dropped file work at all, and this is what stops the shipped
+## ones drifting.
+func test_every_bed_layer_is_imported_as_a_forward_loop() -> void:
+	var streams := _bed_streams()
+	assert_true(streams.size() >= 4,
+		"only %d bed layers have audio on disk -- run tools/build_ambience_loops.py" % streams.size())
+	for id in streams:
+		var stream: AudioStreamWAV = streams[id]
+		assert_eq(stream.loop_mode, AudioStreamWAV.LOOP_FORWARD,
+			"%s is imported with loop_mode %d; a bed that stops mid-run is the loudest silence in the game" % [id, stream.loop_mode])
+		assert_eq(stream.loop_begin, 0, "%s does not loop from its start" % id)
+		assert_true(stream.loop_end > 0, "%s has no loop end" % id)
+
+
+## Uncompressed, and NOT this project's usual QOA.
+##
+## QOA is lossy and block-based and its encoder does not know the signal wraps,
+## so the one sample junction the whole file exists to protect is the one place
+## the codec is free to guess. The whole set is 3.3 MB as PCM.
+func test_every_bed_layer_ships_uncompressed_and_mono() -> void:
+	var streams := _bed_streams()
+	if streams.is_empty():
+		assert_true(false, "no bed audio on disk")
+		return
+	for id in streams:
+		var stream: AudioStreamWAV = streams[id]
+		assert_eq(stream.format, AudioStreamWAV.FORMAT_16_BITS,
+			"%s is not 16-bit PCM (format %d) -- a lossy codec is free to guess at the loop join" % [id, stream.format])
+		assert_false(stream.stereo,
+			"%s is stereo; a positional emitter's own panning is what carries the wind's direction" % id)
+
+
+## THE JOIN, ASSERTED FROM THE SHIPPED BYTES rather than trusted from the
+## builder's own report.
+##
+## The test is not "is the step small" -- inside noise, adjacent samples differ
+## constantly. It is whether the step ACROSS THE WRAP is ORDINARY, measured
+## against the file's own distribution of adjacent-sample steps. That is the same
+## instrument `build_ambience_loops.py` uses, applied to what actually landed, so
+## a file replaced by hand with one that clicks fails here.
+func test_no_bed_layer_clicks_where_it_wraps() -> void:
+	var streams := _bed_streams()
+	if streams.is_empty():
+		assert_true(false, "no bed audio on disk")
+		return
+	for id in streams:
+		var stream: AudioStreamWAV = streams[id]
+		var data := stream.data
+		var frames := data.size() / 2
+		if frames < 4096:
+			continue
+		# The file's own motion, sampled across the whole length rather than at
+		# one place: a wind's step distribution is not the same in a lull as in
+		# a gust, and the wrap has to be ordinary against all of it.
+		var steps: Array[int] = []
+		var stride := maxi(1, frames / 20000)
+		for i in range(1, frames - 1, stride):
+			steps.append(absi(data.decode_s16(i * 2) - data.decode_s16((i - 1) * 2)))
+		steps.sort()
+		var p999: int = steps[mini(steps.size() - 1, int(steps.size() * 0.999))]
+		var wrap := absi(data.decode_s16(0) - data.decode_s16((frames - 1) * 2))
+		assert_true(wrap <= p999,
+			"%s steps %d across its wrap against a p99.9 of %d in its own body -- that is a click once per cycle" % [id, wrap, p999])
+
+
+## The mix is derived rather than heard, so the ORDER of the authored gains is
+## the part a test can hold. A hiss louder than the body of the air is the one
+## arrangement that would be wrong in every weather.
+func test_the_hiss_never_outweighs_the_body_of_the_air() -> void:
+	assert_not_null(_map)
+	if _map == null:
+		return
+	var low := _layer(&"wind_low")
+	var high := _layer(&"wind_high")
+	var snow := _layer(&"snow_fall")
+	assert_not_null(low)
+	assert_not_null(high)
+	assert_not_null(snow)
+	if low == null or high == null or snow == null:
+		return
+	assert_true(high.gain_db < low.gain_db - 3.0,
+		"wind_high is authored at %.1f dB against wind_low's %.1f -- the top would sit over the body" % [high.gain_db, low.gain_db])
+	assert_true(snow.gain_db < low.gain_db,
+		"the falling snow is authored over the wind")

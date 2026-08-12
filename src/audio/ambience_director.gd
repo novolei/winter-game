@@ -845,11 +845,16 @@ static func _make_it_loop(stream: AudioStream) -> void:
 		return
 	# In FRAMES, which `data.size()` is not -- that is bytes, and handing it over
 	# would ask the playback to loop past the end of the sample.
+	#
+	# And `frames - 1`, which is what the WAV importer itself produces for
+	# `edit/loop_end=-1`: printed back off an imported bed at 16.000 s / 44100 Hz
+	# it reads 705599, not 705600. The convention is the INDEX OF THE LAST SAMPLE
+	# PLAYED, and being one out is exactly the kind of thing that ticks.
 	var frames := int(wav.get_length() * float(wav.mix_rate))
-	if frames <= 0:
+	if frames <= 1:
 		return
 	wav.loop_begin = 0
-	wav.loop_end = frames
+	wav.loop_end = frames - 1
 	wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
 
 

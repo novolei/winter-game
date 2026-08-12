@@ -42,35 +42,50 @@ extends SceneTree
 ## ---------------------------------------------------------------------------
 ## Not one row below names a file. `AmbienceMap` resolves a layer as
 ## `<sound_folder>/<layer_id>.<ext>` and a cue as `<cue_folder>/<cue_id>.<ext>`,
-## so the FOLDER is the data: drop `wind_low.ogg` into
-## `assets/audio/ambience/` and the low bed sounds, with no `.gd` change, no
-## regeneration of this file and no list to keep in step.
+## so the FOLDER is the data: drop `wind_low.wav` into `assets/audio/ambience/`
+## and the low bed sounds, with no `.gd` change, no regeneration of this file and
+## no list to keep in step.
 ##
-## Nothing is stubbed with a stand-in. `tools/generate_ui_sounds.gd` gives the
-## reason and it holds here: a wrong sound in the right place is harder to notice
-## than silence.
+## ---------------------------------------------------------------------------
+## THE FIVE BED FILES HAVE LANDED. THE SIX WEATHER CUES HAVE NOT.
+## ---------------------------------------------------------------------------
+## `tools/build_ambience_loops.py` cuts the owner's five takes into seamless
+## loops and writes them into `assets/audio/ambience/`. Read its header for the
+## method and for the first finding, which is that two of the supplied filenames
+## are the wrong way round.
 ##
-## THE FILES THIS PROJECT IS OWED, by folder and by role:
+##   wind_low    16.0 s   44100 Hz   from wind_mid.mp3   (71% under 250 Hz)
+##   wind_mid     3.6 s   48000 Hz   from wind_low.wav   (80% in 250-800 Hz)
+##   wind_high    4.6 s   22050 Hz   from wind_high.wav  (86% in 0.8-2.5 kHz)
+##   snow_fall    5.4 s   44100 Hz   from snow_fall.mp3  (high-passed to patter)
+##   fire        12.0 s   44100 Hz   from fire.mp3       (unfiltered)
 ##
-##   assets/audio/ambience/wind_low.ogg    seamless loop. The body of the air --
-##                                         low, broad, no whistle. The one voice
-##                                         that stays when something is near.
-##   assets/audio/ambience/wind_mid.ogg    seamless loop. The wind proper: the
-##                                         gust arriving, with movement in it.
-##   assets/audio/ambience/wind_high.ogg   seamless loop. The top -- hiss, edge,
-##                                         whistle round a corner. Squall only.
-##   assets/audio/ambience/snow_fall.ogg   seamless loop. Falling snow: a dry
-##                                         patter, no wind in it, or it will be
-##                                         heard twice.
-##   assets/audio/ambience/fire.ogg        seamless loop. A stove, close and dry.
-##                                         Positional, one per lit fire.
-##   assets/audio/weather/weather_tell_*.ogg   six one-shots, one per event id
-##                                         already authored in data/weather/.
+## Still owed: the six one-shots in `assets/audio/weather/`, named
+## `weather_tell_<event id>` for the six events in `data/weather/`.
 ##
-## All five loops must be SEAMLESS and must carry no wind of their own beyond
-## their own band, because they play together and any overlap is heard as a
-## phasing artefact rather than as weather.
-
+## ---------------------------------------------------------------------------
+## THE GAINS BELOW ARE MEASURED, NOT CHOSEN BY EAR
+## ---------------------------------------------------------------------------
+## Nobody on this end can hear these files, so the mix is derived rather than
+## judged. Every loop leaves the builder at the same RMS, and the builder then
+## measures each one's ITU-R BS.1770 loudness -- because EQUAL RMS IS NOT EQUAL
+## LOUDNESS, and on this set that difference decides whether the mix works:
+##
+##   layer       loudness at equal RMS    correction owed
+##   wind_low         -22.3 LUFS               +2.1 dB
+##   wind_mid         -20.7 LUFS               +0.5 dB
+##   wind_high        -20.2 LUFS               +0.0 dB
+##   snow_fall        -22.8 LUFS               +2.6 dB
+##   fire             -37.1 LUFS              +16.9 dB
+##
+## `fire` is 17 dB down because it is a peaky recording -- 36 dB crest -- whose
+## peak hits the ceiling long before its average reaches the others'. That is
+## what a fire is, so it is corrected here rather than compressed there.
+##
+## So each `gain_db` below is: a BASE of -14 dB, which is where the bed sits
+## under the footsteps and the breath; plus a RELATIVE design target against
+## `wind_low`; plus that layer's measured correction. Each is written out at its
+## row so a later ear can move one number and know what it was.
 const OUT_DIR := "res://data/audio"
 const OUT_PATH := "res://data/audio/ambience.tres"
 
@@ -89,6 +104,8 @@ func _initialize() -> void:
 	low.source = AmbienceLayer.Source.WIND
 	low.enters_at = 0.09
 	low.full_at = 0.30
+	# -14 base + 0 relative + 0.0 correction. The reference the other four are
+	# set against, and the level the whole bed is judged at.
 	low.gain_db = -14.0
 	low.pitch_scale = 0.97
 	low.pitch_at_full = 1.02
@@ -102,7 +119,8 @@ func _initialize() -> void:
 	mid.source = AmbienceLayer.Source.WIND
 	mid.enters_at = 0.26
 	mid.full_at = 0.52
-	mid.gain_db = -12.0
+	# -14 base + 1.0 relative (a gust ARRIVING has to be noticed) - 1.6 correction.
+	mid.gain_db = -14.5
 	mid.pitch_scale = 0.98
 	mid.pitch_at_full = 1.05
 	mid.withdraws_near_danger = true
@@ -113,7 +131,8 @@ func _initialize() -> void:
 	high.source = AmbienceLayer.Source.WIND
 	high.enters_at = 0.55
 	high.full_at = 0.88
-	high.gain_db = -15.0
+	# -14 base - 4.0 relative (a hiss at the body's level is piercing) - 2.1.
+	high.gain_db = -20.0
 	high.pitch_scale = 1.0
 	high.pitch_at_full = 1.09
 	high.withdraws_near_danger = true
@@ -127,7 +146,8 @@ func _initialize() -> void:
 	# snow ARRIVING rather than thickening. That is its audible half.
 	snow.enters_at = 0.16
 	snow.full_at = 0.62
-	snow.gain_db = -17.0
+	# -14 base - 5.0 relative (under everything) + 0.5 correction.
+	snow.gain_db = -18.5
 	snow.pitch_scale = 1.0
 	snow.pitch_at_full = 1.06
 	# It goes too. GDD section 9 is specific that day 7 is where this is at its
