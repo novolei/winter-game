@@ -16,6 +16,12 @@ extends SceneTree
 ##      serves, in m/s and in min/km, against the real-world pace table.
 ##   3. The distribution of grade the shipped SnowField produces -- which is what
 ##      decides whether the slope term is a texture you feel or a wall you hit.
+##   4. The joint distribution of what a man walking a random line actually gets.
+##   5. SPEED AGAINST TIME IN MOTION -- the momentum table. Entry, recovery and
+##      ceiling, stepped at 60 Hz through the controller's own advance_gait() and
+##      advance_momentum(), so the auto-run's staging against the rhythm is
+##      visible rather than argued.
+##   6. Walking it: a crossing of the real field, and a stop-turn-restart.
 ##
 ## It prints and exits. Nothing here is a test; tests/unit/test_locomotion.gd is.
 
@@ -33,6 +39,20 @@ static func pace(speed: float) -> String:
 		return "  --  "
 	var seconds_per_km := 1000.0 / speed
 	return "%d:%02d" % [int(seconds_per_km) / 60, int(seconds_per_km) % 60]
+
+
+## The ground worth quoting, used by sections 1b and 5 so the two tables describe
+## the same cases and can be read against each other.
+const CASES := [
+	["bare, level", 0.0, 0.0, "bare flat"],
+	["bare, 15% climb", 0.0, 0.15, "bare +15%"],
+	["bare, 25% climb", 0.0, 0.25, "bare +25%"],
+	["bare, 5% descent (the peak)", 0.0, -0.05, "bare -5%"],
+	["half a drift, level", 0.5, 0.0, "half flat"],
+	["full drift, level", 1.0, 0.0, "DEEP flat"],
+	["full drift, 25% climb", 1.0, 0.25, "DEEP +25%"],
+	["the worst the game can do", 1.0, 1.0, "the worst"],
+]
 
 
 func _initialize() -> void:
@@ -57,31 +77,28 @@ func _initialize() -> void:
 		])
 
 	print("")
-	print("=== 1b. The raw model against what ships ===")
+	print("=== 1b. The raw model, the first step, and the found rhythm ===")
 	print("terrain_severity compresses the raw product toward 1: the model's shape and")
 	print("ordering are kept, its amplitude is not. See PlayerController.terrain_severity")
 	print("for why -- Tobler describes hours of hiking and this player crosses the valley")
 	print("in a minute. The raw column is what the realism claim is checked against.")
 	print("")
-	print("  case                          raw factor   shipped   raw m/s   shipped m/s")
-	var cases := [
-		["bare, level", 0.0, 0.0],
-		["bare, 15% climb", 0.0, 0.15],
-		["bare, 25% climb", 0.0, 0.25],
-		["bare, 5% descent (the peak)", 0.0, -0.05],
-		["half a drift, level", 0.5, 0.0],
-		["full drift, level", 1.0, 0.0],
-		["full drift, 25% climb", 1.0, 0.25],
-		["the worst the game can do", 1.0, 1.0],
-	]
-	for entry in cases:
+	print("ENTRY is the first step onto this ground, cold. RHYTHM is the same ground once")
+	print("he is fully in his stride against it -- see PlayerController.momentum_relief.")
+	print("At full rhythm the model behaves as though terrain_severity were %.3f." % [
+		player.terrain_severity * (1.0 - player.momentum_relief),
+	])
+	print("")
+	print("  case                           raw     entry    rhythm   entry m/s  rhythm m/s")
+	for entry in CASES:
 		var label: String = entry[0]
 		var wade: float = entry[1]
 		var grade: float = entry[2]
 		var raw: float = player.snow_factor(wade) * PlayerControllerScript.slope_factor(grade)
-		var shipped: float = player.terrain_factor(wade, grade)
-		print("  %-28s  %8.3f  %8.3f  %8.2f      %8.2f" % [
-			label, raw, shipped, player.walk_speed * raw, player.walk_speed * shipped,
+		var cold: float = player.terrain_factor(wade, grade, 0.0)
+		var warm: float = player.terrain_factor(wade, grade, player.terrain_effort(wade, grade))
+		print("  %-28s %7.3f  %7.3f  %7.3f    %7.2f     %7.2f" % [
+			label, raw, cold, warm, player.walk_speed * cold, player.walk_speed * warm,
 		])
 
 	print("")
@@ -91,21 +108,27 @@ func _initialize() -> void:
 		PlayerControllerScript.SLOPE_FLOOR,
 	])
 	print("terrain_severity %.2f -- every figure below is the COMPRESSED one." % player.terrain_severity)
+	print("momentum_relief %.2f -- ENTRY is a cold first step, RHYTHM is fully in stride." % player.momentum_relief)
 	print("Reference paces, m/s: stroll 1.1 | walk 1.3-1.4 | brisk 1.6 | jog 2.5-3.0")
 	print("                      sustained run 3.5-4.5 | sprint 6-8")
 	for run_blend in [0.0, 1.0]:
-		print("")
-		print("  --- %s ---" % ("RUN (blend 1.0)" if run_blend > 0.5 else "WALK (blend 0.0)"))
-		var header := "  grade    "
-		for wade in [0.0, 0.25, 0.5, 0.75, 1.0]:
-			header += "  snow %4.2f m " % (wade * 0.42)
-		print(header)
-		for grade in [-0.35, -0.25, -0.15, -0.05, 0.0, 0.05, 0.15, 0.25, 0.35]:
-			var row := "  %+6.2f   " % grade
+		for warm in [false, true]:
+			print("")
+			print("  --- %s, %s ---" % [
+				"RUN (blend 1.0)" if run_blend > 0.5 else "WALK (blend 0.0)",
+				"RHYTHM" if warm else "ENTRY",
+			])
+			var header := "  grade    "
 			for wade in [0.0, 0.25, 0.5, 0.75, 1.0]:
-				var speed: float = player.top_speed_at(wade, grade, run_blend)
-				row += "  %5.2f (%s)" % [speed, pace(speed)]
-			print(row)
+				header += "  snow %4.2f m " % (wade * 0.42)
+			print(header)
+			for grade in [-0.35, -0.25, -0.15, -0.05, 0.0, 0.05, 0.15, 0.25, 0.35]:
+				var row := "  %+6.2f   " % grade
+				for wade in [0.0, 0.25, 0.5, 0.75, 1.0]:
+					var carried := player.terrain_effort(wade, grade) if warm else 0.0
+					var speed: float = player.top_speed_at(wade, grade, run_blend, carried)
+					row += "  %5.2f (%s)" % [speed, pace(speed)]
+				print(row)
 
 	print("")
 	print("NOTE: the RUN rows past 0.25 m of snow are the pure function only.")
@@ -144,6 +167,7 @@ func _initialize() -> void:
 	print("fills the hollows and the hollows are what the flanks lead down into, so")
 	print("neither margin predicts this. Eight headings per sample point.")
 	var walked: Array[float] = []
+	var in_stride: Array[float] = []
 	var ran := 0
 	var total := 0
 	var wading := 0
@@ -163,10 +187,14 @@ func _initialize() -> void:
 				var grade: float = PlayerControllerScript.grade_along(gradient, heading)
 				var gait := 1.0 if player.can_run(wade) else 0.0
 				walked.append(player.top_speed_at(wade, grade, gait))
+				in_stride.append(
+					player.top_speed_at(wade, grade, gait, player.terrain_effort(wade, grade))
+				)
 				total += 1
 				if gait > 0.5:
 					ran += 1
 	walked.sort()
+	in_stride.sort()
 	print("  %d (point, heading) pairs. The run is available on %.0f%% of them." % [
 		total, 100.0 * float(ran) / float(total),
 	])
@@ -175,14 +203,34 @@ func _initialize() -> void:
 	])
 	print("  property of the terrain, not of this model, and it is what decides how much")
 	print("  of the world is a trudge.")
+	print("")
+	print("                    entry (a cold first step)   in his stride")
 	for percentile in [1, 5, 10, 25, 50, 75, 95]:
 		var index := mini(int(float(percentile) / 100.0 * float(walked.size())), walked.size() - 1)
 		var speed: float = walked[index]
-		print("    p%-3d  %5.2f m/s  (%s /km)" % [percentile, speed, pace(speed)])
-	print("  slowest %.2f m/s, fastest %.2f m/s" % [walked[0], walked[walked.size() - 1]])
+		var warm: float = in_stride[index]
+		print("    p%-3d          %5.2f m/s  (%s /km)      %5.2f m/s  (%s /km)" % [
+			percentile, speed, pace(speed), warm, pace(warm),
+		])
+	print("  slowest %.2f -> %.2f m/s, fastest %.2f -> %.2f m/s" % [
+		walked[0], in_stride[0], walked[walked.size() - 1], in_stride[in_stride.size() - 1],
+	])
 
 	print("")
-	print("=== 5. Walking it: a 70 m line across the real field ===")
+	print("=== 5. Speed against time in motion -- the rhythm ===")
+	print("Stepped at 60 Hz through the controller's own advance_gait() and")
+	print("advance_momentum(), from a standstill on each ground. So the auto-run's")
+	print("promotion and the rhythm's recovery are both in these numbers, at the")
+	print("timescales they actually run at, and the two can be read against each other.")
+	print("")
+	print("momentum_rise %.2f/s  momentum_fall %.2f/s  auto_run_delay %.2f s" % [
+		player.momentum_rise, player.momentum_fall, player.auto_run_delay,
+	])
+	_time_table(player, false)
+	_time_table(player, true)
+
+	print("")
+	print("=== 6. Walking it: a 70 m line across the real field ===")
 	print("The controller's own advance_gait() and top_speed_at(), stepped at 60 Hz")
 	print("against the real snow and the real relief -- so the auto-run promotes and")
 	print("demotes exactly as it would in play. Sampled every 5 m of ground covered.")
@@ -192,10 +240,96 @@ func _initialize() -> void:
 	_pack_the_line(field)
 	_traverse(player, field, "second crossing, over the packed trail")
 
+	print("")
+	print("=== 7. Stopping halfway, and setting off again ===")
+	print("The moment the rhythm exists to sell: a man who stops in a drift, turns,")
+	print("and sets off again has to break trail from cold. Same 60 Hz stepping, on")
+	print("a full drift on the level, with a 3 s stand and an about-face in the middle.")
+	_stop_and_start()
+
 	field.free()
 	player.free()
 	print("")
 	quit()
+
+
+## The time table for section 5. `factors` prints the terrain multiplier; the
+## other prints the ground speed it produces, which also carries the gait.
+func _time_table(player: PlayerController, as_speed: bool) -> void:
+	var marks := [0.0, 0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0]
+	print("")
+	print("  --- %s ---" % (
+		"ground speed, m/s (the gait is in here too)" if as_speed
+		else "terrain factor (1.00 = flat shallow snow, and the ceiling)"
+	))
+	var header := "   t s  "
+	for entry in CASES:
+		header += " %10s" % entry[3]
+	print(header)
+	for mark in marks:
+		var row := "  %5.2f " % mark
+		for entry in CASES:
+			var wade: float = entry[1]
+			var grade: float = entry[2]
+			var walker: PlayerController = PlayerControllerScript.new()
+			var heading := Vector3(0.0, 0.0, -1.0)
+			var elapsed := 0.0
+			var delta := 1.0 / 60.0
+			while elapsed < mark - delta * 0.5:
+				walker.advance_gait(delta, heading, wade)
+				walker.advance_momentum(delta, heading, wade, grade)
+				elapsed += delta
+			if as_speed:
+				row += " %10.2f" % walker.top_speed_at(
+					wade, grade, walker.run_blend(), walker.momentum()
+				)
+			else:
+				row += " %10.3f" % walker.terrain_factor(wade, grade, walker.momentum())
+			walker.free()
+		print(row)
+
+
+## A full drift on the level, walked into from a standstill, stood in, turned in,
+## and set off from again.
+##
+## Its own controller, not the one section 6 walked across the field: that one
+## finishes the packed crossing at a full run, and reusing it would open this
+## table at a gait it has no business being at.
+func _stop_and_start() -> void:
+	var player: PlayerController = PlayerControllerScript.new()
+	var delta := 1.0 / 60.0
+	var heading := Vector3(0.0, 0.0, -1.0)
+	var wade := 1.0
+	var grade := 0.0
+	var script := [
+		["setting off", heading, 6.0],
+		["standing still", Vector3.ZERO, 3.0],
+		["setting off again, the other way", -heading, 6.0],
+	]
+	print("")
+	print("     t s   doing                              momentum   factor   m/s")
+	var elapsed := 0.0
+	for leg in script:
+		var label: String = leg[0]
+		var direction: Vector3 = leg[1]
+		var span: float = leg[2]
+		var spent := 0.0
+		var next_report := 0.0
+		while spent < span - delta * 0.5:
+			player.advance_gait(delta, direction, wade)
+			player.advance_momentum(delta, direction, wade, grade)
+			spent += delta
+			elapsed += delta
+			if spent >= next_report:
+				print("    %5.2f   %-32s   %6.3f   %6.3f  %5.2f" % [
+					elapsed,
+					label,
+					player.momentum(),
+					player.terrain_factor(wade, grade, player.momentum()),
+					player.top_speed_at(wade, grade, player.run_blend(), player.momentum()),
+				])
+				next_report += 1.0
+	player.free()
 
 
 const TRAVERSE_FROM := Vector3(-35.0, 0.0, -12.0)
@@ -218,18 +352,27 @@ func _traverse(player: PlayerController, field: SnowField, label: String) -> voi
 	var elapsed := 0.0
 	var next_report := 0.0
 	var delta := 1.0 / 60.0
-	# The gait is per-crossing: he sets off from a standstill each time.
+	# The gait and the rhythm are per-crossing: he sets off from a standstill each
+	# time, so neither is carried over from the crossing before.
 	player.advance_gait(delta, Vector3.ZERO, 0.0)
+	for _settle in range(300):
+		player.advance_momentum(delta, Vector3.ZERO, 0.0, 0.0)
 	print("")
 	print("  --- %s ---" % label)
-	print("    at m    snow m   grade    gait   speed m/s   what he is doing")
+	# `won back` rather than the momentum share: the share divides by the effort,
+	# and on rolling bare ground the effort passes through zero every few metres
+	# (Tobler's peak is a 5% DESCENT), so the share flickers between 0 and 1 while
+	# nothing about the walk has changed. What the rhythm is worth here, in metres
+	# per second, is the honest column and it goes to zero on its own.
+	print("    at m    snow m   grade    gait  won back   speed m/s   what he is doing")
 	while travelled < span and elapsed < 600.0:
 		var wade: float = field.wade_factor(here)
 		var grade: float = PlayerControllerScript.grade_along(
 			field.surface_gradient_at(here), heading
 		)
 		var gait: float = player.advance_gait(delta, heading, wade)
-		var speed: float = player.top_speed_at(wade, grade, gait)
+		var momentum: float = player.advance_momentum(delta, heading, wade, grade)
+		var speed: float = player.top_speed_at(wade, grade, gait, momentum)
 		if travelled >= next_report:
 			var doing := "walking"
 			if gait > 0.6:
@@ -244,8 +387,14 @@ func _traverse(player: PlayerController, field: SnowField, label: String) -> voi
 				doing += ", climbing"
 			elif grade < -0.12:
 				doing += ", descending"
-			print("    %5.1f   %5.2f   %+6.3f   %4.2f     %5.2f     %s" % [
-				travelled, field.depth_at(here), grade, gait, speed, doing,
+			print("    %5.1f   %5.2f   %+6.3f   %4.2f    %+6.2f     %5.2f     %s" % [
+				travelled,
+				field.depth_at(here),
+				grade,
+				gait,
+				speed - player.top_speed_at(wade, grade, gait, 0.0),
+				speed,
+				doing,
 			])
 			next_report += 5.0
 		here += heading * speed * delta

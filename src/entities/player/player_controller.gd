@@ -94,6 +94,10 @@ const BREATH_MOUTH_OFFSET := Vector3(0.0, 0.16, 0.17)
 ## promotion, eased, in 0..1. See top_speed_at(), and see terrain_severity for
 ## why the product is compressed rather than used raw.
 ##
+## ...and one more term, which is time rather than ground. The penalty above is
+## what the FIRST step costs; a man who keeps going wins part of it back. See the
+## MOMENTUM block below and advance_momentum().
+##
 ## THE SCALE, in metres per second so it can be read against the model without
 ## converting anything:
 ##
@@ -246,14 +250,17 @@ const SLOPE_FLOOR := 0.25
 ## HOW HARD THE TERRAIN IS ALLOWED TO BITE
 ## ---------------------------------------------------------------------------
 ## TO TUNE THIS YOU DO NOT NEED THE MATHS BELOW. It is one dial for how much snow
-## and slope are allowed to slow him down:
+## and slope are allowed to slow him down ON THE FIRST STEP -- momentum_relief
+## below is the other half, and says how much of that he wins back by keeping
+## going:
 ##
 ##     0.0  terrain does nothing; he moves at the same speed everywhere
-##     0.55 SHIPPED -- the worst ground in the game leaves him half his pace
+##     0.50 SHIPPED -- the worst ground in the game leaves him half his pace as he
+##          steps onto it, recovering to about three quarters as he gets going
 ##     1.0  raw Tobler; the worst ground leaves him an eighth of it, a crawl
 ##
-## Raise it if the world feels too easy to cross, lower it if he feels bogged
-## down. Nothing else needs to change with it, and
+## Raise it if the world feels too hard to enter, lower it if the first steps into
+## a drift feel bogged down. Nothing else needs to change with it, and
 ## tools/measure_locomotion.gd prints the whole resulting speed table.
 ##
 ##     terrain_factor = lerp(1, snow_factor * slope_factor, terrain_severity)
@@ -279,16 +286,135 @@ const SLOPE_FLOOR := 0.25
 ## describes the world truthfully in relative terms -- which is the part a player
 ## can actually perceive -- while costing less in absolute terms.
 ##
-## 0.55 rather than a rounder number because the target was the worst case in the
-## game, not the knob. The floor of the raw product is deep_snow_factor x
-## SLOPE_FLOOR = 0.30 x 0.25 = 0.075, an eighth of the clear-ground walk and a
-## crawl; 1 - 0.55 x (1 - 0.075) = 0.49, which is half the clear-ground walk. He
-## should feel slowed, never stuck.
+## The number is set from the worst case in the game rather than chosen round.
+## The floor of the raw product is deep_snow_factor x SLOPE_FLOOR = 0.30 x 0.25 =
+## 0.075, an eighth of the clear-ground walk and a crawl; 1 - 0.50 x (1 - 0.075) =
+## 0.54, which is a little over half. He should feel slowed, never stuck.
+##
+## IT WENT 0.55 -> 0.50 IN THE MOMENTUM PASS, AND ONLY THAT FAR ON PURPOSE. The
+## owner said the debuff was still too harsh, and the obvious answer -- keep
+## turning this dial down -- is the wrong one: it flattens the drift everywhere
+## and at every moment, and then deep snow stops meaning anything. What he
+## actually described was a RECOVERY (可以起步的时候很慢但是迈开了几步后角色速度会
+## 逐渐加快起来), so the change is weighted into momentum_relief and this moved by
+## about a twentieth. Entering a drift still costs almost exactly what it cost
+## before; what changed is that it stops costing it after a few strides.
 ##
 ## Raise it toward 1 to get raw Tobler back; drop it to 0 to switch the terrain
 ## off entirely. tools/measure_locomotion.gd prints both the raw and the shipped
 ## figures side by side so the realism claim stays checkable at any setting.
-@export var terrain_severity := 0.55
+@export var terrain_severity := 0.50
+
+## ---------------------------------------------------------------------------
+## FINDING HIS RHYTHM -- how much of the terrain penalty he wins back by keeping
+## going
+## ---------------------------------------------------------------------------
+## TO TUNE: how much easier the ground gets once he is properly moving.
+##
+##     0.0  no recovery at all; the first step's price is the price for ever
+##     0.45 SHIPPED -- a full drift costs 35% of his pace as he steps into it and
+##          about 19% once he is in his stride
+##     1.0  a man in his stride is not slowed by the terrain AT ALL, which throws
+##          the feature away in the other direction
+##
+## The three momentum knobs below (relief, rise, fall) are the ones to reach for
+## if the owner says "still too harsh" again. Raise THIS one first: it changes how
+## much better it gets without touching how expensive setting off is.
+##
+## ---------------------------------------------------------------------------
+## WHY THIS IS THE PHYSICS AND NOT A CURVE
+## ---------------------------------------------------------------------------
+## BREAKING TRAIL IS HARDEST AT THE FIRST STEP. Once a walker is moving he has a
+## rhythm, his body carries momentum into each stride, and the snow ahead is
+## partly displaced by the one he just took. The same is true of a climb: starting
+## is the expensive part, and then you find a pace.
+##
+## That is worth building as the mechanism rather than as a softer number, because
+## it keeps the moment of ENTERING a drift expensive -- which is the whole reason
+## deep snow exists in this game -- while rewarding persistence, which is what was
+## asked for. Flattening terrain_severity would have bought the second by giving
+## up the first.
+##
+## THE STATE IS MEASURED IN PENALTY DEPTH, NOT IN AN ABSTRACT 0..1 DIAL, and every
+## behaviour below falls out of that one choice with no extra rules:
+##
+##   `_momentum` is HOW DEEP A RESISTANCE HE IS CURRENTLY IN HIS STRIDE AGAINST,
+##   in the same units as terrain_effort(). It eases toward the resistance he is
+##   actually facing.
+##
+##   * Bare level ground has no resistance, so it eases toward zero -- a man who
+##     has run thirty metres of clear ground has banked NOTHING to spend at the
+##     drift's edge, and pays full price there. No gate, no special case.
+##   * Half a drift is half the resistance of a full one, so eight seconds of it
+##     leaves him about half in his stride against the full one. Ground that
+##     changes needs no rule of its own; the proportion is the model.
+##   * Leaving a drift for clear ground bleeds it away again, so two drifts a long
+##     way apart are two full-price entries and two a stride apart are one.
+##
+## And the relief it buys is a FRACTION OF THE PENALTY:
+##
+##     factor = base + momentum_relief * min(_momentum, effort),  effort = 1 - base
+##
+## which is why 也不会超过正常浅雪和平地的速度 is STRUCTURAL rather than a clamp
+## somebody has to remember. The most it can ever add is `effort`, and base +
+## effort is exactly 1. Ground with no penalty gets no relief, so a beaten trail
+## and a found rhythm cannot stack: packing the snow flat is what REMOVES the
+## penalty, and the rhythm can only give back a penalty that is still there.
+##
+## A useful way to hold it: at full rhythm the model behaves exactly as though
+## terrain_severity were `terrain_severity * (1 - momentum_relief)` = 0.275. He
+## walks in at 0.50 and settles to 0.275.
+@export var momentum_relief := 0.45
+
+## How quickly he finds it, as a closed fraction per second -- the same form as
+## auto_run_rise and turn_speed.
+##
+## TO TUNE: lower it and the recovery is a long slow settling; raise it and he
+## shakes the drift off almost at once. At 0.55 he is half recovered after 1.3 s,
+## four fifths after 3 s and effectively all the way after 6.
+##
+## ---------------------------------------------------------------------------
+## CHOSEN AGAINST auto_run_delay, BECAUSE THEY ARE TWO OF THE SAME KIND OF THING
+## ---------------------------------------------------------------------------
+## The auto-run is also a "keep going and it gets better" mechanic, and on the one
+## ground where both can act at once -- a bare bank, steep enough to have a
+## penalty but clear enough to run on -- they would otherwise land together and
+## read as a single overshooting step.
+##
+## They are STAGED instead. The run fires at auto_run_delay (1.2 s) and completes
+## around 2 s; the rhythm is only about half in at the moment the run fires and
+## keeps arriving for several seconds after it has finished. So what a player
+## reads is one idea with two stages -- he commits, he breaks into a run, and then
+## the ground gradually stops fighting him -- rather than two thresholds.
+##
+## test_the_rhythm_and_the_auto_run_are_one_idea_at_two_timescales pins that
+## ordering, so raising this above about 1.0 will fail the suite rather than
+## quietly collapsing the two into one event.
+@export var momentum_rise := 0.55
+
+## How quickly he loses it standing still, in the same units. Faster than he finds
+## it, and that asymmetry is the point -- the same one auto_run_fall makes.
+##
+## TO TUNE: this is what decides whether stopping is expensive. At 2.0 a second's
+## pause costs him seven eighths of it, so a man who stops to look at something
+## feels the first step's weight again when he sets off. Lower it and stopping
+## becomes free, which removes the moment this whole mechanic exists to sell.
+##
+## It also governs the bleed when the ground gets EASIER rather than when he
+## stops, which is the same fact: the resistance he is in stride against is the
+## resistance he is actually facing.
+@export var momentum_fall := 2.0
+
+## What a sharp change of direction leaves him.
+##
+## TO TUNE: 0 makes a turn cost exactly what stopping costs; 1 makes turning free.
+## 0.25 is "most of it, not all of it" -- a man who turns has to break new trail,
+## but the rhythm in his legs is not thrown away the way it is by standing still.
+##
+## What counts as a sharp turn is auto_run_turn_degrees, measured the same way the
+## auto-run measures it (see is_a_turn()). One definition, deliberately: a corner
+## that keeps the run must not lose the rhythm, or the body contradicts itself.
+@export var momentum_turn_keep := 0.25
 
 ## ---------------------------------------------------------------------------
 ## AUTO-RUN
@@ -675,6 +801,12 @@ var _cycle_period := 0.6667
 var _run_hold := 0.0
 var _run_heading := Vector3.ZERO
 var _run_blend := 0.0
+## How deep a resistance he is currently in his stride against, in the units of
+## terrain_effort(). See momentum_relief and advance_momentum(). Its own smoothed
+## heading, because the momentum is advanced independently of the gait and neither
+## may depend on being called first.
+var _momentum := 0.0
+var _momentum_heading := Vector3.ZERO
 
 
 func _ready() -> void:
@@ -1204,6 +1336,13 @@ func _build_animation() -> void:
 ## walk's own share of `locomotion:speed` is 0.72 at its very worst, which leaves
 ## a walking man well clear of the upper bound; folding it in would make how
 ## awake he looks depend on how tired he is.
+##
+## ...and deliberately NOT by the momentum either, which is the same argument once
+## more. The cold reach is the conservative bound: a man who has found his rhythm
+## is moving FASTER than it, so the crossfade still reads him as fully walking
+## (the clamp sees to that), and the alternative would make how awake he looks
+## depend on how long he has been going. This is a readout of "walking or
+## standing", and that question has nothing to do with the rhythm.
 func motion_blend(speed: float, wade: float, grade: float) -> float:
 	var reach := maxf(terrain_factor(wade, grade), 0.02)
 	return clampf(
@@ -1401,16 +1540,58 @@ func snow_factor(wade: float) -> float:
 	return lerpf(1.0, deep_snow_factor, clampf(wade, 0.0, 1.0))
 
 
-## Everything the ground does to him, as one multiplier, compressed.
+## Everything the ground does to him, as one multiplier, compressed -- and then
+## relieved by however far into his stride he is.
 ##
 ## The two raw terms are the honest physical model and stay available separately
 ## -- snow_factor() and slope_factor() are what a realism claim is checked
 ## against. This is what actually reaches the velocity, and terrain_severity is
 ## the one knob between them. See its comment for why the gap exists and why it
 ## must not be closed.
-func terrain_factor(wade: float, grade: float) -> float:
+##
+## `momentum` is the state advance_momentum() carries, in penalty depth. It
+## defaults to zero, which is a COLD START -- the first step onto this ground --
+## so every existing caller and every test that does not care about the rhythm
+## still asks the same question it always asked.
+##
+## THE CEILING IS STRUCTURAL. `in_stride` cannot exceed `effort`, and `base +
+## effort` is exactly 1, so no rhythm can carry him past flat shallow snow.
+## Ground with no penalty -- bare level snow, or a beaten trail -- has effort 0
+## and gets no relief at all, which is what stops the packed layer and the rhythm
+## from stacking. Tobler's gentle-descent peak sits above 1 and is untouched:
+## `effort` is floored at zero, so the relief adds nothing there rather than
+## dragging the peak down toward 1.
+func terrain_factor(wade: float, grade: float, momentum := 0.0) -> float:
 	var raw := snow_factor(wade) * slope_factor(grade)
-	return lerpf(1.0, raw, clampf(terrain_severity, 0.0, 1.0))
+	var base := lerpf(1.0, raw, clampf(terrain_severity, 0.0, 1.0))
+	var effort := maxf(1.0 - base, 0.0)
+	var in_stride := clampf(momentum, 0.0, effort)
+	return base + clampf(momentum_relief, 0.0, 1.0) * in_stride
+
+
+## How hard this ground is to break into, as the penalty the first step pays:
+## 0 where the terrain costs him nothing, rising with the snow and the grade.
+##
+## The unit `_momentum` is measured in, so that ground of a given difficulty
+## teaches him a proportional amount of any other. Public because it is the
+## honest way to ask "how much is there to overcome here" and because both the
+## tests and tools/measure_locomotion.gd need it.
+func terrain_effort(wade: float, grade: float) -> float:
+	return maxf(1.0 - terrain_factor(wade, grade, 0.0), 0.0)
+
+
+## How deep a resistance he is currently in his stride against.
+func momentum() -> float:
+	return _momentum
+
+
+## ...and that as a fraction of a given resistance: 0 cold, 1 fully in his stride
+## against ground this hard. The readout, for tests and for tuning; the model
+## itself uses the depth directly.
+func momentum_share(effort: float) -> float:
+	if effort <= 0.0001:
+		return 0.0
+	return clampf(_momentum / effort, 0.0, 1.0)
 
 
 ## The pace the run would reach if he were running, before the terrain touches it.
@@ -1479,14 +1660,46 @@ func can_run(wade: float) -> bool:
 ## which decides whether the `gait` argument has anywhere to go. See
 ## tools/generate_stats.gd for why that is better design and not just a way to
 ## satisfy two documents at once.
-func top_speed_at(wade: float, grade := 0.0, gait := 0.0) -> float:
+##
+## `momentum` is likewise not accumulated here -- advance_momentum() owns that --
+## so this stays a pure function of its four arguments and defaults to a cold
+## start. See terrain_factor().
+func top_speed_at(wade: float, grade := 0.0, gait := 0.0, momentum := 0.0) -> float:
 	var pace := lerpf(walk_speed, run_ceiling(), clampf(gait, 0.0, 1.0))
-	return maxf(pace * terrain_factor(wade, grade), 0.0)
+	return maxf(pace * terrain_factor(wade, grade, momentum), 0.0)
 
 
 ## How far the walk has been promoted toward the run, 0 .. 1.
 func run_blend() -> float:
 	return _run_blend
+
+
+## ---------------------------------------------------------------------------
+## What counts as a turn rather than a curve
+## ---------------------------------------------------------------------------
+## Pulled out of advance_gait() so that advance_momentum() can ask the SAME
+## question. Two mechanics that both end on a sharp change of direction must agree
+## about what one is, or a corner that keeps the run loses the rhythm and the body
+## contradicts itself in a way nobody can see the cause of.
+##
+## Measured against a SMOOTHED heading rather than against the last frame, because
+## at 60 Hz a single frame of even a violent turn is a couple of degrees and
+## nothing would ever fire. An empty previous heading is a man setting off, which
+## is not a turn.
+func is_a_turn(previous: Vector3, heading: Vector3) -> bool:
+	if previous.length_squared() < 0.0001:
+		return false
+	return rad_to_deg(previous.angle_to(heading)) > auto_run_turn_degrees
+
+
+## The smoothed heading itself, one tick on. Lags the input by roughly
+## (turn rate) / auto_run_heading_smoothing, which is what sets the scale
+## is_a_turn() is measured on.
+func smooth_heading(previous: Vector3, heading: Vector3, delta: float) -> Vector3:
+	if previous.length_squared() < 0.0001:
+		return heading
+	var turn := 1.0 - exp(-auto_run_heading_smoothing * maxf(delta, 0.0))
+	return previous.lerp(heading, turn).normalized()
 
 
 ## Advances the auto-run by one tick and returns the new blend.
@@ -1515,15 +1728,12 @@ func advance_gait(delta: float, direction: Vector3, wade: float, forced := false
 		_run_heading = Vector3.ZERO
 	else:
 		var heading := flat.normalized()
-		if _run_heading.length_squared() < 0.0001:
-			_run_heading = heading
-		elif rad_to_deg(_run_heading.angle_to(heading)) > auto_run_turn_degrees:
+		if is_a_turn(_run_heading, heading):
 			# A flick or an about-face. He has to commit again.
 			_run_hold = 0.0
 			_run_heading = heading
 		else:
-			var turn := 1.0 - exp(-auto_run_heading_smoothing * maxf(delta, 0.0))
-			_run_heading = _run_heading.lerp(heading, turn).normalized()
+			_run_heading = smooth_heading(_run_heading, heading, delta)
 		# Capped so a long walk does not bank credit a stumble cannot spend.
 		_run_hold = minf(_run_hold + delta, auto_run_delay + 1.0)
 
@@ -1537,6 +1747,64 @@ func advance_gait(delta: float, direction: Vector3, wade: float, forced := false
 	if absf(_run_blend - target) < 0.001:
 		_run_blend = target
 	return _run_blend
+
+
+## Advances the rhythm by one tick and returns the new depth he is in stride
+## against. See momentum_relief for the whole of why this exists.
+##
+## `direction` is what he is being ASKED to do, for the same reason advance_gait()
+## takes it rather than the velocity: reading the velocity would make the recovery
+## depend on the snow he is already in, so a man wading out of a drift would have
+## to earn it twice -- once through the snow and once through the number the snow
+## produced.
+##
+## THREE LINES, AND EACH IS A PHYSICAL STATEMENT:
+##
+##   standing still  -- the resistance he is in stride against decays to nothing,
+##                      quickly. Setting off again is the first step's weight, and
+##                      that moment is the point of the whole mechanic.
+##   a sharp turn    -- most of it goes. He has to break new trail, but the rhythm
+##                      in his legs is not thrown away the way standing throws it.
+##                      Same turn test as the auto-run; see is_a_turn().
+##   otherwise       -- it eases toward the resistance he is ACTUALLY facing.
+##
+## That last line is doing more work than it looks. Because the state is measured
+## in penalty depth rather than as an abstract 0..1 dial, easing toward the
+## current effort gives, with no further rules: nothing banked on ground that costs
+## nothing, a proportional share carried from easier ground onto harder, and a
+## bleed back down when the ground eases off again. Every one of those would
+## otherwise need a special case, and each special case is somewhere for the
+## behaviour to disagree with itself.
+##
+## It rises at momentum_rise and falls at momentum_fall, and the fall rate governs
+## the ground-got-easier case as well as the standing-still one -- they are the
+## same fact stated twice: the resistance he is in stride against is the
+## resistance he is facing.
+func advance_momentum(delta: float, direction: Vector3, wade: float, grade: float) -> float:
+	var effort := terrain_effort(wade, grade)
+	var flat := Vector3(direction.x, 0.0, direction.z)
+	var step := maxf(delta, 0.0)
+	if flat.length_squared() <= 0.0001:
+		_momentum_heading = Vector3.ZERO
+		_momentum = lerpf(_momentum, 0.0, 1.0 - exp(-maxf(momentum_fall, 0.0) * step))
+		# An exponential ease never arrives, and a rhythm sitting a thousandth
+		# above zero for ever is a thing a test would have to know about.
+		if _momentum < 0.0005:
+			_momentum = 0.0
+		return _momentum
+
+	var heading := flat.normalized()
+	if is_a_turn(_momentum_heading, heading):
+		_momentum *= clampf(momentum_turn_keep, 0.0, 1.0)
+		_momentum_heading = heading
+	else:
+		_momentum_heading = smooth_heading(_momentum_heading, heading, step)
+
+	var rate := momentum_rise if effort > _momentum else momentum_fall
+	_momentum = lerpf(_momentum, effort, 1.0 - exp(-maxf(rate, 0.0) * step))
+	if _momentum < 0.0005:
+		_momentum = 0.0
+	return _momentum
 
 
 ## Publishes the auto-run threshold as a setting and reads the player's choice
@@ -1699,7 +1967,12 @@ func _physics_process(delta: float) -> void:
 	# Whether he is walking or running, eased, and gated on the snow he is in.
 	var forced := InputMap.has_action(&"move_run") and Input.is_action_pressed(&"move_run")
 	var gait := advance_gait(delta, direction, wade, forced)
-	var top_speed := top_speed_at(wade, grade, gait)
+	# ...and how far into his stride he is on ground this hard. Advanced beside the
+	# gait rather than inside it: they answer to the same input and the same turn
+	# test but on deliberately different timescales, and neither may depend on
+	# being called first. See momentum_rise for why the two are staged.
+	var momentum := advance_momentum(delta, direction, wade, grade)
+	var top_speed := top_speed_at(wade, grade, gait, momentum)
 
 	var wanted := direction * top_speed
 	velocity.x = move_toward(velocity.x, wanted.x, acceleration * delta)

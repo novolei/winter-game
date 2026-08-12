@@ -688,6 +688,384 @@ func test_walking_into_a_drift_eases_the_run_off() -> void:
 
 
 # ---------------------------------------------------------------------------
+# Momentum -- a man finding his rhythm
+# ---------------------------------------------------------------------------
+## 深雪区域和爬坡地形区域玩家角色的移动速度被削弱的太狠了，我希望减少一下这个削弱，
+## 可以起步的时候很慢但是迈开了几步后角色速度会逐渐加快起来不过也不会超过正常浅雪和
+## 平地的速度
+##
+## Two claims, and the second is the mechanic: setting off may be slow, but a few
+## strides in he is moving better -- and never better than flat shallow snow.
+##
+## It is built as the physics rather than as a curve, because the physics is true:
+## BREAKING TRAIL IS HARDEST AT THE FIRST STEP. Once a walker is going he has a
+## rhythm, his body carries into each stride, and the snow ahead is partly
+## displaced by the one he just took. The same is true of a climb.
+##
+## So the state is not an abstract 0..1 dial. It is HOW DEEP A RESISTANCE HE IS
+## CURRENTLY IN HIS STRIDE AGAINST, measured in the same units as the terrain
+## penalty itself. Everything below follows from that one choice and these tests
+## are written against the consequences rather than against the implementation:
+##
+##   * ground with no penalty teaches him nothing, so bare level ground banks
+##     nothing to spend in a drift;
+##   * easier ground teaches him proportionally less, so half a drift pays for
+##     half of a full one;
+##   * stopping and turning cost it;
+##   * and the relief is a FRACTION OF THE PENALTY, so it vanishes as the penalty
+##     does -- which is what makes the 1.0 ceiling structural rather than a clamp.
+
+## The moment the mechanic exists to sell. Cold, from a standstill, the drift and
+## the bank cost about what they cost before this pass.
+func test_the_first_step_into_a_drift_is_the_expensive_one() -> void:
+	var player := _build()
+	var drift: float = player.terrain_factor(1.0, 0.0, 0.0)
+	assert_true(
+		drift > 0.55 and drift < 0.70,
+		"stepping into a full drift from a standstill leaves %.3f of his pace; the owner "
+			% drift
+			+ "asked for the entry to stay near half"
+	)
+	var worst: float = player.terrain_factor(1.0, 1.0, 0.0)
+	assert_true(
+		worst > 0.45 and worst < 0.60,
+		"the worst ground in the game leaves %.3f of his pace on the first step" % worst
+	)
+	var bank: float = player.terrain_factor(0.0, 0.25, 0.0)
+	assert_true(
+		bank < 0.80,
+		"starting up a 25%% bank costs only %.0f%% of his pace, which is not a first step "
+			% ((1.0 - bank) * 100.0)
+			+ "worth recovering from"
+	)
+
+
+## ...and the second half of the sentence. Several seconds of keeping going and
+## the ground has stopped fighting him nearly as hard.
+func test_several_seconds_of_wading_finds_him_his_rhythm() -> void:
+	var player := _build()
+	var north := Vector3(0.0, 0.0, -1.0)
+	var entry: float = player.terrain_factor(1.0, 0.0, 0.0)
+	for _tick in range(360):
+		player.advance_momentum(1.0 / 60.0, north, 1.0, 0.0)
+	var found: float = player.terrain_factor(1.0, 0.0, player.momentum())
+	assert_true(
+		found > entry + 0.05,
+		"six seconds of wading took him from %.3f to %.3f -- he never found a rhythm"
+			% [entry, found]
+	)
+	assert_true(
+		found > 0.74 and found < 0.85,
+		"six seconds of wading a full drift recovers to %.3f; the target was 0.75-0.80" % found
+	)
+	# ...and the climb recovers too. 爬坡地形区域 is half the owner's sentence.
+	var climber := PlayerControllerScript.new()
+	for _tick in range(360):
+		climber.advance_momentum(1.0 / 60.0, north, 0.0, 0.25)
+	var climbed: float = climber.terrain_factor(0.0, 0.25, climber.momentum())
+	assert_true(
+		climbed > player.terrain_factor(0.0, 0.25, 0.0) + 0.05,
+		"six seconds of climbing recovered nothing: %.3f against a cold %.3f"
+			% [climbed, player.terrain_factor(0.0, 0.25, 0.0)]
+	)
+	climber.free()
+
+
+## THE CEILING THE OWNER STATED OUTRIGHT: 也不会超过正常浅雪和平地的速度.
+##
+## Structural rather than clamped: the relief is a fraction of the penalty, so a
+## penalty of nothing relieves nothing. Checked over the whole grid with far more
+## momentum than any ground could ever earn, so a clamp that had been left out
+## would show.
+func test_no_amount_of_rhythm_carries_him_past_flat_shallow_snow() -> void:
+	var player := _build()
+	var flat: float = player.terrain_factor(0.0, 0.0, 0.0)
+	assert_almost_eq(flat, 1.0, 0.0001, "flat bare ground is no longer the unit of this model")
+	for wade in [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]:
+		for grade in [-1.0, -0.35, -0.15, -0.05, 0.0, 0.05, 0.15, 0.35, 1.0]:
+			var cold: float = player.terrain_factor(wade, grade, 0.0)
+			var full: float = player.terrain_factor(wade, grade, 10.0)
+			assert_true(
+				full >= cold - 0.0001,
+				"at wade %.1f grade %+.2f a rhythm made the ground SLOWER: %.4f against %.4f"
+					% [wade, grade, full, cold]
+			)
+			assert_true(
+				full <= maxf(cold, flat) + 0.0001,
+				"at wade %.1f grade %+.2f a rhythm carries him to %.4f, past the flat "
+					% [wade, grade, full]
+					+ "shallow-snow %.4f he must never beat" % flat
+			)
+	# ...and deeper snow is still slower than shallow at any rhythm, so the relief
+	# cannot quietly invert the model the way an absolute wade speed once did.
+	for grade in [0.0, 0.25]:
+		var previous: float = player.terrain_factor(0.0, grade, 10.0)
+		for step in range(1, 11):
+			var here: float = player.terrain_factor(float(step) / 10.0, grade, 10.0)
+			assert_true(
+				here <= previous + 0.0001,
+				"at full rhythm on grade %+.2f, wade %.1f gives %.4f -- faster than shallower %.4f"
+					% [grade, float(step) / 10.0, here, previous]
+			)
+			previous = here
+
+
+## Decay has to be honest or the mechanic is a free gift. Stopping costs it, and
+## setting off again is back at the first step's weight -- which is the moment the
+## whole thing exists to sell.
+func test_stopping_costs_him_the_rhythm() -> void:
+	var player := _build()
+	var north := Vector3(0.0, 0.0, -1.0)
+	for _tick in range(360):
+		player.advance_momentum(1.0 / 60.0, north, 1.0, 0.0)
+	var found: float = player.momentum()
+	assert_true(found > 0.0, "six seconds of wading banked no rhythm at all")
+	for _tick in range(60):
+		player.advance_momentum(1.0 / 60.0, Vector3.ZERO, 1.0, 0.0)
+	assert_true(
+		player.momentum() < found * 0.2,
+		"a second after stopping he still holds %.0f%% of his rhythm"
+			% (100.0 * player.momentum() / maxf(found, 0.0001))
+	)
+	# ...and the first step of the new walk is the cold price again.
+	player.advance_momentum(1.0 / 60.0, north, 1.0, 0.0)
+	assert_almost_eq(
+		player.terrain_factor(1.0, 0.0, player.momentum()),
+		player.terrain_factor(1.0, 0.0, 0.0),
+		0.03,
+		"setting off again gives him %.3f where a cold start gives %.3f"
+			% [
+				player.terrain_factor(1.0, 0.0, player.momentum()),
+				player.terrain_factor(1.0, 0.0, 0.0),
+			]
+	)
+
+
+## A sharp change of direction costs MOST of it -- not all, because the rhythm in
+## his legs is not entirely thrown away by turning, and not none, because a man
+## who turns and sets off has to break new trail.
+##
+## The same turn test as the auto-run, and deliberately so: what counts as a turn
+## is one definition and the two mechanics cannot drift apart on it.
+func test_a_sharp_change_of_direction_costs_most_of_the_rhythm() -> void:
+	var player := _build()
+	var north := Vector3(0.0, 0.0, -1.0)
+	for _tick in range(360):
+		player.advance_momentum(1.0 / 60.0, north, 1.0, 0.0)
+	var found: float = player.momentum()
+	player.advance_momentum(1.0 / 60.0, -north, 1.0, 0.0)
+	assert_true(
+		player.momentum() < found * 0.45,
+		"an about-face left him %.0f%% of his rhythm, which is not most of it"
+			% (100.0 * player.momentum() / maxf(found, 0.0001))
+	)
+	assert_true(
+		player.momentum() > 0.0,
+		"an about-face threw away every bit of it; a turn is not a standstill"
+	)
+
+
+## ...but a curve is not a turn, on the same terms the auto-run uses.
+func test_a_gentle_curve_keeps_the_rhythm() -> void:
+	var player := _build()
+	var heading := Vector3(0.0, 0.0, -1.0)
+	for _tick in range(360):
+		player.advance_momentum(1.0 / 60.0, heading, 1.0, 0.0)
+	var found: float = player.momentum()
+	for _tick in range(90):
+		heading = heading.rotated(Vector3.UP, deg_to_rad(1.0))
+		player.advance_momentum(1.0 / 60.0, heading, 1.0, 0.0)
+	assert_true(
+		player.momentum() > found * 0.9,
+		"rounding a 90 degree corner over a second and a half cost him %.0f%% of his rhythm"
+			% (100.0 * (1.0 - player.momentum() / maxf(found, 0.0001)))
+	)
+
+
+## Bare level ground has nothing to break through, so there is nothing to learn
+## on it. THIS IS WHAT KEEPS ENTERING A DRIFT EXPENSIVE: a man who has run thirty
+## metres of clear ground pays full price at the drift's edge.
+func test_bare_level_ground_banks_nothing_to_spend_in_a_drift() -> void:
+	var player := _build()
+	var north := Vector3(0.0, 0.0, -1.0)
+	for _tick in range(600):
+		player.advance_momentum(1.0 / 60.0, north, 0.0, 0.0)
+	assert_true(
+		player.momentum() < 0.01,
+		"ten seconds of clear level ground banked %.3f of rhythm to spend elsewhere"
+			% player.momentum()
+	)
+	player.advance_momentum(1.0 / 60.0, north, 1.0, 0.0)
+	assert_almost_eq(
+		player.terrain_factor(1.0, 0.0, player.momentum()),
+		player.terrain_factor(1.0, 0.0, 0.0),
+		0.02,
+		"running in off clear ground bought him %.3f where a cold start gives %.3f"
+			% [
+				player.terrain_factor(1.0, 0.0, player.momentum()),
+				player.terrain_factor(1.0, 0.0, 0.0),
+			]
+	)
+
+
+## ...and easier ground teaches him proportionally. Half a drift is half of a
+## full one's resistance, so it pays for about half of it -- which falls straight
+## out of the state being measured in penalty depth rather than in an abstract
+## dial, and is why no separate rule is needed for terrain that changes.
+func test_easier_ground_pays_for_a_proportional_share_of_harder_ground() -> void:
+	var player := _build()
+	var north := Vector3(0.0, 0.0, -1.0)
+	for _tick in range(480):
+		player.advance_momentum(1.0 / 60.0, north, 0.5, 0.0)
+	var half_effort: float = player.terrain_effort(0.5, 0.0)
+	var full_effort: float = player.terrain_effort(1.0, 0.0)
+	assert_true(
+		half_effort > 0.0 and full_effort > half_effort,
+		"half a drift (%.3f) is not an easier resistance than a full one (%.3f)"
+			% [half_effort, full_effort]
+	)
+	assert_true(
+		player.momentum_share(half_effort) > 0.9,
+		"eight seconds of half a drift left him only %.0f%% in his stride against it"
+			% (100.0 * player.momentum_share(half_effort))
+	)
+	var carried: float = player.momentum_share(full_effort)
+	var expected := half_effort / full_effort
+	assert_almost_eq(
+		carried,
+		expected,
+		0.08,
+		"half a drift bought %.0f%% of a full one where its share of the resistance is %.0f%%"
+			% [carried * 100.0, expected * 100.0]
+	)
+
+
+## The spatial version of this same idea already exists: SnowField gives back
+## speed on snow the walker has beaten flat. Momentum is the temporal version, and
+## THE TWO MUST NOT ADD UP PAST THE CEILING.
+##
+## They cannot, and the reason is worth pinning rather than asserting: packing
+## removes the depth, removing the depth removes the penalty, and the relief is a
+## fraction OF the penalty. The trail that gives speed back is the same trail that
+## leaves the rhythm nothing to give back.
+func test_a_beaten_trail_and_a_found_rhythm_do_not_stack_past_the_ceiling() -> void:
+	var player := _build()
+	_field = SnowFieldScript.new()
+	_field.build_at(Vector3.ZERO)
+
+	var drift := Vector3.ZERO
+	var found := false
+	for iz in range(-60, 61):
+		for ix in range(-60, 61):
+			var here := Vector3(float(ix) * 0.5, 0.0, float(iz) * 0.5)
+			if _field.wade_factor(here) >= 0.999:
+				drift = here
+				found = true
+				break
+		if found:
+			break
+	assert_true(found, "the shipped field has no snow deep enough to test this on")
+	if not found:
+		return
+
+	var north := Vector3(0.0, 0.0, -1.0)
+	var deep: float = _field.wade_factor(drift)
+	for _tick in range(600):
+		player.advance_momentum(1.0 / 60.0, north, deep, 0.0)
+	var wading: float = player.terrain_factor(deep, 0.0, player.momentum())
+	assert_true(wading <= 1.0 + 0.0001, "wading at full rhythm already beats flat ground")
+
+	for _pass in range(24):
+		_field.pack_at(drift, 0.34, 0.09)
+	var packed: float = _field.wade_factor(drift)
+	assert_true(packed < deep, "twenty-four passes packed nothing down")
+	# He is still at full rhythm, and now on his own trail. Both reliefs at once.
+	var beaten: float = player.terrain_factor(packed, 0.0, player.momentum())
+	assert_true(
+		beaten <= 1.0 + 0.0001,
+		"his own trail plus his own rhythm carries him to %.4f, past flat shallow snow" % beaten
+	)
+	assert_true(
+		beaten >= wading - 0.0001,
+		"beating the trail flat made it slower (%.4f against %.4f)" % [beaten, wading]
+	)
+	# ...and the rhythm's share of the gain has SHRUNK as the trail packed, which
+	# is the non-stacking stated as a number rather than as an inequality.
+	var rhythm_on_fresh: float = wading - player.terrain_factor(deep, 0.0, 0.0)
+	var rhythm_on_trail: float = beaten - player.terrain_factor(packed, 0.0, 0.0)
+	assert_true(
+		rhythm_on_trail < rhythm_on_fresh,
+		"the rhythm gives back %.4f on the beaten trail and %.4f on fresh snow -- it is not "
+			% [rhythm_on_trail, rhythm_on_fresh]
+			+ "handing back a penalty the packing has already removed"
+	)
+
+
+## Two "keep going and it gets better" mechanics in one body would overshoot if
+## they landed together. They are STAGED: the run arrives at about the halfway
+## point of the rhythm, so what a player reads is one idea -- settling into a
+## journey -- rather than two thresholds firing at once.
+func test_the_rhythm_and_the_auto_run_are_one_idea_at_two_timescales() -> void:
+	var player := _build()
+	var north := Vector3(0.0, 0.0, -1.0)
+	# A bare 25% bank: steep enough to have a penalty worth recovering, shallow
+	# enough in snow that the run is still available. The only ground where the
+	# two mechanics can act at once.
+	var effort: float = player.terrain_effort(0.0, 0.25)
+	var elapsed := 0.0
+	var at_full_run := -1.0
+	for _tick in range(600):
+		player.advance_gait(1.0 / 60.0, north, 0.0)
+		player.advance_momentum(1.0 / 60.0, north, 0.0, 0.25)
+		elapsed += 1.0 / 60.0
+		if at_full_run < 0.0 and player.run_blend() > 0.9:
+			at_full_run = player.momentum_share(effort)
+	assert_true(at_full_run >= 0.0, "he never reached a full run to compare against")
+	assert_true(
+		at_full_run < 0.75,
+		"by the time the auto-run is complete he is already %.0f%% into his rhythm; the two "
+			% (at_full_run * 100.0)
+			+ "land together and read as one overshooting step rather than as a progression"
+	)
+	# ...and at the end of both, a climb at a run is still slower than the flat.
+	var climbing: float = player.top_speed_at(0.0, 0.25, 1.0, player.momentum())
+	var flat: float = player.top_speed_at(0.0, 0.0, 1.0, 0.0)
+	assert_true(
+		climbing < flat,
+		"running up a 25%% bank at full rhythm (%.2f m/s) is no slower than the flat (%.2f)"
+			% [climbing, flat]
+	)
+
+
+## And after all of it, deep snow still means something -- which is the whole
+## reason it exists. Flattening the penalty would have been the easy answer and
+## the wrong one.
+func test_a_drift_still_costs_him_at_full_rhythm() -> void:
+	var player := _build()
+	var north := Vector3(0.0, 0.0, -1.0)
+	for _tick in range(600):
+		player.advance_momentum(1.0 / 60.0, north, 1.0, 0.0)
+	var wading: float = player.terrain_factor(1.0, 0.0, player.momentum())
+	assert_true(
+		wading < 0.85,
+		"a full drift at full rhythm leaves him %.0f%% of his flat pace, which is not a "
+			% (wading * 100.0)
+			+ "cost a player would notice"
+	)
+	assert_false(player.can_run(1.0), "the rhythm handed him back the run in a full drift")
+	# The run being gone is most of what a drift costs, and no rhythm buys it back.
+	assert_true(
+		player.top_speed_at(1.0, 0.0, 0.0, player.momentum())
+			< 0.4 * player.top_speed_at(0.0, 0.0, 1.0, 0.0),
+		"wading at full rhythm (%.2f m/s) is not far enough below running clear ground (%.2f)"
+			% [
+				player.top_speed_at(1.0, 0.0, 0.0, player.momentum()),
+				player.top_speed_at(0.0, 0.0, 1.0, 0.0),
+			]
+	)
+
+
+# ---------------------------------------------------------------------------
 # The animation has to follow
 # ---------------------------------------------------------------------------
 

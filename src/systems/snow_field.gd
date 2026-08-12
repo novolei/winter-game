@@ -456,6 +456,20 @@ func wade_factor(world: Vector3) -> float:
 
 ## Tread the snow down. `amount` is how much of what is left gets compacted at
 ## the centre, falling off to nothing at `radius_m`.
+##
+## THIS IS THE SPATIAL HALF OF A PAIR, and the other half is in the player.
+## Packing gives speed back on snow the walker has already beaten flat;
+## PlayerController's momentum gives it back to a walker who has kept going. Same
+## idea -- persistence is rewarded -- once in ground and once in time.
+##
+## They cannot double up, and it is worth saying why here rather than only there,
+## because the obvious worry is that a man at full rhythm on his own packed trail
+## ends up faster than flat shallow snow. The relief the momentum grants is a
+## fraction OF the terrain penalty; packing is what REMOVES that penalty. By the
+## time the trail is beaten flat there is nothing left for the rhythm to hand
+## back, so the two shrink into each other rather than adding. See
+## PlayerController.terrain_factor(), and
+## test_a_beaten_trail_and_a_found_rhythm_do_not_stack_past_the_ceiling.
 func pack_at(world: Vector3, radius_m: float, amount: float) -> void:
 	if _packed == null:
 		return
