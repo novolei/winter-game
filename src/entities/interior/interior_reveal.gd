@@ -77,6 +77,23 @@ extends Area3D
 const EVENT_ENTERED := &"interior.entered"
 const EVENT_EXITED := &"interior.exited"
 
+## ---------------------------------------------------------------------------
+## THE SAME BOXES, READ FOR A SECOND QUESTION
+## ---------------------------------------------------------------------------
+## The threshold shapes below already say where this building's rooms are -- it
+## is how the roof knows when to come off. Snow needs the same answer: a house
+## is a thing that keeps snow out, so the field has to know which patch of
+## valley this building displaces and how high its floor is.
+##
+## THAT IS WHY IT IS HERE AND NOT IN A REGISTRY OF ITS OWN. A second list of
+## building footprints would be free to drift out of step with this one, and
+## the symptom would be a house whose roof lifts along one line and whose snow
+## clears along another -- which is the kind of defect nobody finds by reading.
+##
+## Published, never called. src/systems/snow_field.gd subscribes; this file does
+## not know it exists and must not.
+const EVENT_FOOTPRINT := &"building.footprint"
+
 ## The parts to fade, by name, resolved under `building_path`. THE AUTHORED
 ## LIST -- this is the whole configuration surface of the feature. For the
 ## farmhouse it is every part standing between a camera pitched 45 degrees and
@@ -119,6 +136,27 @@ const EVENT_EXITED := &"interior.exited"
 ## the player has left.
 @export var entry_gate_path: NodePath = ^""
 
+## How far the threshold shapes sit inside the outer face of the wall.
+##
+## The shapes bound the INSIDE of the rooms, which is what makes them the right
+## shapes for the reveal -- the reveal fires when the player is in the room.
+## Snow lies against the OUTSIDE, so the footprint is those same boxes grown by
+## one wall. For the farmhouse that recovers the model's own outer dimensions
+## exactly: x -3.44..3.44 grown by 0.16 is -3.60..3.60, which is MAIN_X0..MAIN_X1
+## in tools/blender/build_farmhouse.py.
+@export var wall_thickness := 0.16
+
+## The interior floor, in the building's local space, and the height the snow
+## field levels the ground to.
+##
+## NAN means "measure it", which is the case that needs no configuration: the
+## floor is the top of the highest piece of the building that is still below the
+## middle of the room and covers the room's centre in plan. A floor is the only
+## thing that can be -- a wall runs straight past the middle, furniture stands
+## on top of it, and a roof is nowhere near. A building states it only when that
+## rule got it wrong, and stating it is a scene edit rather than a code change.
+@export var floor_height := NAN
+
 var _fade := 0.0
 var _revealed := false
 var _inside := false
@@ -149,6 +187,14 @@ func _ready() -> void:
 		body_entered.connect(on_body_entered)
 	if not body_exited.is_connected(on_body_exited):
 		body_exited.connect(on_body_exited)
+	# DEFERRED, AND THAT IS THE WHOLE ORDERING OF THIS FEATURE. A building beds
+	# itself onto the terrain in its own _ready() -- Farmhouse._settle() -- and
+	# _ready() runs on children before parents, so a footprint announced from
+	# here would carry the floor height of a building that has not been put down
+	# yet. A deferred call lands after the entire _ready() chain, by which time
+	# every building in the scene is standing where it will stand.
+	_complain_about_the_floor.call_deferred()
+	announce_footprint.call_deferred()
 
 
 ## A threshold with no shape is a threshold nothing can cross, and it fails in
@@ -216,6 +262,216 @@ func building_node() -> Node:
 		if named != null:
 			return named
 	return get_parent()
+
+
+# --- the ground it stands on ------------------------------------------------
+
+## The transform from a node's own space out to the world, composed by walking
+## the parent chain.
+##
+## Node3D.global_transform is the obvious call and it is the wrong one here: it
+## asserts `is_inside_tree()` and returns IDENTITY when that fails, so every
+## unit test of a footprint would quietly assert about the world origin instead
+## of about the building. Measured on 4.7.1 -- it prints an engine ERROR too,
+## which the suite's pristine-output rule would have turned into a failure
+## somewhere far from the cause. Inside a tree this returns exactly what
+## global_transform returns; outside one it still works.
+static func world_of(node: Node3D) -> Transform3D:
+	var chain := Transform3D.IDENTITY
+	var walk := node
+	while walk != null:
+		chain = walk.transform * chain
+		walk = walk.get_parent() as Node3D
+	return chain
+
+
+## The rooms, as world-space rectangles on the ground reaching to the outer face
+## of the wall: {centre, axis_x, axis_z, half}. Axes rather than an angle, so a
+## reader does not have to know which way the sign goes, and so a building laid
+## out on the diagonal -- which every building after the farmhouse is -- carves
+## its own rectangle instead of an axis-aligned box around it.
+func footprint_areas() -> Array[Dictionary]:
+	var areas: Array[Dictionary] = []
+	for child in get_children():
+		var collider := child as CollisionShape3D
+		if collider == null:
+			continue
+		var box := collider.shape as BoxShape3D
+		if box == null:
+			# Deliberately not a fallback to the shape's debug AABB. A threshold
+			# built from something other than boxes is a building whose footprint
+			# somebody should think about rather than have guessed.
+			continue
+		var placed := world_of(collider)
+		var flat_x := Vector2(placed.basis.x.x, placed.basis.x.z)
+		var flat_z := Vector2(placed.basis.z.x, placed.basis.z.z)
+		if flat_x.length() < 0.0001 or flat_z.length() < 0.0001:
+			continue
+		areas.append({
+			"centre": Vector2(placed.origin.x, placed.origin.z),
+			"axis_x": flat_x.normalized(),
+			"axis_z": flat_z.normalized(),
+			"half": Vector2(
+				box.size.x * 0.5 * flat_x.length() + wall_thickness,
+				box.size.z * 0.5 * flat_z.length() + wall_thickness
+			),
+		})
+	return areas
+
+
+## World height of the floor the player should end up standing on, or NAN when
+## the building has nothing under its rooms. See floor_height for the rule.
+##
+## NAN rather than a guess, and that is the point: the snow field levels the
+## ground to this, so a wrong answer here is a room whose floorboards are buried
+## or whose ground is bare -- and a building with no floor at all must be able
+## to say so out loud rather than have a height invented for it.
+func interior_floor_height() -> float:
+	var building := building_node()
+	var placed := Transform3D.IDENTITY
+	if building is Node3D:
+		placed = world_of(building as Node3D)
+	if is_finite(floor_height):
+		return (placed * Vector3(0.0, floor_height, 0.0)).y
+	var areas := footprint_areas()
+	if areas.is_empty() or building == null:
+		return NAN
+	var ceiling := _room_middle_y()
+	if not is_finite(ceiling):
+		return NAN
+	var best := -INF
+	for node in _geometry_under(building):
+		var box: AABB = world_of(node) * node.get_aabb()
+		if box.end.y > ceiling:
+			continue
+		for area in areas:
+			var centre: Vector2 = area["centre"]
+			if box.position.x <= centre.x and centre.x <= box.end.x \
+					and box.position.z <= centre.y and centre.y <= box.end.z:
+				best = maxf(best, box.end.y)
+				break
+	return best if best > -INF else NAN
+
+
+## Halfway up the threshold volume: the line a floor is below and a wall is not.
+func _room_middle_y() -> float:
+	var total := 0.0
+	var count := 0
+	for child in get_children():
+		var collider := child as CollisionShape3D
+		if collider == null or not (collider.shape is BoxShape3D):
+			continue
+		total += world_of(collider).origin.y
+		count += 1
+	return total / float(count) if count > 0 else NAN
+
+
+func _geometry_under(building: Node) -> Array[VisualInstance3D]:
+	var found: Array[VisualInstance3D] = []
+	var pending: Array[Node] = [building]
+	while not pending.is_empty():
+		var node: Node = pending.pop_back()
+		var visual := node as VisualInstance3D
+		if visual != null:
+			found.append(visual)
+		for child in node.get_children():
+			pending.append(child)
+	return found
+
+
+## The holes snow can blow through: {centre, inward, width} in world XZ, with
+## the centre on the outer wall face and `inward` pointing into the room.
+##
+## Taken from the entry gate's own leaf rather than guessed, because the door
+## already resolves that leaf by name in order to swing it -- so the hole is
+## measured from the thing that fills it and cannot drift from it. Read while
+## the door is SHUT, which is the pose it is published in: an open leaf has
+## swung out of the opening it describes.
+func doorways() -> Array[Dictionary]:
+	var found: Array[Dictionary] = []
+	var gate := entry_gate()
+	if gate == null or not gate.has_method("opening"):
+		return found
+	var hole: AABB = gate.call("opening")
+	if hole.size.x <= 0.0 and hole.size.z <= 0.0:
+		return found
+	var areas := footprint_areas()
+	if areas.is_empty():
+		return found
+	var mouth := Vector2(hole.get_center().x, hole.get_center().z)
+	var room: Dictionary = areas[0]
+	for area in areas:
+		if (area["centre"] as Vector2).distance_to(mouth) \
+				< (room["centre"] as Vector2).distance_to(mouth):
+			room = area
+	var centre: Vector2 = room["centre"]
+	var axis_x: Vector2 = room["axis_x"]
+	var axis_z: Vector2 = room["axis_z"]
+	var half: Vector2 = room["half"]
+	var offset := mouth - centre
+	var local := Vector2(offset.dot(axis_x), offset.dot(axis_z))
+	# Which of the four walls the leaf is in: the one it is nearest to as a
+	# fraction of that wall's own half-width, so a long room does not always
+	# answer with its short side.
+	var outward: Vector2
+	var tangent: Vector2
+	var reach: float
+	if absf(local.x) / maxf(half.x, 0.0001) >= absf(local.y) / maxf(half.y, 0.0001):
+		outward = axis_x * (1.0 if local.x >= 0.0 else -1.0)
+		tangent = axis_z
+		reach = half.x - absf(local.x)
+	else:
+		outward = axis_z * (1.0 if local.y >= 0.0 else -1.0)
+		tangent = axis_x
+		reach = half.y - absf(local.y)
+	found.append({
+		# Slid onto the wall face, so the drift starts at the wall and reaches
+		# in from there rather than from wherever in the jamb the leaf hangs.
+		"centre": mouth + outward * reach,
+		"inward": -outward,
+		"width": hole.size.x * absf(tangent.x) + hole.size.z * absf(tangent.y),
+	})
+	return found
+
+
+## Everything the snow field needs, in one payload. Keyed by instance id so a
+## building that announces itself twice replaces its entry rather than doubling
+## it.
+func footprint() -> Dictionary:
+	return {
+		"id": get_instance_id(),
+		"building": _building_name(),
+		"areas": footprint_areas(),
+		"floor_y": interior_floor_height(),
+		"doorways": doorways(),
+	}
+
+
+func announce_footprint() -> void:
+	var bus = _event_bus()
+	if bus == null:
+		return
+	bus.emit_event(EVENT_FOOTPRINT, footprint())
+
+
+## Shouted from _ready() and not from interior_floor_height(), the same split
+## the missing-part alarm above uses and for the same reason: a test may ask a
+## deliberately floorless building what it stands on and assert NAN without
+## printing an engine-level ERROR into a suite whose output has to stay pristine.
+##
+## It is worth shouting about. The field levels the ground to this floor and
+## hides its own mesh under it; with no floor there the room reads as bare
+## terrain, which is the same wrong picture in a different colour -- and in the
+## game nobody is looking.
+func _complain_about_the_floor() -> void:
+	if not footprint_areas().is_empty() and is_nan(interior_floor_height()):
+		push_error(
+			"interior_reveal: nothing stands under the rooms of %s, so its floor "
+			% _building_name()
+			+ "height cannot be measured. The snow field will keep the snow out "
+			+ "of it and leave the ground where it is, which means the room shows "
+			+ "bare terrain instead of boards."
+		)
 
 
 # --- the fade ---------------------------------------------------------------

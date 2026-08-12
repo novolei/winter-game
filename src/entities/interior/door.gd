@@ -148,6 +148,27 @@ func leaf() -> Node3D:
 	return _leaf
 
 
+## The hole in the wall, in world space -- the leaf's own bounds, because the
+## leaf is exactly the shape of what it fills.
+##
+## Asked for by InteriorReveal when it publishes the building's footprint, so
+## that the snow field can blow a drift through the opening rather than stamp a
+## sealed rectangle. Read while the door is SHUT: an open leaf has swung out of
+## the doorway it describes, which is why the footprint is published once at
+## startup and not maintained.
+##
+## An empty AABB means there is nothing to describe -- no leaf, or a leaf that
+## is not a visual. The reveal treats that as "this building has no doorway",
+## which is the right answer for a barn with an open front.
+func opening() -> AABB:
+	var visual := leaf() as VisualInstance3D
+	if visual == null:
+		return AABB()
+	# world_of, not global_transform: the latter asserts is_inside_tree() and
+	# returns identity when it fails. See the note on InteriorReveal.world_of.
+	return InteriorReveal.world_of(visual) * visual.get_aabb()
+
+
 # --- opening ----------------------------------------------------------------
 
 func is_open() -> bool:
