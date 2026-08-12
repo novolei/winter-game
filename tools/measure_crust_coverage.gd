@@ -55,6 +55,14 @@ extends Node
 ##   --wade <m>       the crossing to wear, in metres of snow line (default 0.43)
 ##   --ortho <m>      frame height in metres (default 2.2)
 ##   --wait <n>       frames to run before freezing (default 40)
+##   --patch-scale <n>  overrides how the covered fraction is SPREAD, for a sweep.
+##                    The zone pass does not use it, so the denominator is
+##                    identical across a sweep and the numbers compare directly.
+##   --offset x,y     pins the wearer's noise offset. TWO BUILDS OF THIS EFFECT
+##                    ARE JUDGED ON THE SAME MARKS OR THEY ARE NOT JUDGED AT ALL:
+##                    each wearer now rolls its own offset at construction, so
+##                    without this every capture would draw a different pattern
+##                    and a sweep would be comparing samples rather than settings.
 
 const WAIT_FRAMES := 40
 
@@ -65,6 +73,8 @@ var _settle := 0.0
 var _wade := 0.43
 var _ortho := 2.2
 var _wait := WAIT_FRAMES
+var _patch_scale := -1.0
+var _offset := Vector2(-1.0, -1.0)
 var _frame := 0
 var _done := false
 var _legs: Node = null
@@ -80,11 +90,17 @@ func _ready() -> void:
 	_wade = float(_arg(args, "--wade", "0.43"))
 	_ortho = float(_arg(args, "--ortho", "2.2"))
 	_wait = int(_arg(args, "--wait", str(WAIT_FRAMES)))
+	_patch_scale = float(_arg(args, "--patch-scale", "-1"))
 	var at := _arg(args, "--at", "")
 	if at != "":
 		var parts := at.split(",")
 		if parts.size() == 2:
 			_at = Vector2(float(parts[0]), float(parts[1]))
+	var pinned := _arg(args, "--offset", "")
+	if pinned != "":
+		var parts := pinned.split(",")
+		if parts.size() == 2:
+			_offset = Vector2(float(parts[0]), float(parts[1]))
 	if _out == "":
 		push_error("measure_crust_coverage: --out is required")
 		get_tree().quit()
@@ -180,6 +196,32 @@ func _measure() -> void:
 		get_tree().quit()
 		return
 
+	# IS THE CRUST ACTUALLY MOUNTED, AND IS THE MESH ACTUALLY BEING DRAWN.
+	#
+	# A zone of zero px has two completely different causes and the number alone
+	# cannot tell them apart: the band arithmetic put the crust nowhere, or the
+	# crust is not on the mesh at all. The second happens -- another system takes
+	# the same instance's `material_override` or drives its `transparency` when the
+	# walker is near the farmhouse -- and it presents as a measurement of nothing
+	# rather than as an error, which cost a previous round its own explanation.
+	var dressed: Array = _legs.get("_dressed")
+	for index in range(dressed.size()):
+		var mesh: MeshInstance3D = dressed[index]
+		print("measure: %s mounted=%s transparency=%.3f visible=%s override=%s" % [
+			mesh.name, str(mesh.material_overlay == _crusts[index]), mesh.transparency,
+			str(mesh.is_visible_in_tree()),
+			"none" if mesh.material_override == null else mesh.material_override.get_class()])
+
+	# The pattern first, and before anything is rendered: pinning it is what makes
+	# one run's frames comparable with another's now that every wearer rolls its
+	# own. Left alone when it was not asked for, so an ordinary measurement still
+	# sees whatever this walker happens to be wearing.
+	if _offset.x >= 0.0:
+		_legs.call("set_noise_offset", _offset)
+	if _patch_scale > 0.0:
+		for crust in _crusts:
+			crust.set_shader_parameter(&"patch_scale", _patch_scale)
+
 	# The shipped values, read off the first material so this file restates none
 	# of them and cannot fall out of step with a retune.
 	var kept := {}
@@ -243,6 +285,10 @@ func _measure() -> void:
 	# lesson in one line: when a value is generated in code, read back what the
 	# engine got rather than what the call said.
 	print("measure: surfaces=%d  %s" % [_crusts.size(), _uniforms()])
+	# Which wearer's pattern this is. Printed rather than assumed, trap 9's lesson:
+	# a run whose offset was not the one asked for is a run compared against the
+	# wrong picture, and nothing else in the output would say so.
+	print("measure: noise_offset=%s" % str(_crusts[0].get_shader_parameter(&"noise_offset")))
 	print("measure: feet_y=%.3f  height=%.3f  band_top=%.3fm" % [
 		player.global_position.y, float(_legs.call("_subject_height")),
 		float(_legs.call("wade_fraction")) * float(_legs.call("_subject_height"))])

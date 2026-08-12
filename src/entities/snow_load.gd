@@ -143,7 +143,7 @@ extends Node3D
 ## exactly that. What varies now is COVERAGE: how much of the leg carries snow at
 ## all. Every patch that does is solid, bare fabric shows between them, and as he
 ## sheds the patches go out one at a time instead of the whole crust dimming.
-## `assets/shaders/leg_snow.gdshader` holds it, and it rides
+## `assets/shaders/snow_load.gdshader` holds it, and it rides
 ## `GeometryInstance3D.material_overlay` so that neither the character's Meshy
 ## maps nor the x-ray ghost already in his `next_pass` is disturbed.
 ##
@@ -514,14 +514,28 @@ const CHILL_SOURCE := &"snow_load"
 ## measurement.
 @export var crust_coverage := 0.44
 
-## How big the patches are, as a frequency over the character's UVs. Higher is
-## finer grit; lower is bigger slabs.
+## How the covered fraction is SPREAD, as a frequency over the character's UVs.
+## Higher is many small marks; lower is a few big slabs.
 ##
-## COARSE, AND THAT IS HALF THE FIX. Raising the coverage of a fine speckle gives
-## forty per cent of NOISE, not forty per cent of snow: the eye reads a
-## camouflage print rather than material stuck to cloth. The first version was at
-## 42 and produced exactly that.
-@export var patch_scale := 11.5
+## THIS IS A DIFFERENT AXIS FROM `crust_coverage` ABOVE, and treating them as one
+## is the mistake that produced the look the owner rejected. The threshold decides
+## how MUCH of the cloth carries snow; this decides how that amount is
+## distributed. The same 44% is four blocks or two hundred marks depending only on
+## this number, and only the second reads as a man who has been out in it.
+##
+## IT WENT DOWN FOR THE WRONG REASON AND HAS COME BACK UP. At a measured coverage
+## of 2.9% the prescription was "bigger patches, not more of them", and this went
+## from 42 to 11.5. The 2.9% had three other causes entirely -- all in the band
+## arithmetic, all fixed, coverage now 43.9% -- so the coarsening was a remedy for
+## someone else's problem, and what it actually did is what low-frequency noise
+## always does: large connected regions of on and of off. The figure came out with
+## a few blocky patches on the hood and one shoulder and bare arms, chest and
+## thighs between them.
+##
+## The ends of the range are both real. Below about 20 the marks connect into
+## slabs; above about 42 a mark on a 130 px figure at the game camera is a
+## sub-pixel sample and shimmers instead of sitting still.
+@export var patch_scale := 30.0
 
 ## How hard the edges of the patches are against the noise's own distribution. At
 ## 1 the noise is used raw and the threshold sweeps a soft, gradual field; higher
@@ -572,6 +586,18 @@ const CHILL_SOURCE := &"snow_load"
 ## creases and a subject with no map gets plain noise.
 @export var crease_bias := 0.42
 
+## How far into the noise field one wearer may be offset from another, in the
+## noise's own cells. See `_noise_offset`.
+##
+## Eight rather than eighty, and the reason is arithmetic rather than taste. The
+## field decorrelates completely within ONE cell, so eight is already far more
+## variety than anybody can exhaust -- the offset is continuous, not one of eight
+## slots. The ceiling is what keeps the hash honest: `snow_hash` takes `fract()`
+## of its input multiplied by a few hundred, and every cell of offset pushes the
+## third octave's lookup further out into float32's coarse ground, where the hash
+## starts quantising and the field starts to band.
+const NOISE_OFFSET_CELLS := 8.0
+
 ## How much drag has to be present before the air can carry a particle at all.
 ## The mist and the grains get their wind response from this one expression
 ## rather than from two hand-set numbers, which is what keeps them a single
@@ -594,6 +620,29 @@ var _grain_material: ParticleProcessMaterial
 var _crusts: Array[ShaderMaterial] = []
 var _dressed: Array[MeshInstance3D] = []
 var _load := 0.0
+## WHERE IN THE NOISE FIELD THIS PARTICULAR WEARER STANDS, in the noise's own
+## cells. The owner asked for this: "身上的积雪的位置和面积好像每次都是固定的" --
+## the snow was in the same places every time, because the field is a hash of the
+## surface's UVs and nothing else.
+##
+## ROLLED HERE, AT CONSTRUCTION, AND THAT IS THE WHOLE OF THE DESIGN. Three
+## things follow from where this line is, and each of them was a requirement:
+##
+##   * IT BELONGS TO THE WEARER. One SnowLoad dresses one body, so one roll is
+##     one character's pattern -- and the bear in wave 4 gets its own by being a
+##     second instance rather than by anybody passing it a seed.
+##   * IT IS NOT A FUNCTION OF WHERE HE IS. Seeding from world position would
+##     make the marks crawl across him as he walks, which is worse than a fixed
+##     pattern because motion is what the eye catches.
+##   * IT IS NOT A FUNCTION OF TIME. Written once and never rewritten -- the
+##     per-frame block in `_process()` deliberately does not touch it -- so
+##     within one accumulation cycle his snow appears and disappears in the same
+##     places, and the threshold reads as patches going out one at a time rather
+##     than as static.
+##
+## Godot randomises the global seed at startup, so two playthroughs differ; a
+## replay that needs the same pattern twice calls `set_noise_offset()`.
+var _noise_offset := Vector2(randf(), randf()) * NOISE_OFFSET_CELLS
 ## How far up his legs the snow reached at the DEEPEST point of this crossing, in
 ## world metres above his soles. See the header: this is the whole of what the
 ## crust's upper edge says, and it is remembered until the legs are clean.
@@ -857,6 +906,24 @@ func wind() -> Vector3:
 ## them later.
 func set_air_chill(amount: float) -> void:
 	_air_chill = clampf(amount, 0.0, 1.0)
+
+
+## Which part of the noise field this wearer's snow is drawn from, in cells.
+func noise_offset() -> Vector2:
+	return _noise_offset
+
+
+## Pins the pattern, rather than rolling one.
+##
+## For a capture that has to be comparable with another capture -- two builds of
+## this effect judged side by side are judged on the same marks or they are not
+## judged at all -- and for a replay or a loaded save that wants the walker it
+## had. Everything already dressed is rewritten, so this works after the fact and
+## not only before.
+func set_noise_offset(offset: Vector2) -> void:
+	_noise_offset = offset
+	for crust in _crusts:
+		crust.set_shader_parameter(&"noise_offset", _noise_offset)
 
 
 ## Injection point for a test, and for whoever wires a second walker without a
@@ -1485,6 +1552,9 @@ func crust_material() -> ShaderMaterial:
 	crust.set_shader_parameter(&"patch_scale", patch_scale)
 	crust.set_shader_parameter(&"patch_contrast", patch_contrast)
 	crust.set_shader_parameter(&"patch_warp", patch_warp)
+	# WHOSE PATTERN THIS IS. Written here, at build, and never in `_process()` --
+	# see `_noise_offset` for why the once matters as much as the randomness.
+	crust.set_shader_parameter(&"noise_offset", _noise_offset)
 	crust.set_shader_parameter(&"patch_scatter", patch_scatter)
 	crust.set_shader_parameter(&"settle_coverage", settle_coverage)
 	crust.set_shader_parameter(&"settle_facing", settle_facing)
@@ -1601,7 +1671,7 @@ func _build_population(
 ## Unshaded is Art Bible rule 8's banned list in one property -- there is no
 ## specular, no roughness and no reflection to switch off -- and MIX rather than
 ## ADD is rule 12 again: additive blending is a glow by another name, and two
-## puffs crossing would be brighter than either. `tests/unit/test_leg_snow.gd`
+## puffs crossing would be brighter than either. `tests/unit/test_snow_load.gd`
 ## holds the peak under the environment's bloom threshold.
 func _surface(tone: Color, alpha: float, dot: GradientTexture2D) -> StandardMaterial3D:
 	var surface := StandardMaterial3D.new()

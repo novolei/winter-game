@@ -778,21 +778,48 @@ func test_the_crust_covers_a_real_fraction_of_the_band_rather_than_speckling_it(
 	_free(legs)
 
 
-## CLUMPS, NOT GRIT. Raising the coverage of a fine speckle gives forty per cent
-## of noise rather than forty per cent of snow -- the eye reads a camouflage
-## print. The clumps have to be big enough to have a shape, and ragged enough at
-## the edge to be snow rather than a polka dot.
-func test_the_clumps_are_coarse_enough_to_have_a_shape() -> void:
+## MANY SMALL MARKS OVER THE WHOLE FIGURE, and this test changed direction once.
+##
+## It used to require `patch_scale < 20` -- "clumps, not grit" -- on the reasoning
+## that raising the coverage of a fine speckle gives forty per cent of noise
+## rather than forty per cent of snow. That reasoning was answering the WRONG
+## QUESTION. The coverage was 2.9% at the time and coarsening the noise was
+## prescribed as the remedy; the actual causes were three separate arithmetic
+## faults, and fixing those took the coverage to 43.9%. What the coarse noise
+## then did is what low-frequency noise always does -- large connected regions of
+## on and of off -- so the figure came out with a few blocky patches on the hood
+## and one shoulder and bare arms, chest and thighs between them.
+##
+## The owner compared the two builds and prefers the FINE, BROADLY SPREAD one:
+## marks on the hood, both shoulders, both arms, the chest, the thighs and the
+## boots, which is what a man who has been out in it looks like.
+##
+## COVERAGE AND DISTRIBUTION ARE INDEPENDENT AXES and this is the whole lesson:
+## the threshold decides HOW MUCH is covered and the noise scale decides HOW IT
+## IS SPREAD. The measured coverage stays where it is; only the scale moves.
+func test_the_marks_are_fine_grained_and_spread_over_the_whole_figure() -> void:
 	var legs := _fresh()
 	assert_true(
-		legs.patch_scale < 20.0,
-		"the patch noise runs at %f over the character's UVs, which at this framing "
+		legs.patch_scale > 20.0,
+		"the patch noise runs at %f over the character's UVs, which is low enough "
 			% legs.patch_scale
-			+ "is speckle: it reads as a print on the cloth rather than as snow on it"
+			+ "to give large connected regions of on and off: a few blocky patches "
+			+ "with bare arms and chest between them, which is the look that was "
+			+ "reported"
 	)
-	assert_true(legs.patch_scale > 4.0, "at %f the clumps are bigger than the boot" % legs.patch_scale)
+	# And not so fine that a mark is a sub-pixel sample. Above about 42 a mark on
+	# a 130 px figure at the game camera stops being a mark and starts shimmering,
+	# which is the failure at the other end of the same axis.
+	assert_true(
+		legs.patch_scale <= 42.0,
+		"at %f the marks are finer than the frame can resolve" % legs.patch_scale
+	)
 	assert_true(legs.patch_warp > 0.0, "the clump outlines are unwarped, so they are round blobs")
 	var text := FileAccess.get_file_as_string(SHADER_PATH)
+	# KEPT FROM THE COARSE BUILD, deliberately: the complaint was about scale and
+	# spread, not about edge quality. The warp is what makes an individual mark
+	# read as snow rather than as a dot, and it is in the noise's OWN cells, so it
+	# stays proportional at any scale.
 	assert_true(
 		text.contains("vec2 q = p + warp * patch_warp;"),
 		"%s does not warp its noise lookup, so a clump has the round shoulder a "
@@ -800,11 +827,135 @@ func test_the_clumps_are_coarse_enough_to_have_a_shape() -> void:
 			+ "plain fBm threshold produces rather than fingers and inlets"
 	)
 	# Most of the weight in the base octave: spread evenly the field has no scale
-	# of its own and produces grit at every coverage.
+	# of its own and the mark size stops being something `patch_scale` decides.
 	assert_true(
 		text.contains("snow_noise(q) * 0.72"),
-		"%s spreads its octave weights, so the noise has no clump size of its own" % SHADER_PATH
+		"%s spreads its octave weights, so the noise has no mark size of its own" % SHADER_PATH
 	)
+	_free(legs)
+
+
+# --- and it is a different pattern on every wearer -------------------------------
+
+## THE PATTERN WAS IDENTICAL EVERY TIME, and the owner asked for it not to be:
+## "身上的积雪的位置和面积好像每次都是固定的 可不可以做成随机的位置".
+##
+## The field is a hash of the surface's own UVs, so with nothing else in it two
+## runs of the game put the snow in exactly the same places. That is a small
+## thing between sessions and a LOUD one within a session: the bear in Wave 4 and
+## the threats in Wave 5 stand in the same blizzard as the player, and several
+## creatures wearing the same snow in the same places is far more noticeable than
+## one creature repeating between runs.
+##
+## So each wearer offsets the field by its own amount. This is the test that
+## proves the randomisation does anything at all.
+func test_two_wearers_do_not_wear_the_same_pattern() -> void:
+	# TWELVE WEARERS, NOT TWO, AND THAT IS A CORRECTION TO THIS TEST RATHER THAN
+	# TO THE FEATURE. The first version asserted that one pair landed more than a
+	# cell apart in the field and it failed on its first run at 0.92 -- which is
+	# not a defect, it is what two uniform draws in a square do about one time in
+	# twenty. A bound on ONE pair either flakes or is too loose to catch anything.
+	# The claims that actually distinguish a working roll from a broken one are
+	# about the POPULATION: no two wearers alike, and the sample spread across a
+	# real part of the field.
+	var made: Array[Node3D] = []
+	var offsets: Array[Vector2] = []
+	for index in range(12):
+		# No `_ready()`. The offset is rolled at CONSTRUCTION, which is the claim
+		# being tested, and building twelve pairs of emitters to read one Vector2
+		# each would be a lot of engine noise for nothing.
+		var walker: Node3D = SnowLoadScript.new()
+		made.append(walker)
+		offsets.append(walker.noise_offset())
+	var least := offsets[0]
+	var most := offsets[0]
+	for offset in offsets:
+		least = Vector2(minf(least.x, offset.x), minf(least.y, offset.y))
+		most = Vector2(maxf(most.x, offset.x), maxf(most.y, offset.y))
+	for index in range(offsets.size()):
+		for other in range(index + 1, offsets.size()):
+			assert_true(
+				offsets[index] != offsets[other],
+				"wearers %d and %d were handed the same offset (%s), so they are "
+					% [index, other, str(offsets[index])]
+				+ "wearing the same snow in the same places -- which is what a "
+				+ "constant, or an offset rolled once for the class rather than "
+				+ "per instance, looks like"
+			)
+	# And they are spread over the field rather than huddled in one corner of it.
+	# Twelve uniform draws confined to a quarter of the range is a one-in-350-000
+	# accident and an obvious defect, so this cannot flake in any useful sense.
+	var spread := most - least
+	assert_true(
+		spread.x > 2.0 and spread.y > 2.0,
+		"twelve wearers' offsets span only %s cells of a field %f across, so the "
+			% [str(spread), SnowLoadScript.NOISE_OFFSET_CELLS]
+			+ "roll is not covering it"
+	)
+	for walker in made:
+		walker.free()
+	# And it reaches the material, which is the only place it can do any work.
+	var first := _fresh()
+	var second := _fresh()
+	var one: ShaderMaterial = first.crust_material()
+	var two: ShaderMaterial = second.crust_material()
+	assert_true(
+		one.get_shader_parameter(&"noise_offset") != two.get_shader_parameter(&"noise_offset"),
+		"both crusts were handed the same offset, so the two walkers render alike "
+			+ "whatever the node holds"
+	)
+	assert_eq(
+		one.get_shader_parameter(&"noise_offset"), first.noise_offset(),
+		"the crust was not given the offset its own wearer holds"
+	)
+	var text := FileAccess.get_file_as_string(SHADER_PATH)
+	# THE WHOLE DOMAIN MOVES, warp included. Offsetting only the base lookup and
+	# leaving the warp where it was would shift the marks while leaving their
+	# ragged edges behind, which is a different field rather than the same field
+	# somewhere else.
+	assert_true(
+		text.contains("snow_patches(UV * patch_scale + noise_offset)"),
+		"%s does not offset the whole lookup domain, so the warp and the octaves "
+			% SHADER_PATH
+			+ "do not travel with the marks they belong to"
+	)
+	_free(first)
+	_free(second)
+
+
+## AND IT IS THE WEARER'S, NOT THE MOMENT'S OR THE PLACE'S.
+##
+## A pattern that is re-rolled per frame crawls; a pattern seeded from where the
+## walker is standing drifts across him as he walks, which is worse than a fixed
+## one because it draws the eye. So the offset is taken once and never touched
+## again: within one accumulation cycle a given wearer's snow appears and
+## disappears in the same places, which is what makes the threshold read as snow
+## going out patch by patch rather than as static.
+func test_one_wearers_pattern_stays_put_while_the_load_comes_and_goes() -> void:
+	var legs := _fresh()
+	var body := Node3D.new()
+	legs.set_subject(body)
+	var born: Vector2 = legs.noise_offset()
+	var crust: ShaderMaterial = legs.crust_material()
+	# A whole accumulation cycle: into the drift, out of it, and time passing --
+	# every input this node has, short of another wearer.
+	_walk(legs, DEEP, 4)
+	legs._process(0.5)
+	body.position = Vector3(37.0, 0.0, -14.0)
+	legs.set_snowfall_rate(1.0)
+	legs._process(2.0)
+	_walk(legs, THIN, 6)
+	legs._process(0.5)
+	assert_eq(
+		legs.noise_offset(), born,
+		"the pattern moved during one crossing, so the snow crawls over him "
+			+ "instead of going out patch by patch"
+	)
+	assert_eq(
+		crust.get_shader_parameter(&"noise_offset"), born,
+		"the material's offset moved while the load did"
+	)
+	body.free()
 	_free(legs)
 
 

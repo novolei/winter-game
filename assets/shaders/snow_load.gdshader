@@ -275,16 +275,66 @@ uniform float swell = 0.005;
 // and more patches appear; as he sheds it rises and patches go out ONE AT A
 // TIME, which is what breaking up looks like as opposed to dimming.
 //
-// CLUMPS, NOT GRIT, AND THAT IS WHAT `patch_scale` IS FOR. Raising the coverage
-// of a fine speckle gives you forty per cent of NOISE, not forty per cent of
-// snow -- the eye reads a camouflage print rather than material stuck to cloth.
-// So the noise is nearly four times coarser than the first version's 42, most of
-// its weight is in the base octave rather than spread across three, and the
-// whole field is pushed about by a warp of its own so a clump has fingers and
-// inlets instead of the round shoulder a plain threshold on fBm produces.
-uniform float patch_scale = 11.5;
+// ---------------------------------------------------------------------------
+// HOW MUCH IS COVERED AND HOW IT IS SPREAD ARE INDEPENDENT AXES, AND CONFUSING
+// THEM COST THIS FILE A ROUND
+// ---------------------------------------------------------------------------
+// `crust_coverage` above decides HOW MUCH of the cloth carries snow.
+// `patch_scale` decides HOW THAT AMOUNT IS DISTRIBUTED -- the same 44% of a
+// surface can be four big slabs or two hundred small marks, and only the second
+// of those looks like a man who has been out in it.
+//
+// The history is worth keeping because it is a diagnosis error rather than a
+// tuning one. The coverage measured 2.9% and the prescription was "make the
+// patches bigger, not more numerous", so this went from 42 to 11.5. The actual
+// causes were three separate arithmetic faults -- the thinning ramp measured
+// against the figure rather than against the band, the load both scaling the
+// coverage and retreating the edge, and the ramp tracking what was LEFT rather
+// than the crossing -- and fixing those took the coverage from 2.9% to 43.9%.
+// The coarse noise was a remedy for a problem with a different cause, and at 11.5
+// it did what low-frequency noise always does: large connected regions of on and
+// of off. The figure came out with a few blocky patches on the hood and one
+// shoulder, and bare arms, chest and thighs between them.
+//
+// So the scale is back up. The coverage the measurement now gives is KEPT; only
+// the distribution moved.
+//
+// The other two are unchanged and both are about the EDGE of a mark rather than
+// its size, which is why nothing in the complaint touched them: `patch_contrast`
+// stretches the field so a mark is present or absent rather than smeared, and
+// `patch_warp` pushes the whole lookup about so an outline has fingers and
+// inlets instead of the round shoulder a plain threshold on fBm gives. The warp
+// is measured in the noise's OWN cells, so it stays proportional at any scale.
+uniform float patch_scale = 30.0;
 uniform float patch_contrast = 1.8;
 uniform float patch_warp = 0.55;
+
+// ---------------------------------------------------------------------------
+// WHICH PART OF THE FIELD THIS PARTICULAR WEARER IS STANDING IN
+// ---------------------------------------------------------------------------
+// The field is a hash of the surface's own UVs, so on its own it puts the snow
+// in exactly the same places on every walker in every run of the game. The owner
+// asked for that not to be true. It matters least where it was noticed -- one
+// character repeating between two sessions -- and most where it has not happened
+// yet: the bear in wave 4 and the threats in wave 5 stand in the same blizzard as
+// the player, and several creatures wearing identical snow is far louder than one
+// creature repeating.
+//
+// So each wearer is handed its own offset into the field, in the noise's own
+// cells, and the marks land somewhere else on it. Two properties of HOW it is
+// applied are load-bearing:
+//
+//   * IT MOVES THE WHOLE DOMAIN, warp and octaves with it, because it is added
+//     before `snow_patches` rather than inside it. Offsetting only the base
+//     lookup would slide the marks and leave their ragged edges behind, which is
+//     a different field rather than the same field somewhere else.
+//   * IT IS WRITTEN ONCE PER WEARER, never per frame and never from a position or
+//     a clock -- see `SnowLoad._noise_offset`. A pattern re-rolled per frame
+//     crawls; one seeded from where he is standing drifts across him as he walks,
+//     which is worse than a fixed pattern because it draws the eye. Within one
+//     accumulation cycle his snow has to appear and disappear in the SAME places
+//     for the threshold to read as patches going out one at a time.
+uniform vec2 noise_offset = vec2(0.0);
 
 // WHERE it catches, as opposed to how much of it there is.
 //
@@ -398,7 +448,7 @@ void vertex() {
 }
 
 void fragment() {
-	float patches = snow_patches(UV * patch_scale);
+	float patches = snow_patches(UV * patch_scale + noise_offset);
 	// The fold the snow is sitting in. The map is tangent space, so it is taken
 	// back through the surface's own frame and compared against world up, which
 	// in fragment() is whichever direction VIEW_MATRIX sends (0, 1, 0).
