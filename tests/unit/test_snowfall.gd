@@ -1021,6 +1021,11 @@ func test_a_layer_that_can_no_longer_draw_a_flake_honestly_fades_out() -> void:
 ## correct in all three screenshots and wrong for the whole of every zoom. What
 ## this pins is exactly that difference: the geometry has to be STRICTLY between
 ## the two ends when the frame is, not merely equal to one of them.
+##
+## The LENS layer is what has to track, and it is the only one that can get this
+## wrong: a world box is a fixed volume of air, so there is nothing in it that
+## follows the frame and therefore nothing that can lag behind one. The test that
+## pins that is test_the_lens_box_tracks_the_frame_and_a_world_box_holds_a_volume_of_air.
 func test_the_snow_tracks_the_frame_between_the_stops_and_not_only_at_them() -> void:
 	var stops := _framing_stops()
 	stops.sort()
@@ -1028,7 +1033,7 @@ func test_the_snow_tracks_the_frame_between_the_stops_and_not_only_at_them() -> 
 		stops.size() >= 2,
 		"the rig offers %d framing(s); there is no zoom to track" % stops.size()
 	)
-	for path in [DISTANT_SCENE, NEAR_SCENE, LENS_SCENE]:
+	for path in [LENS_SCENE]:
 		var layer := _layer(path)
 		layer.set_snowfall_rate(1.0)
 		for index in range(stops.size() - 1):
@@ -1091,32 +1096,67 @@ func test_the_lens_emitter_never_moves_so_flakes_in_flight_are_not_dragged() -> 
 	lens.free()
 
 
-## Every layer, not only the one on the lens. Layers 1 and 2 are world-space and
-## were authored against the same single framing, so their emission volumes carry
-## the same dependency: a box sized to hold the frame's footprint at one framing
-## holds a shrinking fraction of it as the frame grows.
+## THE EMISSION BOX, and the two opposite rules it follows either side of the
+## lens. This is what stops the storm easing off when the player scrolls a wheel.
 ##
-## Stated as a SHARE of the frame rather than as metres, which is the property
-## that has to hold and the one that makes every authored number below it correct
-## at a framing nobody has invented yet.
-func test_every_layer_scales_its_emission_volume_with_the_frame() -> void:
+##   * A LENS box is a statement about the picture, so it tracks the frame: its
+##     share of the frame is constant and its metres are not.
+##   * A WORLD box is a volume of AIR holding a fixed number of flakes at a fixed
+##     density. Its METRES are constant and its share of the frame is not: a
+##     tighter frame simply sees less of the same field. That is what makes the
+##     snow on screen grow as the picture does -- more flakes, each smaller,
+##     netting the same ink -- rather than the same flakes getting smaller, which
+##     was measured at 62.8% of its coverage at the widest stop.
+##
+## The world box still grows if the frame outgrows it, because a picture whose
+## edges have no snow in them is where this whole task started.
+func test_the_lens_box_tracks_the_frame_and_a_world_box_holds_a_volume_of_air() -> void:
 	for path in [DISTANT_SCENE, NEAR_SCENE, LENS_SCENE]:
 		var layer := _layer(path)
-		var authored := -1.0
+		var first_share := -1.0
+		var first_metres := -1.0
 		for height in _framing_samples():
 			layer.set_frame_size(_frame(height))
 			layer._apply()
 			var material := layer.process_material as ParticleProcessMaterial
-			var share: float = material.emission_box_extents.y / height
-			if authored < 0.0:
-				authored = share
-			assert_almost_eq(
-				share, authored, 0.0001,
-				("%s emits over %.3f frame-heights at a %.1f m frame against %.3f at the "
-					+ "tightest: the volume is authored against one framing")
-					% [path, share, height, authored]
-			)
+			var metres: float = material.emission_box_extents.y
+			var share: float = metres / height
+			if first_share < 0.0:
+				first_share = share
+				first_metres = metres
+			if layer.camera_space:
+				assert_almost_eq(
+					share, first_share, 0.0001,
+					("%s emits over %.3f frame-heights at a %.1f m frame against %.3f at "
+						+ "the tightest: the lens box is not tracking the picture")
+						% [path, share, height, first_share]
+				)
+			else:
+				assert_almost_eq(
+					metres, first_metres, 0.0001,
+					("%s emits over %.2f m at a %.1f m frame against %.2f m at the "
+						+ "tightest: a world box is a volume of air and the camera moving "
+						+ "must not resize it") % [path, metres, height, first_metres]
+				)
 		layer.free()
+
+	# ...and it does grow, once the frame is genuinely bigger than the field it
+	# was authored to fill. The alternative is bare edges.
+	var distant := _layer(DISTANT_SCENE)
+	var outgrown: float = distant.authored_frame.y * 2.0
+	distant.set_frame_size(_frame(distant.authored_frame.y))
+	distant._apply()
+	var held: float = (distant.process_material as ParticleProcessMaterial).emission_box_extents.y
+	distant.set_frame_size(_frame(outgrown))
+	distant._apply()
+	var grown: float = (distant.process_material as ParticleProcessMaterial).emission_box_extents.y
+	assert_almost_eq(
+		grown, held * 2.0, 0.01,
+		("a frame twice the field the distant layer was authored to fill left its box at "
+			+ "%.2f m against %.2f: the picture would have edges with no snow in them")
+			% [grown, held]
+	)
+	distant.free()
 
 
 ## Where the frame comes from. Not from a copy of CameraRig's stops -- this file
@@ -1204,15 +1244,19 @@ func test_the_director_hands_every_layer_the_frame_and_scales_the_pullback() -> 
 		layer.frame_pixels(), _pixels(),
 		"the layer was never told how big the viewport is: %s" % layer.frame_pixels()
 	)
-	assert_true(
-		layer.frame_scale() > 1.0,
-		"a 17 m frame against a layer authored at %.1f m scaled by %.2f"
-			% [layer.authored_frame.y, layer.frame_scale()]
-	)
 	assert_almost_eq(
-		director.pullback_for(layer), layer.pullback_m * layer.frame_scale(), 0.001,
-		"the volume grew with the frame and kept its authored %.1f m pullback"
-			% layer.pullback_m
+		director.pullback_for(layer), layer.pullback_m * layer.geometry_scale(), 0.001,
+		"the volume and its pullback disagree about the framing: the box would sink "
+			+ "into the ground it is supposed to be falling onto"
+	)
+	# A frame the world layer's field already covers must not move its box at all,
+	# and therefore must not move the pullback either.
+	director.set_frame_size(_frame(layer.authored_frame.y * 0.5))
+	director.drive(layer)
+	assert_almost_eq(
+		director.pullback_for(layer), layer.pullback_m, 0.001,
+		"a tighter frame shortened the pullback to %.2f m: a world box is a volume of "
+			% director.pullback_for(layer) + "air and does not shrink when the camera zooms in"
 	)
 	layer.free()
 	director.free()

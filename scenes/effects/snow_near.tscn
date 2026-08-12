@@ -10,23 +10,27 @@
 ; vary each flake's own straight path. Not from turbulence: see the note in
 ; src/rendering/snowfall_layer.gd, which measured what that actually does.
 ;
-; THIS IS THE TIGHTEST BOX OF THE THREE and therefore the one that noticed the
+; THIS WAS THE TIGHTEST BOX OF THE THREE and therefore the one that noticed the
 ; camera growing a second and third framing: 22 m across was measured to just
-; hold the ground the frame shows at `authored_frame`, so at the widest stop it
+; hold the ground the frame shows at the old framing, so at the widest stop it
 ; held barely six tenths of it and the near snow simply stopped at the edges of
-; the picture. Every metre here now scales with the frame the camera is actually
-; drawing, so "just holds it" holds at every framing instead of at one.
+; the picture.
+;
+; It is now a fixed VOLUME OF AIR sized for the widest frame the camera offers --
+; see the note in snow_distant.tscn, which carries the reasoning and the
+; measurements for both world layers. 35.6 x 24.3 x 35.6 is the old 22 x 15 x 22
+; at that frame, and 1073 is the old 520 scaled by the box's cross-section.
 
 [ext_resource type="Script" path="res://src/rendering/snowfall_layer.gd" id="1_layer"]
 
 [node name="SnowNear" type="GPUParticles3D"]
 script = ExtResource("1_layer")
 camera_space = false
-volume_size = Vector3(22, 15, 22)
-authored_frame = Vector2(16.8, 10.5)
-pullback_m = 9.0
-flakes_clear = 60
-flakes_blizzard = 520
+volume_size = Vector3(35.6, 24.3, 35.6)
+authored_frame = Vector2(27.2, 17)
+pullback_m = 14.6
+flakes_clear = 124
+flakes_blizzard = 1073
 life_seconds = 7.0
 flake_size_min = 0.05
 flake_size_max = 0.09

@@ -295,7 +295,7 @@ static func frame_size(camera: Camera3D, viewport_pixels: Vector2) -> Vector2:
 func pullback_for(layer: SnowfallLayer) -> float:
 	if layer == null:
 		return 0.0
-	return layer.pullback_m * layer.frame_scale()
+	return layer.pullback_m * layer.geometry_scale()
 
 
 # --- driving it -------------------------------------------------------------

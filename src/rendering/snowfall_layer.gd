@@ -51,9 +51,11 @@ extends GPUParticles3D
 ## TWO SCALES, AND WHICH ONE A NUMBER TAKES IS DECIDED BY WHAT IT IS
 ##
 ## The EMISSION GEOMETRY -- the box, where it sits, how far back up the view axis
-## it is pulled -- scales with the frame on every layer. It is not a physical
-## fact, it is a statement about coverage: the box exists to hold the picture, so
-## it has to grow when the picture does. frame_scale().
+## it is pulled -- takes geometry_scale(). On the lens that is the frame, because
+## a camera-space box is a statement about the picture. In the world it is FIXED:
+## the box is a volume of air holding a fixed number of flakes at a fixed density,
+## sized to cover the widest frame, and a tighter frame simply sees less of it.
+## That is what makes "you are seeing more of the same snowstorm" literally true.
 ##
 ## The FLAKE -- its size, its fall, its drift -- scales only on the lens layer.
 ## flake_scale(), and the split is the whole of the art direction:
@@ -397,6 +399,30 @@ func flake_scale() -> float:
 	return frame_scale() if camera_space else 1.0
 
 
+## What the EMISSION BOX scales by, which turns out not to be frame_scale()
+## either -- and the reason is the whole of why the snow no longer thins out when
+## the player zooms.
+##
+## A WORLD LAYER'S BOX IS A VOLUME OF AIR, NOT A VIEWPORT. It holds a fixed
+## number of flakes at a fixed density, sized to cover the widest frame; a
+## tighter frame simply sees less of it. That is what makes "you are seeing more
+## of the same snowstorm" literally true: zoom out and the frame sweeps a larger
+## cross-section of the same field, so it catches proportionally more flakes,
+## each of them smaller, and the ink on screen stays put.
+##
+## A box that scaled WITH the frame did the opposite. It kept the same number of
+## flakes in the picture while each one shrank, so the storm visibly eased off as
+## the player pulled back -- measured at 62.8% of its coverage at the widest stop.
+## Flake size was right by then and the weather still changed character when he
+## touched the camera; the defect had only moved axis.
+##
+## It still grows if the frame outgrows it, because the alternative is a picture
+## whose edges have no snow in them -- which is where this whole task started.
+func geometry_scale() -> float:
+	var scale := frame_scale()
+	return scale if camera_space else maxf(1.0, scale)
+
+
 ## How many pixels a metre of frame height is worth right now. Zero when the
 ## viewport is unknown, which switches the legibility floor off rather than
 ## guessing at it.
@@ -441,7 +467,7 @@ func legibility_fade(largest_m: float) -> float:
 ## Pure arithmetic on the frame, which is what makes the whole of this checkable
 ## at any framing without a viewport, a camera or a rendered frame.
 func emission_extents() -> Vector3:
-	var scale := frame_scale()
+	var scale := geometry_scale()
 	var half := volume_size * 0.5 * scale
 	if not camera_space:
 		return half
@@ -463,7 +489,7 @@ func emission_extents() -> Vector3:
 func emission_offset() -> Vector3:
 	if not camera_space:
 		return Vector3.ZERO
-	var scale := frame_scale()
+	var scale := geometry_scale()
 	var band := volume_size.y * scale
 	# THE POINT OF THE EXERCISE. The bottom of the band sits above the top edge of
 	# the picture by the clearance, so a flake is born out of shot and drifts in.
@@ -477,7 +503,7 @@ func emission_offset() -> Vector3:
 ## at one and not the other leaves a bare strip down one side of the frame that
 ## no still can show.
 func _lens_span() -> float:
-	return effective_frame().x + (lens_lead_m + lens_margin_m) * frame_scale()
+	return effective_frame().x + (lens_lead_m + lens_margin_m) * geometry_scale()
 
 
 ## ...and it is not centred on the picture. The long overhang goes on the side
@@ -489,7 +515,7 @@ func _lens_centre() -> float:
 	if absf(across) < 0.0001:
 		# Nothing blowing, so neither side is upwind and the overhang splits.
 		return 0.0
-	var scale := frame_scale()
+	var scale := geometry_scale()
 	return -signf(across) * (lens_lead_m - lens_margin_m) * 0.5 * scale
 
 

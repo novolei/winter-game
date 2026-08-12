@@ -5,28 +5,37 @@
 ; script's defaults so the three layers can be read side by side, which is how
 ; the six lighting presets are authored and for the same reason.
 ;
-; The document asks for 1000-1800 flakes in a 60 x 25 x 60 box. This is 1200 in
-; a 36 x 22 x 36 one, which is a THIRD of the volume, because the camera is
-; orthographic: the frame is a 17 m by 11 m slab lying along the view axis, and
-; a box three times wider than the slab spends three quarters of its flakes
-; outside the picture. Same density on screen, a third of the particles.
+; THE BOX IS A VOLUME OF AIR, NOT A VIEWPORT. It holds a fixed number of flakes
+; at a fixed density and it does NOT move when the camera does: a tighter frame
+; sweeps a smaller cross-section of the same field and simply catches fewer of
+; them. That is what makes "you are seeing more of the same snowstorm" literally
+; true, and it is the only arrangement under which the storm does not appear to
+; ease off when the player scrolls a wheel.
 ;
-; That "17 m by 11 m" is the frame this box was measured against, and the camera
-; no longer has only one -- so it is stated below as `authored_frame` and every
-; metre here is scaled by whatever the camera is actually drawing. The box grows
-; in all three axes at once, which is what keeps 1200 flakes reading as the same
-; density on screen at any framing rather than thinning out as the frame widens.
+; So it is sized for the WIDEST frame the camera offers -- `authored_frame` below
+; -- rather than for the tightest, and it grows further only if some later stop
+; outgrows it. 58.3 x 35.6 x 58.3 is the old 36 x 22 x 36 at that frame.
+;
+; The count is the old 1200 scaled by the box's CROSS-SECTION, not its volume:
+; what the picture catches is density times frame area times the depth of field
+; the slab passes through, and the depth grew too. Scaling by volume was tried
+; first and measured 65% too much snow at the tight framing. 2477 measures the
+; tight framing at 1126 units of ink against the 1057 it had before any of this,
+; and the three stops at 100 / 95.8 / 101.1 -- against 100 / 76.7 / 62.8 before.
+;
+; The document asks for 1000-1800 flakes in a 60 x 25 x 60 box; this is a larger
+; box than that now, and the density is what was preserved rather than the count.
 
 [ext_resource type="Script" path="res://src/rendering/snowfall_layer.gd" id="1_layer"]
 
 [node name="SnowDistant" type="GPUParticles3D"]
 script = ExtResource("1_layer")
 camera_space = false
-volume_size = Vector3(36, 22, 36)
-authored_frame = Vector2(16.8, 10.5)
-pullback_m = 16.0
-flakes_clear = 90
-flakes_blizzard = 1200
+volume_size = Vector3(58.3, 35.6, 58.3)
+authored_frame = Vector2(27.2, 17)
+pullback_m = 25.9
+flakes_clear = 186
+flakes_blizzard = 2477
 life_seconds = 11.0
 flake_size_min = 0.035
 flake_size_max = 0.055
