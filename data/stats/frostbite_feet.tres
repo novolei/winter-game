@@ -21,15 +21,15 @@ value = 1.1
 script = ExtResource("2_30ocg")
 watch_stat = &"frostbite_feet"
 threshold = 0.5
-target_stat = &"locomotion:speed"
-value = 0.85
+target_stat = &"locomotion:run_snow_limit"
+value = 0.5
 
 [sub_resource type="Resource" id="Resource_p8lo0"]
 script = ExtResource("2_30ocg")
 watch_stat = &"frostbite_feet"
 threshold = 0.2
-target_stat = &"locomotion:speed"
-value = 0.8
+target_stat = &"locomotion:run_speed"
+value = 0.0
 
 [resource]
 script = ExtResource("1_bxnad")

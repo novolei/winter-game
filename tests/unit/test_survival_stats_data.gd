@@ -40,7 +40,7 @@ const TUNING := {
 ## owns that behaviour reads it back with channel_value(). Adding to this list
 ## is a decision, which is why the list is here and not inferred.
 const BEHAVIOUR_CHANNELS := [
-	"locomotion",  # speed, run_speed, snow_cost
+	"locomotion",  # run_speed, run_snow_limit -- both GATES; see below
 	"ignition",    # how long lighting a fire takes
 	"aim",         # weapon steadiness
 	"vision",      # focus -- GDD section 5's 画面轻微失焦
@@ -297,9 +297,19 @@ func test_thirst_slows_and_then_stops_fatigue_recovery() -> void:
 		"GDD 5: 归零后果 -- 疲劳无法恢复"
 	)
 
-func test_fatigue_costs_speed_deep_snow_and_finally_running() -> void:
+## GDD 5's whole fatigue row, and every step of it is now a CAPABILITY.
+##
+## `locomotion:speed` and `locomotion:snow_cost` used to carry 移速下降 and
+## 雪深惩罚加剧 as plain multipliers. The owner's ruling is that only snow depth
+## and terrain slope may scale movement speed, so the body gates instead: a tired
+## man loses the run in half the snow a fresh man manages, and an empty bar takes
+## it away outright. Nothing here scales a speed any more.
+func test_fatigue_costs_the_run_in_deep_snow_and_finally_the_run_itself() -> void:
 	var system = _build()
-	assert_almost_eq(system.channel_value(&"locomotion:speed", 1.0), 1.0, 0.0001, "rested, he moves at full speed")
+	assert_almost_eq(
+		system.channel_value(&"locomotion:run_snow_limit", 1.0), 1.0, 0.0001,
+		"rested, he runs through as much snow as the body allows"
+	)
 	assert_almost_eq(system.channel_value(&"locomotion:run_speed", 1.0), 1.0, 0.0001, "and can run")
 	# Fatigue is the slowest clock in the model, so everything else has to be
 	# held up while it runs down.
@@ -308,13 +318,16 @@ func test_fatigue_costs_speed_deep_snow_and_finally_running() -> void:
 	system.push_modifier(&"thirst:recovery", &"harness", Modifier.Operation.ADD, 1.0)
 	system.advance(1300.0)  # fatigue 1800 s * 0.7 = 1260 s to fall under 0.30
 	assert_true(system.value_of(&"fatigue") < 0.3, "precondition: tired")
+	# One row answers both halves of GDD 5's 移速下降、雪深惩罚加剧: the snow he
+	# can still run through halves, which is both a worsened snow penalty and a
+	# slower man, stated as something he can notice happening.
 	assert_almost_eq(
-		system.channel_value(&"locomotion:speed", 1.0), 0.85, 0.0001,
-		"GDD 5: 疲劳高 -> 移速下降"
+		system.channel_value(&"locomotion:run_snow_limit", 1.0), 0.5, 0.0001,
+		"GDD 5: 疲劳高 -> 移速下降、雪深惩罚加剧, as a gate"
 	)
 	assert_almost_eq(
-		system.channel_value(&"locomotion:snow_cost", 1.0), 1.35, 0.0001,
-		"GDD 5: 雪深惩罚加剧"
+		system.channel_value(&"locomotion:run_speed", 1.0), 1.0, 0.0001,
+		"...but a quarter-full bar is not 归零: he can still run on clear ground"
 	)
 	system.advance(600.0)  # and to the floor
 	assert_almost_eq(system.value_of(&"fatigue"), 0.0, 0.0001, "precondition: spent")
@@ -405,25 +418,48 @@ func test_frostbitten_hands_slow_the_fire_and_spoil_the_aim() -> void:
 		"the second tier compounds: 0.6 * 0.5"
 	)
 
+## GDD 5: 足部冻伤 -> 移速永久下降，直到在火边治疗. Two stages, both capabilities:
+## sore feet cannot carry a run through a drift, ruined feet cannot carry one at
+## all. What is permanent is the lost RUN rather than a quietly smaller number.
 func test_frostbitten_feet_cost_movement_until_they_are_treated() -> void:
 	var system = _build()
 	system.push_modifier(&"frostbite_feet", &"harness", Modifier.Operation.ADD, 0.1)
 	system.advance(6.0)
 	system.remove_source(&"harness")
+	assert_true(system.value_of(&"frostbite_feet") < 0.5, "precondition: sore feet")
 	assert_almost_eq(
-		system.channel_value(&"locomotion:speed", 1.0), 0.85, 0.0001,
-		"GDD 5: 足部冻伤 -> 移速下降"
+		system.channel_value(&"locomotion:run_snow_limit", 1.0), 0.5, 0.0001,
+		"GDD 5: 足部冻伤 -> 移速下降, as a gate"
+	)
+	assert_almost_eq(
+		system.channel_value(&"locomotion:run_speed", 1.0), 1.0, 0.0001,
+		"sore feet are not ruined feet: he can still run on clear ground"
 	)
 	system.advance(120.0)
 	assert_almost_eq(
-		system.channel_value(&"locomotion:speed", 1.0), 0.85, 0.0001,
+		system.channel_value(&"locomotion:run_snow_limit", 1.0), 0.5, 0.0001,
 		"...permanently: nothing gives a limb back on its own"
 	)
+
+	# ...and worse feet are genuinely worse.
+	system.push_modifier(&"frostbite_feet", &"harness", Modifier.Operation.ADD, 0.1)
+	system.advance(3.0)
+	system.remove_source(&"harness")
+	assert_true(system.value_of(&"frostbite_feet") < 0.2, "precondition: ruined feet")
+	assert_almost_eq(
+		system.channel_value(&"locomotion:run_speed", 1.0), 0.0, 0.0001,
+		"ruined feet still leave him a run"
+	)
+
 	system.restore(&"frostbite_feet", 1.0)
 	system.advance(0.25)
 	assert_almost_eq(
-		system.channel_value(&"locomotion:speed", 1.0), 1.0, 0.0001,
+		system.channel_value(&"locomotion:run_snow_limit", 1.0), 1.0, 0.0001,
 		"...until it is treated at a fire"
+	)
+	assert_almost_eq(
+		system.channel_value(&"locomotion:run_speed", 1.0), 1.0, 0.0001,
+		"...and then he can run again"
 	)
 
 # --- what the numbers mean in play ------------------------------------------

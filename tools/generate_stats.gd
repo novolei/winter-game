@@ -87,13 +87,38 @@ const BELOW := 0  # ThresholdEffect.Comparison.BELOW
 ## A target is "<stat>" (its drain), "<stat>:recovery", or a behaviour channel
 ## belonging to whoever owns that behaviour. The behaviour channels used here:
 ##
-##   locomotion:speed      walk/run speed multiplier
-##   locomotion:run_speed  0 means running is off
-##   locomotion:snow_cost  how much deep snow costs
+##   locomotion:run_speed       0 means running is off entirely
+##   locomotion:run_snow_limit  scales how deep the snow may be before the run
+##                              goes; 0.5 means he loses it in half the depth a
+##                              healthy man manages
 ##   ignition:speed        how fast a fire can be lit
 ##   aim:steadiness        weapon steadiness
 ##   vision:focus          GDD 5's 画面轻微失焦
 ##   breath:rate           GDD 9's 呼吸变浅变快
+##
+## ---------------------------------------------------------------------------
+## THE BODY GATES; IT DOES NOT SCALE
+## ---------------------------------------------------------------------------
+## `locomotion:speed` and `locomotion:snow_cost` used to live here as plain
+## multipliers -- 0.85 off the top speed when tired, 1.35 on the snow penalty --
+## and BOTH ARE GONE. The owner's ruling is that the only things which scale
+## movement speed are snow depth and terrain slope; the GDD requires fatigue and
+## frostbite to affect locomotion. Both stand, because they are different kinds
+## of thing:
+##
+##   the TERRAIN says how fast the ground lets you move.  It SCALES the number.
+##   the BODY says how much of your capability is left.   It GATES, and the
+##                                                        number is untouched.
+##
+## The pattern was already here for fatigue at zero -- 无法奔跑 takes the RUN
+## away rather than scaling anything -- and every locomotion effect is now
+## written in that vocabulary.
+##
+## It is also better design, and that is the argument that decides it rather than
+## document-reconciliation. "You can no longer run" is a legible event the player
+## understands and can act on. A silent 15% speed reduction is something a player
+## feels as the game being unresponsive and cannot name -- which is exactly the
+## complaint that started the locomotion rework.
 const STATS := [
 	{
 		"id": &"core_temperature",
@@ -148,10 +173,16 @@ const STATS := [
 		"lifetime": 1800.0,
 		"lethal": false,
 		"effects": [
-			# GDD 5: 疲劳高 -> 移速下降、雪深惩罚加剧.
-			[0.30, &"locomotion:speed", MUL, 0.85],
-			[0.30, &"locomotion:snow_cost", MUL, 1.35],
-			[0.10, &"locomotion:speed", MUL, 0.85],
+			# GDD 5: 疲劳高 -> 移速下降、雪深惩罚加剧. ONE ROW ANSWERS BOTH, which
+			# is the happy part of the gate rewrite rather than a shortcut.
+			# "You lose the run in half the snow a fresh man manages" IS the
+			# 雪深惩罚加剧 -- the snow penalty has genuinely worsened for him --
+			# and it is also the 移速下降, because the gait he is left with is
+			# the walk. Two graded scalers collapse into one legible capability.
+			[0.30, &"locomotion:run_snow_limit", MUL, 0.5],
+			# Compounds with the row above to 0.25, so a badly tired man keeps
+			# the run only on ground that is nearly bare.
+			[0.10, &"locomotion:run_snow_limit", MUL, 0.5],
 			# 归零后果: 无法奔跑. A multiply by zero rather than an OVERRIDE:
 			# ModifierStack's override slot cannot tell "override with NAN" from
 			# "no override" (DEFERRED W2-2), and nothing here needs it.
@@ -189,8 +220,13 @@ const STATS := [
 			# 足部冻伤 -> 移速永久下降，直到在火边治疗. Permanent because nothing
 			# restores a limb: only SurvivalSystem.restore() does, and that is
 			# what treating it at a fire will call.
-			[0.50, &"locomotion:speed", MUL, 0.85],
-			[0.20, &"locomotion:speed", MUL, 0.80],
+			#
+			# Two stages, the same shape as fatigue: sore feet cannot carry a run
+			# through a drift, ruined feet cannot carry one at all. Losing the run
+			# IS the 移速下降 the GDD asks for -- stated as something the player
+			# can notice happening, and can walk to a fire to undo.
+			[0.50, &"locomotion:run_snow_limit", MUL, 0.5],
+			[0.20, &"locomotion:run_speed", MUL, 0.0],
 		],
 	},
 ]

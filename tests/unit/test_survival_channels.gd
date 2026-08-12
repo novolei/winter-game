@@ -8,10 +8,29 @@ extends TestCase
 ## controller. Four of them now have a consumer, and these are the tests that
 ## say so:
 ##
-##   locomotion:speed      -> PlayerController.top_speed_at()
-##   locomotion:run_speed  -> PlayerController.run_ceiling(), and so can_run()
-##   locomotion:snow_cost  -> PlayerController.snow_factor()
-##   breath:rate           -> BreathFog, through PlayerController
+##   locomotion:run_speed       -> PlayerController.run_ceiling(), and so can_run()
+##   locomotion:run_snow_limit  -> PlayerController.run_snow_ceiling(), and so
+##                                 can_run()
+##   breath:rate                -> BreathFog, through PlayerController
+##
+## ---------------------------------------------------------------------------
+## THE BODY GATES; IT DOES NOT SCALE
+## ---------------------------------------------------------------------------
+## `locomotion:speed` and `locomotion:snow_cost` were both plain multipliers and
+## both are GONE, by the owner's ruling that only snow depth and terrain slope
+## scale movement speed. The GDD's requirements survive as capabilities instead:
+##
+##   疲劳高 -> 移速下降、雪深惩罚加剧   becomes "a tired man loses the run in half
+##                                     the snow depth a fresh man manages"
+##   归零 -> 无法奔跑                   unchanged; it was already a gate
+##   足部冻伤 -> 移速永久下降           becomes "sore feet cannot carry a run
+##                                     through a drift, ruined feet cannot carry
+##                                     one at all"
+##
+## The four tests below that used to assert a multiply now assert the gate. That
+## is a design change and not a weakening -- each one is named for what it now
+## checks, and test_the_body_never_scales_the_number_only_gates_the_run is the
+## new one that pins the rule itself.
 ##
 ## ignition:speed, aim:steadiness and vision:focus are still published and still
 ## unconsumed: there is no fire-lighting action, no weapon and no
@@ -125,38 +144,89 @@ func test_a_body_with_no_survival_model_at_all_still_walks() -> void:
 		0.0001
 	)
 
-## GDD section 5: 疲劳高 -> 移速下降. locomotion:speed is 0.85 below a third of
-## the bar.
-func test_fatigue_takes_speed_off_clear_ground() -> void:
+## GDD section 5: 疲劳高 -> 移速下降. Restated as the gate it now is.
+##
+## What this used to assert -- `tired == fresh * 0.85` -- was the multiply, and
+## the multiply is gone. The requirement it was defending has not been dropped:
+## a tired man is genuinely worse at moving. He is worse at it by losing the RUN,
+## which is a thing the player can notice happening.
+func test_fatigue_takes_the_run_away_rather_than_scaling_the_walk() -> void:
 	var player := _build_player()
-	var fresh: float = player.top_speed_at(0.0)
+	var fresh_walk: float = player.top_speed_at(0.0, 0.0, 0.0)
+	var fresh_run: float = player.top_speed_at(0.0, 0.0, 1.0)
 	_drop_to(&"fatigue", 0.25)
-	var tired: float = player.top_speed_at(0.0)
 	assert_almost_eq(
-		tired,
-		fresh * 0.85,
+		player.top_speed_at(0.0, 0.0, 0.0),
+		fresh_walk,
 		0.0001,
-		"a tired man moves at %f against a fresh one's %f" % [tired, fresh]
+		"a tired man's WALK was scaled to %f from %f; the body must gate, not scale"
+			% [player.top_speed_at(0.0, 0.0, 0.0), fresh_walk]
+	)
+	assert_almost_eq(
+		player.top_speed_at(0.0, 0.0, 1.0),
+		fresh_run,
+		0.0001,
+		"a tired man's RUN was scaled rather than taken away"
+	)
+	# ...and he has still lost something real: the snow he can run through.
+	assert_true(
+		player.run_snow_ceiling() < player.run_snow_limit - 0.0001,
+		"fatigue at a quarter of a bar costs him nothing at all: the run still "
+			+ "reaches a wade factor of %f" % player.run_snow_ceiling()
 	)
 
 ## ...and 雪深惩罚加剧, which is the half that is easy to leave out. It is not
-## enough that a tired man is slower: he has to lose MORE in deep snow than on
-## clear ground, or locomotion:snow_cost is dead data.
-func test_fatigue_costs_more_in_deep_snow_than_on_clear_ground() -> void:
+## enough that a tired man has lost something: the thing he loses has to be
+## SNOW-DEPENDENT, or the GDD's "the snow penalty worsens" is dead data.
+##
+## Where it used to scale the wade factor, it now moves the depth at which the
+## run goes. Same requirement, stated as a capability.
+func test_a_tired_man_loses_the_run_in_shallower_snow() -> void:
 	var player := _build_player()
-	var fresh_clear: float = player.top_speed_at(0.0)
-	var fresh_deep: float = player.top_speed_at(0.5)
+	var fresh_limit: float = player.run_snow_ceiling()
+	assert_true(fresh_limit > 0.0, "a fresh man cannot run in any snow at all")
+	# A depth a fresh man runs through, chosen from his own limit rather than
+	# typed in, so retuning run_snow_limit does not silently gut this test.
+	var wade := fresh_limit * 0.75
+	assert_true(player.can_run(wade), "a fresh man cannot run at wade %f" % wade)
+
 	_drop_to(&"fatigue", 0.25)
-	var tired_clear: float = player.top_speed_at(0.0)
-	var tired_deep: float = player.top_speed_at(0.5)
-	var clear_ratio := tired_clear / fresh_clear
-	var deep_ratio := tired_deep / fresh_deep
-	assert_true(
-		deep_ratio < clear_ratio - 0.02,
-		"fatigue costs %.3f of the speed on clear ground and %.3f in half a drift; "
-			% [1.0 - clear_ratio, 1.0 - deep_ratio]
-			+ "GDD 5's 雪深惩罚加剧 says the drift must cost more"
+	assert_false(
+		player.can_run(wade),
+		"a tired man still runs through wade %f, so GDD 5's 雪深惩罚加剧 is dead data"
+			% wade
 	)
+	assert_true(
+		player.can_run(0.0),
+		"a tired man cannot run on bare ground either; that is 无法奔跑, which "
+			+ "belongs at an EMPTY bar and not a quarter-full one"
+	)
+
+## The rule itself, as one test. Whatever the body is doing to itself, the number
+## the terrain produces must be untouched -- 只受到雪深度和地形坡度的影响.
+##
+## Swept over a wrecked body rather than a healthy one, because a healthy body
+## passes this vacuously: every channel is 1 and any multiply would be invisible.
+func test_the_body_never_scales_the_number_only_gates_the_run() -> void:
+	var player := _build_player()
+	var bare := PlayerController.new()
+	_drop_to(&"fatigue", 0.01)
+	_drop_to(&"frostbite_feet", 0.15)
+	for wade in [0.0, 0.5, 1.0]:
+		for grade in [-0.2, 0.0, 0.3]:
+			assert_almost_eq(
+				player.top_speed_at(wade, grade, 0.0),
+				bare.top_speed_at(wade, grade, 0.0),
+				0.0001,
+				"an exhausted, frostbitten man walks at %f where an untouched body "
+					% player.top_speed_at(wade, grade, 0.0)
+					+ "walks at %f (wade %.1f, grade %+.2f)"
+						% [bare.top_speed_at(wade, grade, 0.0), wade, grade]
+			)
+	bare.free()
+	# ...and he has lost the run entirely, which is the whole of what the body
+	# is allowed to do.
+	assert_false(player.can_run(0.0), "a wrecked body can still be promoted to a run")
 
 ## 归零后果: 无法奔跑. locomotion:run_speed goes to zero -- and that has to leave
 ## a man who cannot RUN, not a man who cannot MOVE. A body pinned at zero speed
@@ -164,16 +234,19 @@ func test_fatigue_costs_more_in_deep_snow_than_on_clear_ground() -> void:
 func test_an_exhausted_man_can_still_walk_but_cannot_run() -> void:
 	var player := _build_player()
 	_drop_to(&"fatigue", 0.01)
-	var spent: float = player.top_speed_at(0.0)
+	var spent: float = player.top_speed_at(0.0, 0.0, 1.0)
 	assert_true(spent > 0.0, "an exhausted man cannot move at all: %f m/s" % spent)
-	assert_true(
-		spent < player.walk_speed,
-		"an exhausted man still manages %f, which is more than his own walk" % spent
+	# Exactly his walk, and no longer "a bit under it": the 0.85 that used to
+	# shave the number is gone, because the body gates rather than scales.
+	assert_almost_eq(
+		spent,
+		player.walk_speed,
+		0.0001,
+		"an exhausted man asked for a run manages %f, which is neither his walk "
+			% spent
+			+ "(%f) nor nothing" % player.walk_speed
 	)
-	assert_true(
-		spent < player.run_speed * 0.35,
-		"an exhausted man still runs at %f of his top speed" % (spent / player.run_speed)
-	)
+	assert_false(player.can_run(0.0), "an exhausted man can still be promoted to a run")
 
 ## However the channels stack, deeper snow must never be faster than clear
 ## ground. It is not obvious that it cannot: the top speed on clear ground falls
@@ -194,16 +267,37 @@ func test_deep_snow_is_never_faster_than_clear_ground() -> void:
 		)
 		previous = here
 
-## 足部冻伤 -> 移速永久下降. The same channel from a different stat, which is the
-## point of there being a channel at all.
-func test_frostbitten_feet_cost_speed_through_the_same_channel() -> void:
+## 足部冻伤 -> 移速永久下降. The same gates from a different stat, which is the
+## point of there being channels at all -- nothing in the player controller knows
+## the word "frostbite".
+##
+## Two stages, so worse feet are genuinely worse: sore feet cannot carry a run
+## through a drift, ruined feet cannot carry one at all.
+func test_frostbitten_feet_take_the_run_away_rather_than_the_speed() -> void:
 	var player := _build_player()
 	var whole: float = player.top_speed_at(0.0)
+	var whole_limit: float = player.run_snow_ceiling()
+
 	_drop_to(&"frostbite_feet", 0.4)
-	var ruined: float = player.top_speed_at(0.0)
+	assert_almost_eq(
+		player.top_speed_at(0.0),
+		whole,
+		0.0001,
+		"ruined feet scaled the walk to %f from %f" % [player.top_speed_at(0.0), whole]
+	)
 	assert_true(
-		ruined < whole,
-		"ruined feet cost nothing: %f against %f" % [ruined, whole]
+		player.run_snow_ceiling() < whole_limit - 0.0001,
+		"sore feet cost nothing: the run still reaches wade %f" % player.run_snow_ceiling()
+	)
+	assert_true(player.can_run(0.0), "sore feet already took the run away entirely")
+
+	_drop_to(&"frostbite_feet", 0.15)
+	assert_false(player.can_run(0.0), "ruined feet still leave him a run on bare ground")
+	assert_almost_eq(
+		player.top_speed_at(0.0),
+		whole,
+		0.0001,
+		"ruined feet scaled the walk; 移速永久下降 is the lost RUN, not a smaller number"
 	)
 
 # --- the readouts, and the trap ---------------------------------------------

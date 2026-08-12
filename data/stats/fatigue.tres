@@ -7,24 +7,17 @@
 script = ExtResource("2_4cflu")
 watch_stat = &"fatigue"
 threshold = 0.3
-target_stat = &"locomotion:speed"
-value = 0.85
+target_stat = &"locomotion:run_snow_limit"
+value = 0.5
 
 [sub_resource type="Resource" id="Resource_xxdxc"]
 script = ExtResource("2_4cflu")
 watch_stat = &"fatigue"
-threshold = 0.3
-target_stat = &"locomotion:snow_cost"
-value = 1.35
+threshold = 0.1
+target_stat = &"locomotion:run_snow_limit"
+value = 0.5
 
 [sub_resource type="Resource" id="Resource_x2uox"]
-script = ExtResource("2_4cflu")
-watch_stat = &"fatigue"
-threshold = 0.1
-target_stat = &"locomotion:speed"
-value = 0.85
-
-[sub_resource type="Resource" id="Resource_cg4tq"]
 script = ExtResource("2_4cflu")
 watch_stat = &"fatigue"
 threshold = 0.02
@@ -36,4 +29,4 @@ script = ExtResource("1_ofrj4")
 id = &"fatigue"
 display_name = "Fatigue"
 base_decay_per_second = 0.0005555555555555556
-threshold_effects = Array[ExtResource("2_4cflu")]([SubResource("Resource_kngwp"), SubResource("Resource_xxdxc"), SubResource("Resource_x2uox"), SubResource("Resource_cg4tq")])
+threshold_effects = Array[ExtResource("2_4cflu")]([SubResource("Resource_kngwp"), SubResource("Resource_xxdxc"), SubResource("Resource_x2uox")])

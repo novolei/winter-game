@@ -192,6 +192,11 @@ const BREATH_MOUTH_OFFSET := Vector3(0.0, 0.16, 0.17)
 ##
 ## THIS IS WHAT MAKES THE PACKED LAYER LOAD-BEARING. A path beaten flat drops the
 ## depth back under the gate, and running it again is the reward.
+##
+## This is the HEALTHY body's limit. The survival model scales it down through
+## `locomotion:run_snow_limit` -- see run_snow_ceiling(), which is where GDD
+## section 5's 雪深惩罚加剧 lives now that no body state is allowed to scale a
+## speed.
 @export var run_snow_limit := 0.6
 
 ## ---------------------------------------------------------------------------
@@ -240,6 +245,17 @@ const SLOPE_FLOOR := 0.25
 ## ---------------------------------------------------------------------------
 ## HOW HARD THE TERRAIN IS ALLOWED TO BITE
 ## ---------------------------------------------------------------------------
+## TO TUNE THIS YOU DO NOT NEED THE MATHS BELOW. It is one dial for how much snow
+## and slope are allowed to slow him down:
+##
+##     0.0  terrain does nothing; he moves at the same speed everywhere
+##     0.55 SHIPPED -- the worst ground in the game leaves him half his pace
+##     1.0  raw Tobler; the worst ground leaves him an eighth of it, a crawl
+##
+## Raise it if the world feels too easy to cross, lower it if he feels bogged
+## down. Nothing else needs to change with it, and
+## tools/measure_locomotion.gd prints the whole resulting speed table.
+##
 ##     terrain_factor = lerp(1, snow_factor * slope_factor, terrain_severity)
 ##
 ## DO NOT "FIX" THIS BACK TO RAW TOBLER. It is not a fudge covering a modelling
@@ -279,6 +295,10 @@ const SLOPE_FLOOR := 0.25
 ## ---------------------------------------------------------------------------
 ## How long he has to keep going before the walk becomes a run, in seconds.
 ##
+## TO TUNE: lower it and he breaks into a run almost as soon as you press a
+## direction; raise it and he only runs once you have clearly committed to going
+## somewhere. 0 promotes him immediately. Nothing else moves with it.
+##
 ## The owner asked for the threshold to be a user setting and for a sensible
 ## default to be picked now. 1.2 s is about two paces at walking speed: long
 ## enough that crossing a room, stepping round a doorway or nudging into place
@@ -292,6 +312,10 @@ const SLOPE_FLOOR := 0.25
 
 ## How far off his own heading counts as a change of direction rather than a
 ## curve, in degrees.
+##
+## TO TUNE: lower it and he drops out of a run at the slightest turn, so running
+## only survives a straight line; raise it and only a full about-face stops him.
+## 70 is "a corner keeps the run, a flick or a reversal does not".
 ##
 ## Measured against a SMOOTHED heading (auto_run_heading_smoothing below) rather
 ## than against the last frame, because at 60 Hz a single frame of even a violent
@@ -1074,12 +1098,12 @@ static func grade_along(gradient: Vector2, heading: Vector3) -> float:
 ## What the snow leaves him, 1 on bare ground down to deep_snow_factor at wading
 ## depth.
 ##
-## `locomotion:snow_cost` scales the wade factor on the way in, which is GDD
-## section 5's 雪深惩罚加剧: deep snow costs a tired man more than a fresh one,
-## while bare ground (wade 0) still costs nothing at all.
+## A PURE FUNCTION OF THE GROUND. It used to read `locomotion:snow_cost` so a
+## tired man was slowed more by the same drift; that channel is gone. The body
+## does not get to change what the terrain costs -- see can_run() for where GDD
+## section 5's 雪深惩罚加剧 lives now.
 func snow_factor(wade: float) -> float:
-	var cost := clampf(_channel(&"locomotion:snow_cost", clampf(wade, 0.0, 1.0)), 0.0, 1.0)
-	return lerpf(1.0, deep_snow_factor, cost)
+	return lerpf(1.0, deep_snow_factor, clampf(wade, 0.0, 1.0))
 
 
 ## Everything the ground does to him, as one multiplier, compressed.
@@ -1104,10 +1128,23 @@ func run_ceiling() -> float:
 	return maxf(walk_speed, _channel(&"locomotion:run_speed", run_speed))
 
 
-## Whether there is a run to be had here at all. Two gates, neither of them a
-## speed: snow past run_snow_limit, and an empty fatigue bar.
+## How deep the snow may be before the run goes, after the body has had its say.
+##
+## WHERE GDD SECTION 5's 雪深惩罚加剧 LIVES. `locomotion:run_snow_limit` is
+## scaled down by fatigue and by ruined feet, so a tired man loses the run in
+## snow a fresh man still runs through -- the snow penalty has genuinely worsened
+## for him, and it has done so without any body state touching the speed itself.
+func run_snow_ceiling() -> float:
+	return clampf(_channel(&"locomotion:run_snow_limit", run_snow_limit), 0.0, 1.0)
+
+
+## Whether there is a run to be had here at all.
+##
+## THE ONLY PLACE THE BODY IS ALLOWED TO AFFECT MOVEMENT. Both gates are
+## capabilities rather than speeds: how deep the snow is against what this body
+## can still manage, and whether there is any run left in him at all.
 func can_run(wade: float) -> bool:
-	if clampf(wade, 0.0, 1.0) > run_snow_limit:
+	if clampf(wade, 0.0, 1.0) > run_snow_ceiling():
 		return false
 	return run_ceiling() > walk_speed + 0.0001
 
@@ -1127,20 +1164,29 @@ func can_run(wade: float) -> bool:
 ## out of deeper snow.
 ##
 ## ---------------------------------------------------------------------------
-## WHAT ELSE TOUCHES THE NUMBER, AND WHY IT IS NOT A CONTRADICTION
+## NOTHING ABOUT THE BODY SCALES THIS NUMBER
 ## ---------------------------------------------------------------------------
-## The owner's rule is that only snow depth and slope scale the speed. That is
-## the TERRAIN model and it is exactly what the product above is. `locomotion:
-## speed` is the other axis -- the body rather than the ground -- and GDD section
-## 5 requires it in as many words: 疲劳高 -> 移速下降 and 足部冻伤 -> 移速永久下降.
-## It is applied last, it is authored entirely in res://data/stats/*.tres, and
-## with a healthy man it is exactly 1, so the terrain model is what he feels.
+## The owner's rule -- 只受到雪深度和地形坡度的影响 -- is literally true here, and
+## it is worth saying what it cost to make it so. `locomotion:speed` used to be
+## applied on the way out (0.85 when tired, 0.85/0.80 for ruined feet) and
+## `locomotion:snow_cost` on the way in, so the same ground gave two different
+## speeds depending on the body. Both are gone.
 ##
-## This tension is flagged in the task report rather than resolved here. Deleting
-## the channel would silently drop two GDD requirements and three shipped tests.
+## GDD section 5's 疲劳高 -> 移速下降 and 足部冻伤 -> 移速永久下降 are NOT dropped.
+## They are restated as capability gates, in the vocabulary the GDD already uses
+## for 无法奔跑, and they live in can_run() and run_snow_ceiling(). The rule that
+## separates them is worth keeping in one line:
+##
+##   the TERRAIN says how fast the ground lets you move -- it SCALES
+##   the BODY says how much capability is left  -- it GATES
+##
+## So the only thing the survival model can still reach in here is run_ceiling(),
+## which decides whether the `gait` argument has anywhere to go. See
+## tools/generate_stats.gd for why that is better design and not just a way to
+## satisfy two documents at once.
 func top_speed_at(wade: float, grade := 0.0, gait := 0.0) -> float:
 	var pace := lerpf(walk_speed, run_ceiling(), clampf(gait, 0.0, 1.0))
-	return maxf(_channel(&"locomotion:speed", pace * terrain_factor(wade, grade)), 0.0)
+	return maxf(pace * terrain_factor(wade, grade), 0.0)
 
 
 ## How far the walk has been promoted toward the run, 0 .. 1.
