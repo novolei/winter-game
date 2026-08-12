@@ -93,6 +93,7 @@ model_path = "res://assets/models/characters/pigeon/pigeon.fbx"
 library = &"pigeon"
 source_fps = 24.0
 model_yaw = 3.141592653589793
+model_scale = 1.1
 palette_index = 1
 takes = Array[ExtResource("2_1bh8h")]([SubResource("Resource_623i4"), SubResource("Resource_eitex"), SubResource("Resource_mcr7l"), SubResource("Resource_vps3s"), SubResource("Resource_l1lr6"), SubResource("Resource_v1mwk"), SubResource("Resource_ohy8h"), SubResource("Resource_p14wa"), SubResource("Resource_8pobr"), SubResource("Resource_08njh"), SubResource("Resource_p1bes"), SubResource("Resource_k5soh"), SubResource("Resource_kohmi")])
 roles = {
@@ -102,12 +103,15 @@ roles = {
 &"land": &"land",
 &"look": &"idle_right",
 &"perch": &"idle_left",
+&"settle": &"idle_right",
 &"take_off": &"take_off"
 }
 launch_seconds = 0.375
 crouch_fraction = 0.45
 launch_climb_m = 0.22
 land_seconds = 0.417
+descent_seconds = 1.05
+settle_seconds = 0.6
 mill_speed = 4.2
 cruise_speed = 9.0
 fewest = 2

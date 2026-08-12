@@ -79,6 +79,17 @@ const LAND := &"land"
 ## each species to covering all of them.
 const ROLES: Array = [PERCH, LOOK, FLAP, TAKE_OFF, FLY, GLIDE, LAND]
 
+## The eighth, and DELIBERATELY NOT IN `ROLES`: what a bird does in the beat
+## after its feet touch, before it becomes furniture.
+##
+## Optional because a pack may not have anything for it -- the raven's landing
+## take is 67 frames and carries its own wing-fold, so the crow names none and
+## simply plays out the tail of `Rav_Land`. The dove's is ten frames and is over
+## a sixth of a second after touchdown, so it names one. A species with no row
+## here holds whatever was running, which is what `Bird._play()` does for any
+## role it cannot resolve.
+const SETTLE := &"settle"
+
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
 
 ## What to call it. Used in node names (`Crow1`, `Pigeon3`) and in failure
@@ -139,6 +150,34 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 ## refactor reports a bird facing backwards rather than reporting nothing.
 @export var model_yaw := 0.0
 
+## How big the bird is drawn, as a multiple of the asset's own size.
+##
+## ---------------------------------------------------------------------------
+## THIS FIELD DID NOT EXIST, AND NEITHER DID THE CODE FOR IT
+## ---------------------------------------------------------------------------
+## Asked for crows and pigeons ten per cent larger, the honest answer was that
+## size was not data AND was not code: `Bird._build_rig()` never wrote a scale,
+## `nodes/root_scale` sat at 1.0 in both `.import` files, and the size a bird
+## was drawn at was simply whatever the FBX's own `UnitScaleFactor` produced.
+## There was nothing to lift, so nothing had been left behind -- but the tenth
+## animal could not have been made bigger without a `.gd` change either, which
+## binding rule 4 forbids.
+##
+## APPLIED TO THE RIG, NOT TO THE BIRD, and that is the whole of why it is safe
+## at a perch. Measured on the delivered models, the lowest toe sits at
+## y = +0.0008 m on the crow and y = -0.0006 m on the pigeon: the origins ARE
+## the foot plane. Scaling about the rig's origin therefore moves the feet by a
+## tenth of those -- 0.08 mm and 0.06 mm -- against the 0.14 m `WireSway` slides
+## a span through a squall. Scaling the BIRD node instead would scale the thing
+## whose origin the perch sets, and `look_at()` would drop it on the next frame.
+##
+## `tests/art/test_asset_scale.gd` measures the asset on disk and cannot see
+## this, which is correct for the defect it exists for (a wolf arriving at
+## 15 mm) and would leave the game free to draw a bird any size at all. So
+## `test_bird_species.gd::test_a_bird_as_drawn_is_still_inside_its_own_size_band`
+## multiplies the two and holds the product to the same band.
+@export var model_scale := 1.0
+
 ## Which of the palette's three families, and which entry in it.
 ##
 ## `structure` for both birds so far: Art Bible rule 7 makes a bird at this
@@ -181,6 +220,46 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 ## landing in mid-air and then drops.
 @export var land_seconds := 67.0 / 30.0
 @export var land_flare := 0.58
+
+## HOW LONG THE BIRD TAKES TO COME DOWN, which is not the same question as how
+## long its landing take is -- and treating them as one is the defect this field
+## exists to end.
+##
+## ---------------------------------------------------------------------------
+## 停靠降落在电线上的过程太多余突兀和生硬了
+## ---------------------------------------------------------------------------
+## The descent used to be `land_seconds * land_flare`: the take's own flare
+## window, whatever that happened to be. `Rav_Land` is 67 frames and `Dove_Fly
+## to Idle` is ten, so the same code gave the crow 1.2953 s to come down 2.9 m
+## and gave the pigeon 0.2419 s to come down the same 2.9 m. Measured, one whole
+## return flown a frame at a time:
+##
+##   crow      peak descent rate  3.349 m/s    peak speed  5.107 m/s
+##   pigeon    peak descent rate 18.097 m/s    peak speed 27.396 m/s
+##
+## Nothing errors. The bird lands in the right place on the right frame and the
+## suite was green over it. It simply falls onto the wire.
+##
+## So the descent is its own number now and the take is fitted INSIDE it: a take
+## shorter than the descent starts late, so its own touchdown frame still falls
+## on the frame the feet touch, and the bird glides down to meet it. See
+## `Bird._flare()`.
+##
+## The crow's value is `land_seconds * land_flare` exactly, because that landing
+## is the one the Art Bible signed off and this change may not move it.
+@export var descent_seconds := (67.0 / 30.0) * 0.58
+
+## ...and how long it fusses once it is down, before the idle takes over.
+##
+## A bird arriving and instantly becoming furniture is the other half of 生硬.
+## The crow's is the tail of `Rav_Land` -- 42 per cent of a 67-frame take is
+## most of a second of wing-folding, which the animator already drew. The dove's
+## take has 0.175 s of tail and that is not a beat, so it names a `settle` role
+## as well and holds a second idle for the rest of it.
+##
+## `descent_seconds + settle_seconds` is the whole LANDING state. For the crow
+## the two come to `land_seconds`, to the millisecond.
+@export var settle_seconds := (67.0 / 30.0) * 0.42
 
 ## Metres per second: milling, and committed. A pigeon flies slower than a crow
 ## and turns harder.

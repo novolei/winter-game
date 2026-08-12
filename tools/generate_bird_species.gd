@@ -133,6 +133,13 @@ func _crow() -> BirdSpecies:
 	# four ways -- bind pose, mesh vertices, every take's beak-minus-tail, and
 	# `Rav_TakeOff`'s +Z root travel -- all agreeing. See BirdSpecies.model_yaw.
 	species.model_yaw = PI
+	# TEN PER CENT LARGER, on the owner's ask, and it is data because it had to
+	# become data: nothing in the project scaled a bird at all before this field.
+	# `crow.fbx` measures 0.9599 m across the wings, so the game now draws it at
+	# 1.0559 m, still well inside the 0.70..1.30 m band `data/scale/crow.tres`
+	# holds a carrion crow to. On screen: 26.3 px -> 28.9 px at the tight framing
+	# stop, 16.0 px -> 17.6 px at the widest.
+	species.model_scale = 1.1
 	# Art Bible rule 7's near-black, the same value the trees get: a crow at this
 	# framing is a shape against snow and nothing else. The delivered pack ships
 	# six material variants, two near-white and one with a yellow beak; rule 12
@@ -175,6 +182,15 @@ func _crow() -> BirdSpecies:
 	# through the slice -- see CROW_TAKES' comment on the landing.
 	species.land_seconds = 67.0 / 30.0
 	species.land_flare = 0.58
+	# THE CROW'S LANDING IS UNCHANGED, AND THESE TWO ARE HOW THAT IS SAID.
+	# The descent used to be `land_seconds * land_flare` implicitly; it is a field
+	# now, and for this bird it is that same product, so the shot the Art Bible
+	# signed off is untouched to the millisecond. The settle is the rest of
+	# `Rav_Land` -- 42 per cent of a 67-frame take, which is the wing-fold the
+	# animator already drew, so the crow names no `settle` role and simply plays
+	# the take out.
+	species.descent_seconds = (67.0 / 30.0) * 0.58
+	species.settle_seconds = (67.0 / 30.0) * 0.42
 	species.mill_speed = 5.0
 	species.cruise_speed = 12.0
 	# Swept over an hour of each shipped profile: 0.45 on / 0.36 off holds 10.8
@@ -216,6 +232,12 @@ func _pigeon() -> BirdSpecies:
 	# vertices at the +Z end. Same value as the crow's and NOT copied from it --
 	# the crow shipped a wrong yaw for a whole wave on a misread of its own pose.
 	species.model_yaw = PI
+	# The same ten per cent the crow got, and for the same reason -- the two birds
+	# share a wire and share a framing, so making one larger without the other
+	# would change what the pair reads as. `pigeon.fbx` measures 0.7267 m across
+	# the wings and is drawn at 0.7994 m, inside `data/scale/pigeon.tres`'s
+	# 0.55..0.90 m band for a rock dove.
+	species.model_scale = 1.1
 	# One step in from the crow's near-black. A rock dove is the grey one and has
 	# to read as a different animal at sixteen pixels, which at this palette means
 	# a different VALUE rather than a different hue. Not `structure_tones[0]`:
@@ -267,6 +289,13 @@ func _pigeon() -> BirdSpecies:
 		SpeciesScript.FLY: StringName("fly"),
 		SpeciesScript.GLIDE: StringName("fly"),
 		SpeciesScript.LAND: StringName("land"),
+		# THE EIGHTH ROLE, and the dove needs it where the crow does not. Its
+		# landing take runs out 0.175 s after the feet touch, so without this the
+		# bird stands frozen on the take's last frame and then snaps to its idle.
+		# The other idle of the left/right pair is the pack's nearest thing to a
+		# bird looking about as it settles, and `Bird` drops into `perch` --
+		# `idle_left` -- when the settle is over.
+		SpeciesScript.SETTLE: StringName("idle_right"),
 	}
 
 	# The delivery, not a choice: `Dove_Idle to Fly` is nine frames at 24 fps, so
@@ -282,6 +311,25 @@ func _pigeon() -> BirdSpecies:
 	# window, so the height is kept and the window is what shrank.
 	species.launch_climb_m = 0.22
 	species.land_flare = 0.58
+	# ---------------------------------------------------------------------------
+	# 停靠降落在电线上的过程太多余突兀和生硬了
+	# ---------------------------------------------------------------------------
+	# The descent used to BE `land_seconds * land_flare` -- 0.2419 s -- because
+	# nothing separated "how long the bird takes to come down" from "how long the
+	# landing take is", and `Dove_Fly to Idle` is ten frames where `Rav_Land` is
+	# 67. Flown a frame at a time, the pigeon came down the same 2.9 m of air at a
+	# peak of 18.097 m/s against the crow's 3.349.
+	#
+	# 1.05 s is chosen against that rate rather than against the crow's duration:
+	# with `hover_m` 2.6 and `flare_distance_m` 3.4 the drop is about 2.93 m, and
+	# a descent that eases in and out covers it at a peak near 1.5 * 2.93 / T. At
+	# T = 1.05 that is 4.2 m/s -- a shade brisker than the crow, which is right
+	# for the smaller bird, and a quarter of what it was.
+	species.descent_seconds = 1.05
+	# The take has only 0.175 s of tail left after touchdown, which is not a beat.
+	# So the dove holds its other idle for the rest of this -- see the `settle`
+	# role below -- and stands there looking about before it becomes furniture.
+	species.settle_seconds = 0.60
 	# A pigeon flies slower than a crow and turns harder.
 	species.mill_speed = 4.2
 	species.cruise_speed = 9.0
@@ -308,12 +356,15 @@ func _pigeon() -> BirdSpecies:
 func _write(species: BirdSpecies, name: String) -> void:
 	var path: String = OUT.path_join("%s.tres" % name)
 	var status := ResourceSaver.save(species, path)
-	print("%s  %s  %d takes, %d roles, %s, yaw %.4f, %s" % [
+	print("%s  %s  %d takes, %d roles, %s, yaw %.4f, scale %.2f, descent %.4f s + settle %.4f s, %s" % [
 		"ok " if status == OK else "FAIL",
 		path,
 		species.takes.size(),
 		species.roles.size(),
 		species.tone().to_html(false),
 		species.model_yaw,
+		species.model_scale,
+		species.descent_seconds,
+		species.settle_seconds,
 		"daylight only" if species.daylight_only else "day and night",
 	])

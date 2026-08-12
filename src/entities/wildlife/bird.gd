@@ -234,6 +234,59 @@ enum State {
 ## How long the landing take runs. `Rav_Land` is 67 frames at 30 fps.
 @export var land_seconds := 67.0 / 30.0
 
+## How long the bird takes to come down onto the perch, and how long it fusses
+## once it is there. Seeded from the species -- and the pair of them, not the
+## take's length, is what the LANDING state is made of. See
+## `BirdSpecies.descent_seconds` for the 18.097 m/s that made them separate
+## numbers.
+@export var descent_seconds := (67.0 / 30.0) * 0.58
+@export var settle_seconds := (67.0 / 30.0) * 0.42
+
+## How much of its milling speed a bird still carries into the flare.
+##
+## A SHAPE RATHER THAN A SIZE, which is why it is here and not on the species: a
+## bird slows before it lands, and the fraction it slows TO is the same
+## proposition for every animal, where the seconds it takes to come down are
+## that animal's own. The deceleration runs over the band between
+## `flare_distance_m` and twice it, so by the time the descent begins the bird
+## is already doing this much and no step in the speed appears at the seam.
+##
+## Set to 1.0 and the approach flies at milling speed until the frame it lands,
+## which is what this file did: the flare then had to shed the whole of it, and
+## the old `smoothstep` descent -- which starts at REST -- did it in one frame.
+## Measured on the pigeon: 4.200 m/s crossing into the flare, 10.140 m/s on the
+## very next frame.
+@export var flare_entry_speed := 0.55
+
+## THE HANG: how much of the descent happens early, so the last stretch is a
+## float rather than the second half of a slide.
+##
+## The plain curve in `_descent_point()` is symmetric -- fastest in the middle,
+## and still doing two thirds of its peak a quarter of the way from the wire.
+## That is a deceleration but it is not a flare. Bending the parameter by
+## `1 - (1 - t)^hang` moves the distance forward in time, and the speed near the
+## end then falls off as `(1 - t)^(2*hang - 1)` instead of linearly.
+##
+## 1.0 is the unbent curve. The opening tangent is divided by this, so raising it
+## lengthens the hang WITHOUT reintroducing the step at the seam the whole
+## treatment exists to remove.
+##
+## SWEPT, because the hang is not free -- distance moved earlier is distance
+## moved faster, and the fall rate is the number the owner reacted to. Share of
+## the drop still left in the last quarter of the time, against peak descent
+## rate:
+##
+##   hang   crow: last qtr / peak down     pigeon: last qtr / peak down
+##   1.0        15.5%   3.292 m/s               15.7%   4.130 m/s
+##   1.3         7.3%   3.718 m/s                7.4%   4.656 m/s
+##   1.5         4.4%   4.055 m/s                4.4%   5.074 m/s
+##   1.8         2.0%   4.592 m/s                2.0%   5.742 m/s
+##
+## 1.3 is where the float appears without the fall rate climbing: the crow's peak
+## goes 3.349 -> 3.718 m/s against the 18.097 the pigeon used to arrive at, and
+## the last quarter of the descent stops being half of it.
+@export var flare_hang := 1.3
+
 ## How long an inbound bird is allowed to spend looking for its perch before it
 ## simply commits. A bird whose steering overshot and is circling forever would
 ## be one that never lands and never leaves.
@@ -299,7 +352,15 @@ var _wheeled := 0.0
 ## wire it lands on.
 var _target: Dictionary = {}
 var _land_from := Vector3.ZERO
+## The descent curve's opening tangent: the velocity the approach ended at,
+## scaled by the descent's length. See `_flare()`.
+var _land_tangent := Vector3.ZERO
 var _landed_for := 0.0
+## When in the descent the landing take starts, and whether it has.
+var _flare_at := 0.0
+var _flared := false
+## Feet down, take still running: the beat between arriving and being furniture.
+var _settling := false
 var _inbound_for := 0.0
 
 
@@ -329,6 +390,8 @@ func set_species(value: BirdSpecies) -> void:
 	launch_climb_m = value.launch_climb_m
 	land_seconds = value.land_seconds
 	land_flare = value.land_flare
+	descent_seconds = value.descent_seconds
+	settle_seconds = value.settle_seconds
 	mill_speed = value.mill_speed
 	cruise_speed = value.cruise_speed
 	balance_on = value.balance_on
@@ -454,6 +517,7 @@ func perch_on(at: Vector3, facing: Vector3) -> void:
 	_facing = _normalised(facing, Vector3(0.0, 0.0, -1.0))
 	_anchor = null
 	_balancing = false
+	_settling = false
 	_place(at)
 	_aim(_facing)
 	_play(BirdSpecies.PERCH)
@@ -471,6 +535,17 @@ func grip(perch: Dictionary) -> void:
 		perch.get("at", Vector3.ZERO),
 		perch.get("facing", Vector3(0.0, 0.0, -1.0))
 	)
+	_take_hold(perch)
+
+
+## Take hold WITHOUT ending whatever the bird is in the middle of.
+##
+## Split out of `grip()` for the settle: a bird whose feet have touched is
+## standing on the wire and has to ride it, but it is still playing its landing
+## take and is not perched yet. `grip()` goes through `perch_on()`, which sets
+## the state and starts the idle -- which is exactly what the settle is a beat
+## before.
+func _take_hold(perch: Dictionary) -> void:
 	var declaration := perch.get("anchor", null) as PerchPoints
 	if declaration == null or not is_instance_valid(declaration):
 		return
@@ -532,6 +607,9 @@ func approach(perch: Dictionary, from: Vector3, wheel_rate := 0.0, wheel_seconds
 	_elapsed = 0.0
 	_inbound_for = 0.0
 	_landed_for = 0.0
+	_flared = false
+	_settling = false
+	_land_tangent = Vector3.ZERO
 	_wheel_rate = wheel_rate if is_finite(wheel_rate) else 0.0
 	_wheel_seconds = maxf(wheel_seconds, 0.0) if is_finite(wheel_seconds) else 0.0
 	_wheeled = 0.0
@@ -555,6 +633,7 @@ func give_up() -> bool:
 		return false
 	_target = {}
 	_anchor = null
+	_settling = false
 	_state = State.GLIDING
 	_elapsed = 0.0
 	_from = _where()
@@ -572,9 +651,15 @@ func is_inbound() -> bool:
 	return _state == State.INBOUND
 
 
-## Flaring onto a perch.
+## Flaring onto a perch, or settling on it once down.
 func is_landing() -> bool:
 	return _state == State.LANDING
+
+
+## Down, and taking a beat about it before the idle starts. Public so the beat
+## can be asserted rather than inferred from a duration.
+func is_settling() -> bool:
+	return _state == State.LANDING and _settling
 
 
 ## Where it is headed, or ZERO for a bird that is not coming back to anywhere.
@@ -597,7 +682,13 @@ func _hover_point() -> Vector3:
 	return _perch_now() + Vector3.UP * hover_m
 
 
-## One frame of coming in: curve, then steer at the hover point.
+## One frame of coming in: curve, steer at the hover point, and START SLOWING.
+##
+## The deceleration is the first of the three things that make a landing read,
+## and it is the one that costs nothing: `_travel()` already chases a speed
+## target at `acceleration`, so lowering the target as the bird closes is the
+## whole of it. What it buys is that the flare opens at a speed the bird was
+## already doing rather than at whatever the descent curve's first frame decides.
 func _fly_in(delta: float) -> void:
 	_inbound_for += delta
 	if _wheeled < _wheel_seconds:
@@ -605,7 +696,21 @@ func _fly_in(delta: float) -> void:
 	else:
 		# Steer at the point above the perch, not at the perch.
 		_heading = _normalised(_hover_point() - _where(), _heading)
-	_travel(delta, mill_speed)
+	_travel(delta, _approach_speed())
+
+
+## Milling speed out wide, easing to `flare_entry_speed` of it by the time the
+## bird is close enough to flare.
+##
+## The band runs from twice `flare_distance_m` down to `flare_distance_m`, so
+## the whole deceleration is finished at the moment the descent begins -- an ease
+## that was still running would put a corner in the speed exactly where this
+## exists to remove one.
+func _approach_speed() -> float:
+	var outer := flare_distance_m * 2.0
+	var gap := _where().distance_to(_hover_point())
+	var through := clampf((gap - flare_distance_m) / maxf(outer - flare_distance_m, 0.001), 0.0, 1.0)
+	return lerpf(mill_speed * clampf(flare_entry_speed, 0.05, 1.0), mill_speed, through)
 
 
 func _close_enough_to_flare() -> bool:
@@ -615,33 +720,125 @@ func _close_enough_to_flare() -> bool:
 		or _inbound_for >= inbound_limit_seconds
 
 
+## Begin the descent. THE VELOCITY IS KEPT, and that is the whole of the seam.
+##
+## This used to write `_velocity = Vector3.ZERO` and snap `_facing` onto the
+## perch's own direction with a `look_at()` -- a bird three metres up, still
+## gliding, stopped dead and turned on one frame. The velocity is now the
+## descent curve's opening tangent (`_flare()`), and the turn onto the wire is
+## spread across the whole landing.
 func _start_landing() -> void:
 	_state = State.LANDING
 	_landed_for = 0.0
 	_land_from = _where()
-	_velocity = Vector3.ZERO
-	_facing = _normalised(
-		Vector3(_target.get("facing", _facing).x, 0.0, (_target.get("facing", _facing) as Vector3).z),
-		_facing
-	)
-	_aim(_facing)
-	_play(BirdSpecies.LAND)
+	# The curve leaves along the line the bird was already flying. Scaled by the
+	# descent's own length because a Hermite's tangent is a displacement, not a
+	# speed -- and clamped to the chord, or a fast arrival sails past the wire and
+	# comes back to it.
+	var chord := _perch_now() - _land_from
+	# Divided by the hang because bending the parameter multiplies the opening
+	# rate by exactly that -- see `flare_hang`. Without it, a longer hang would
+	# buy the float at the cost of the seam.
+	var tangent := _velocity * descent_seconds / maxf(flare_hang, 0.05)
+	if tangent.length() > chord.length():
+		tangent = tangent.normalized() * chord.length()
+	_land_tangent = tangent
+	_settling = false
+	# THE TAKE IS FITTED INSIDE THE DESCENT, not the other way round. `land_flare`
+	# is where in the take the animator brought the body down, so a take shorter
+	# than the descent has to START LATE for its own touchdown frame to fall on
+	# the frame the feet touch. The crow's descent IS its take's flare window, so
+	# the offset is zero and it opens the take here exactly as it always did; the
+	# dove glides down for two thirds of its descent and flares in the last third.
+	_flare_at = maxf(descent_seconds - land_seconds * land_flare, 0.0)
+	_flared = _flare_at <= 0.0
+	_play(BirdSpecies.LAND if _flared else BirdSpecies.GLIDE)
 
 
-## One frame of the flare. Eased in, so the bird arrives slowing rather than
-## dropping at a constant rate, and it is ON the perch at `land_flare` -- the
-## instant the take's own body comes down.
+## One frame of the landing, which is a descent and then a settle.
+##
+## ---------------------------------------------------------------------------
+## THE CURVE
+## ---------------------------------------------------------------------------
+## A cubic Hermite from where the flare began to the perch, leaving along the
+## velocity the approach ended at and arriving at REST. Those two boundary
+## conditions are the two halves of the owner's complaint:
+##
+##   leaves at the approach's speed  -> no step at the seam (突兀)
+##   arrives at zero                 -> no thump at the wire (生硬)
+##
+## and the rest is the hang: with a zero end tangent the speed near the finish
+## falls off as (1-t)^2, so the last fifth of the descent is nearly stationary,
+## which is what a flare looks like. With a zero START tangent the whole thing
+## degenerates to exactly the `smoothstep` this file used to run, so the change
+## is a strict extension rather than a different curve.
+##
+## `_perch_now()` is re-read every frame, deliberately: a wire that sways during
+## the descent is still the wire the bird has to land on.
 func _flare(delta: float) -> void:
 	_landed_for += delta
-	var touchdown := maxf(land_seconds * land_flare, 0.001)
-	var through := clampf(_landed_for / touchdown, 0.0, 1.0)
-	_place(_land_from.lerp(_perch_now(), smoothstep(0.0, 1.0, through)))
-	if _landed_for < land_seconds:
+	var through := clampf(_landed_for / maxf(descent_seconds, 0.001), 0.0, 1.0)
+	_place(_descent_point(through))
+	_aim_along(through, delta)
+	if not _flared and _landed_for >= _flare_at:
+		_flared = true
+		_play(BirdSpecies.LAND)
+	if _landed_for < descent_seconds:
 		return
-	# Down, and holding on. `grip` re-reads the declaration, so from here the bird
-	# rides the wire like any other.
+	if not _settling:
+		# DOWN. It takes hold of the wire here rather than at the end of the take,
+		# so the beat it spends settling is spent riding whatever it is standing
+		# on -- a bird with its feet closed on a swaying span used to sit still
+		# beside it for the whole tail of the landing.
+		_settling = true
+		_take_hold(_target)
+		_play(BirdSpecies.SETTLE)
+	if _landed_for < descent_seconds + settle_seconds:
+		return
+	# Settled. `grip` re-reads the declaration, so from here the bird rides the
+	# wire like any other.
 	grip(_target)
 	_target = {}
+
+
+## Where on the descent curve the bird is, `through` of the way down.
+func _descent_point(through: float) -> Vector3:
+	# The bend is the flare -- see `flare_hang`. At 1.0 this is the identity and
+	# the curve below is the plain Hermite.
+	var t := 1.0 - pow(1.0 - clampf(through, 0.0, 1.0), maxf(flare_hang, 0.05))
+	var t2 := t * t
+	var t3 := t2 * t
+	# Hermite basis, with the arrival tangent dropped because it is zero.
+	return (2.0 * t3 - 3.0 * t2 + 1.0) * _land_from \
+		+ (t3 - 2.0 * t2 + t) * _land_tangent \
+		+ (-2.0 * t3 + 3.0 * t2) * _perch_now()
+
+
+## The body follows the curve it is actually flying, and squares up onto the
+## wire as it runs out of speed.
+##
+## Two aims blended rather than one: early on the bird points where it is going,
+## which is down and along the approach; late on it points along the wire, which
+## is where it has to end up. `_start_landing()` used to do the whole of that in
+## one frame with a `look_at()`, three metres up.
+func _aim_along(through: float, delta: float) -> void:
+	var wire := _normalised(
+		Vector3((_target.get("facing", _facing) as Vector3).x, 0.0,
+			(_target.get("facing", _facing) as Vector3).z),
+		_facing
+	)
+	var step := 0.02
+	var along := _normalised(
+		_descent_point(minf(through + step, 1.0)) - _descent_point(maxf(through - step, 0.0)),
+		wire
+	)
+	along = _normalised(Vector3(along.x, 0.0, along.z), wire)
+	# Antiparallel is the one case `slerp` cannot answer: a bird landing against
+	# the wire's declared direction would spin through an arbitrary plane.
+	var aim := wire if along.dot(wire) < -0.999 \
+		else along.slerp(wire, smoothstep(0.30, 1.0, through))
+	_facing = _facing.slerp(aim, clampf(turn_rate * delta, 0.0, 1.0))
+	_aim(_facing)
 
 
 ## One frame of standing on something that is moving.
@@ -790,11 +987,10 @@ func _feet_down() -> bool:
 		return true
 	if _state == State.LAUNCHING:
 		return _elapsed < launch_seconds * clampf(crouch_fraction, 0.0, 1.0)
-	# The tail of the landing take, after the feet have touched: the bird is
-	# standing on the wire folding itself up, and if the wind moves the wire it has
-	# to go with it.
+	# The settle, after the feet have touched: the bird is standing on the wire
+	# folding itself up, and if the wind moves the wire it has to go with it.
 	if _state == State.LANDING:
-		return _landed_for >= land_seconds * land_flare
+		return _landed_for >= descent_seconds
 	return false
 
 
@@ -889,6 +1085,14 @@ func _build_rig() -> void:
 	rig.name = "Rig"
 	if absf(species.model_yaw) > 0.0001:
 		rig.rotate_y(species.model_yaw)
+	# ON THE RIG, NEVER ON THE BIRD. This node's origin is what a perch sets and
+	# what `look_at()` rebuilds every frame a flying bird turns, so a scale
+	# written here would be thrown away on the next `_aim()`. The rig's origin is
+	# the model's foot plane on both deliveries -- lowest toe at +0.8 mm on the
+	# crow and -0.6 mm on the pigeon -- so scaling about it leaves the feet on the
+	# wire. See `BirdSpecies.model_scale`.
+	if absf(species.model_scale - 1.0) > 0.0001:
+		rig.scale = Vector3.ONE * maxf(species.model_scale, 0.0001)
 	add_child(rig)
 	_paint(rig)
 	for node in rig.find_children("*", "AnimationPlayer", true, false):

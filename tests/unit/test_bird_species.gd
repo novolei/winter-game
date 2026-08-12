@@ -34,6 +34,7 @@ const SpeciesScript := preload("res://src/definitions/bird_species.gd")
 const TakeScript := preload("res://src/definitions/bird_take.gd")
 const BirdAnimationsScript := preload("res://src/entities/wildlife/bird_animations.gd")
 const FlockScript := preload("res://src/entities/wildlife/bird_flock.gd")
+const AssetProbeScript := preload("res://tests/framework/asset_probe.gd")
 
 const CROW: BirdSpecies = preload("res://data/wildlife/crow.tres")
 const PIGEON: BirdSpecies = preload("res://data/wildlife/pigeon.tres")
@@ -237,22 +238,164 @@ func test_the_rig_is_actually_turned_by_the_species_own_yaw() -> void:
 ## Where the model's own +Z points once `Bird` has assembled and turned the rig.
 ## In the tree, because that is the only place `_ready()` runs; freed here, so
 ## nothing leaks (briefing constraint 2).
+##
+## NORMALISED, and it has to be from the day a species may declare its own size:
+## `rig.scale` is part of the basis, so `basis * (0, 0, 1)` on a bird drawn ten
+## per cent larger comes back 1.1 long. This asks which WAY the beak points; how
+## big the bird is, is `_rig_scale()` below, and the two are separate claims.
 func _rig_forward(species: BirdSpecies):
+	var rig := _rig_of(species)
+	if rig == null:
+		return null
+	var forward := (rig.basis * Vector3(0.0, 0.0, 1.0)).normalized()
+	_drop(rig)
+	return forward
+
+
+## What the rig was actually scaled to, which is a different question from which
+## way it faces.
+func _rig_scale(species: BirdSpecies):
+	var rig := _rig_of(species)
+	if rig == null:
+		return null
+	var scale := rig.scale
+	_drop(rig)
+	return scale
+
+
+## The `Rig` node a `Bird` assembles for `species`, still in the tree. The caller
+## frees the bird through `_drop()`.
+func _rig_of(species: BirdSpecies) -> Node3D:
 	var tree := Engine.get_main_loop() as SceneTree
 	if tree == null or tree.get_root() == null:
 		return null
 	var bird := Bird.new()
 	bird.species = species
 	tree.get_root().add_child(bird)
-	var forward = null
 	for child in bird.get_children():
 		var rig := child as Node3D
 		if rig != null and rig.name == "Rig":
-			forward = rig.basis * Vector3(0.0, 0.0, 1.0)
-			break
+			return rig
 	tree.get_root().remove_child(bird)
 	bird.free()
-	return forward
+	return null
+
+
+func _drop(rig: Node3D) -> void:
+	var bird := rig.get_parent()
+	if bird == null:
+		return
+	if bird.get_parent() != null:
+		bird.get_parent().remove_child(bird)
+	bird.free()
+
+
+# --- how big the bird is drawn ---------------------------------------------------
+#
+# The owner asked for crows and pigeons ten per cent larger, and the answer to
+# "is that data?" was no: `_build_rig()` never wrote a scale at all and neither
+# `BirdSpecies` nor `Bird` had a field for one, so the size a bird was drawn at
+# was whatever `nodes/root_scale` in its `.import` happened to produce. It is
+# `species.model_scale` now, and these are what say so.
+
+
+func test_both_birds_are_drawn_ten_per_cent_larger_than_their_asset() -> void:
+	for species in _species():
+		assert_almost_eq(
+			species.model_scale, 1.1, 0.0001,
+			"%s is drawn at %.4f of its asset's size, not the 1.1 the owner asked for" % [
+				species.species_name, species.model_scale]
+		)
+
+
+## THE NEGATIVE CONTROL, and it is the half that matters: without it a
+## `_build_rig()` that scaled every bird by 1.1 regardless of its data would pass
+## the assertion above and the field would be decoration.
+func test_the_rig_wears_the_species_own_scale_and_a_species_may_decline_it() -> void:
+	var worn = _rig_scale(CROW)
+	assert_not_null(worn, "the crow built no rig to measure")
+	if worn != null:
+		assert_almost_eq(
+			(worn as Vector3).x, CROW.model_scale, 0.0001,
+			"the crow's rig came out at %s against the %.4f its species declares" % [worn, CROW.model_scale]
+		)
+	var plain: BirdSpecies = SpeciesScript.new()
+	plain.species_name = "unscaled"
+	plain.model_path = CROW.model_path
+	plain.library = &"unscaled"
+	plain.model_scale = 1.0
+	var untouched = _rig_scale(plain)
+	assert_not_null(untouched, "the stand-in built no rig to measure")
+	if untouched != null:
+		assert_almost_eq(
+			(untouched as Vector3).x, 1.0, 0.0001,
+			("a species declaring model_scale = 1.0 came out at %s, so the size is being applied from "
+				+ "somewhere other than the data and no species could ever decline it") % [untouched]
+		)
+
+
+## A BIGGER BIRD STILL STANDS ON THE WIRE.
+##
+## Measured on the delivered rigs: the lowest toe sits at y = +0.0008 m on the
+## crow and y = -0.0006 m on the pigeon, which is to say the models' origins ARE
+## their foot plane. Scaling about that origin therefore moves the feet by a
+## tenth of those numbers -- 0.08 mm and 0.06 mm -- against the 0.14 m
+## `WireSway` moves a span through a squall. This is what says the scale went on
+## the RIG and not on the bird, because scaling the bird would move the node the
+## perch positions and put the feet through the wire.
+func test_a_bird_drawn_larger_still_has_its_feet_on_the_perch() -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	assert_not_null(tree, "no SceneTree to build a rig in")
+	if tree == null or tree.get_root() == null:
+		return
+	for species in _species():
+		var bird := Bird.new()
+		bird.species = species
+		tree.get_root().add_child(bird)
+		bird.perch_on(Vector3(0.0, 6.0, 0.0), Vector3(1.0, 0.0, 0.0))
+		var lowest := INF
+		for node in bird.find_children("*", "Skeleton3D", true, false):
+			var skeleton := node as Skeleton3D
+			for index in range(skeleton.get_bone_count()):
+				var at: Vector3 = skeleton.global_transform \
+					* skeleton.get_bone_global_pose(index).origin
+				lowest = minf(lowest, at.y)
+		assert_true(lowest < INF, "%s put no bones in the world" % species.species_name)
+		if lowest < INF:
+			assert_almost_eq(
+				lowest, 6.0, 0.01,
+				("%s's lowest bone stands %.4f m from the wire it was placed on. The model's origin is "
+					+ "its foot plane, so a scale applied to the rig must leave the feet where they were.")
+					% [species.species_name, lowest - 6.0]
+			)
+		tree.get_root().remove_child(bird)
+		bird.free()
+
+
+## AND THE SIZE GATE STILL COVERS THE BIRD THE GAME DRAWS.
+##
+## `tests/art/test_asset_scale.gd` measures the ASSET on disk, which is the right
+## instrument for the defect it exists for -- a wolf arriving at 15 mm. It cannot
+## see a scale applied at runtime, so the day `model_scale` exists the game can
+## draw a bird any size it likes and that gate stays green. This closes it: the
+## asset's measured size TIMES the species' own scale has to be inside the band
+## the bird's own `data/scale/*.tres` declares.
+func test_a_bird_as_drawn_is_still_inside_its_own_size_band() -> void:
+	for species in _species():
+		var bounds := AssetProbeScript.bounds(species.model_path)
+		assert_eq(bounds["error"], "", "%s's model did not load: %s" % [species.species_name, bounds["error"]])
+		var size: Vector3 = bounds["size"]
+		var band: AssetScale = load("res://data/scale/%s.tres" % species.species_name)
+		assert_not_null(band, "%s has no size band in data/scale" % species.species_name)
+		if band != null:
+			var refusal := band.refusal(size * species.model_scale)
+			assert_eq(
+				refusal, "",
+				"%s as the game draws it (%.4f m longest, %.2fx its asset's %.4f m) %s" % [
+					species.species_name,
+					maxf(size.x, maxf(size.y, size.z)) * species.model_scale,
+					species.model_scale, maxf(size.x, maxf(size.y, size.z)), refusal]
+			)
 
 
 # --- the two packs want opposite import settings -------------------------------

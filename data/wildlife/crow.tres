@@ -74,6 +74,7 @@ species_name = "crow"
 model_path = "res://assets/models/characters/crow/crow.fbx"
 library = &"crow"
 model_yaw = 3.141592653589793
+model_scale = 1.1
 palette_index = 3
 takes = Array[ExtResource("2_pvs18")]([SubResource("Resource_0y2cj"), SubResource("Resource_rkccy"), SubResource("Resource_hqjp7"), SubResource("Resource_1mlgs"), SubResource("Resource_ais17"), SubResource("Resource_ln4pt"), SubResource("Resource_hw05p")])
 roles = {
