@@ -162,14 +162,78 @@ func test_a_print_on_level_ground_is_unchanged_by_the_slope_path() -> void:
 	assert_almost_eq(east, north, 0.02)
 
 
-## Deep snow runs consecutive prints together into one channel. The claim worth
-## pinning is the *balance*: there has to be something between the prints where
-## before there was untouched snow, and it has to stay clearly shallower than
-## the prints themselves. Both halves matter and neither is safe to eyeball --
-## "a slight sense of a trench" and "a ditch with two dimples in it" are the
-## same screenshot at a glance, and only the ratio tells them apart.
-func test_a_drag_joins_two_prints_without_replacing_them() -> void:
-	var first := Vector3(0.0, 0.0, 0.0)
+## ---------------------------------------------------------------------------
+## The ploughed furrow
+## ---------------------------------------------------------------------------
+## A footprint is a soft dome. A furrow is a V, and getting that cross-section
+## right is most of what makes it read as ploughed rather than as a ribbon laid
+## on the snow. See TrackMask.plough().
+
+
+## Snapped to the mask's own texel grid. value_at() reads the NEAREST texel, so a
+## probe landing half a texel off the centre line reads the profile half a texel
+## out -- worth 5% of the depth on a groove seven texels wide, which is a
+## property of the probe and not of the groove.
+func _grid(x: float, z: float) -> Vector3:
+	var cell := TrackMask.CELL_M
+	return Vector3(roundf(x / cell) * cell, 0.0, roundf(z / cell) * cell)
+
+
+## THE SHAPE, asserted as arithmetic. The profile has to be LINEAR across the
+## width -- depth * (1 - |across| / half_width) -- so the two flanks are flat
+## facets that take different palette tones under a low sun. The flat-cored
+## smoothstep the footprints use would sit at full depth across half the groove
+## and read as a channel with a floor, which is the thing that was rejected.
+func test_a_furrow_has_an_inverted_triangle_cross_section() -> void:
+	var cell := TrackMask.CELL_M
+	# Eight texels of half-width, so the profile can be read off the grid at
+	# exact fractions instead of through the nearest-texel rounding.
+	var half_width := cell * 8.0
+	var centre := _grid(0.0, 0.0)
+	_mask.plough(centre - Vector3(1.0, 0.0, 0.0), centre + Vector3(1.0, 0.0, 0.0), half_width, 0.9)
+	var peak: float = _mask.value_at(centre)
+	assert_almost_eq(peak, 0.9, 0.01, "the centre line carries the full depth")
+	for texels in [2, 4, 6]:
+		var across := centre + Vector3(0.0, 0.0, cell * float(texels))
+		assert_almost_eq(
+			_mask.value_at(across), 0.9 * (1.0 - float(texels) / 8.0), 0.01,
+			"at %d of the 8 texels of half-width the taper must be straight" % texels
+		)
+	# ...and explicitly not a dome: a flat core would still be at full depth a
+	# quarter of the way out.
+	assert_true(
+		_mask.value_at(centre + Vector3(0.0, 0.0, cell * 2.0)) < peak * 0.85,
+		"the groove must taper from the centre line, not sit flat across a core"
+	)
+
+
+func test_a_furrow_is_symmetrical_about_its_centre_line() -> void:
+	_mask.plough(Vector3(-1.0, 0.0, 0.0), Vector3(1.0, 0.0, 0.0), 0.30, 0.8)
+	for offset in [0.08, 0.16, 0.24]:
+		assert_almost_eq(
+			_mask.value_at(Vector3(0.0, 0.0, offset)),
+			_mask.value_at(Vector3(0.0, 0.0, -offset)),
+			0.02,
+			"the two flanks must match at %f m off the line" % offset
+		)
+
+
+## The groove is a swept segment, not a line across the world: everything past
+## its ends and everything wider than its own width is untouched snow.
+func test_a_furrow_stays_inside_its_own_width_and_ends() -> void:
+	_mask.plough(Vector3.ZERO, Vector3(0.6, 0.0, 0.0), 0.16, 0.7)
+	# The centre first, or every assertion below is satisfied by drawing nothing.
+	assert_almost_eq(_mask.value_at(Vector3(0.3, 0.0, 0.0)), 0.7, 0.02)
+	assert_almost_eq(_mask.value_at(Vector3(0.3, 0.0, 0.2)), 0.0, 0.01)
+	assert_almost_eq(_mask.value_at(Vector3(-0.25, 0.0, 0.0)), 0.0, 0.01)
+	assert_almost_eq(_mask.value_at(Vector3(0.85, 0.0, 0.0)), 0.0, 0.01)
+
+
+## Composited with max() like everything else here, so the boot pockets either
+## side of the channel keep their outline and their rim. A furrow strong enough
+## to swallow the prints is the failure mode, not the goal.
+func test_a_furrow_does_not_swallow_the_prints_beside_it() -> void:
+	var first := Vector3.ZERO
 	var second := Vector3(0.72, 0.0, 0.0)
 	var between := Vector3(0.36, 0.0, 0.0)
 	_mask.stamp(first, 0.28, 1.0)
@@ -179,9 +243,9 @@ func test_a_drag_joins_two_prints_without_replacing_them() -> void:
 		0.01, "setup: two prints a stride apart must not already touch"
 	)
 
-	_mask.drag(first, second, 0.13, 0.5)
+	_mask.plough(first, second, 0.17, 0.62)
 	var groove: float = _mask.value_at(between)
-	assert_true(groove > 0.2, "the gap between two prints must be joined, got %f" % groove)
+	assert_true(groove > 0.4, "the gap between two prints must be joined, got %f" % groove)
 	assert_true(
 		groove < _mask.value_at(first) - 0.2,
 		"the groove (%f) must stay clearly shallower than the print (%f)"
@@ -189,56 +253,76 @@ func test_a_drag_joins_two_prints_without_replacing_them() -> void:
 	)
 
 
-## ...and the groove is a segment, not a line. Everything past the two prints it
-## joins is untouched snow, and so is anything more than its own width off the
-## centre line -- otherwise a trail through a drift becomes a smear with feet in
-## it.
-func test_a_drag_stays_between_the_prints_it_joins() -> void:
-	_mask.drag(Vector3.ZERO, Vector3(0.72, 0.0, 0.0), 0.13, 0.6)
-	# The centre first: without it every assertion below would be satisfied by a
-	# drag() that drew nothing at all.
-	assert_almost_eq(_mask.value_at(Vector3(0.36, 0.0, 0.0)), 0.6, 0.02)
-	assert_almost_eq(_mask.value_at(Vector3(-0.4, 0.0, 0.0)), 0.0, 0.01)
-	assert_almost_eq(_mask.value_at(Vector3(1.12, 0.0, 0.0)), 0.0, 0.01)
-	assert_almost_eq(_mask.value_at(Vector3(0.36, 0.0, 0.4)), 0.0, 0.01)
+## A run of short segments is how the furrow is actually drawn -- one per physics
+## tick, each shorter than the groove is wide. The union of those has to be the
+## exact swept region of the path, with no dip where two of them meet: a dip at
+## every joint is a bead pattern down the trail, which is the polyline failure
+## wearing a smaller stride.
+func test_a_run_of_segments_leaves_an_even_channel() -> void:
+	var step := 0.06
+	var half_width := 0.17
+	for index in range(40):
+		_mask.plough(
+			Vector3(float(index) * step, 0.0, 0.0),
+			Vector3(float(index + 1) * step, 0.0, 0.0),
+			half_width, 0.7
+		)
+	var low := INF
+	var high := -INF
+	var probe := 0.3
+	while probe < 2.1:
+		var value: float = _mask.value_at(Vector3(probe, 0.0, 0.0))
+		low = minf(low, value)
+		high = maxf(high, value)
+		probe += 0.02
+	assert_true(high - low < 0.05, "the channel dips %f between its joints" % (high - low))
+	assert_almost_eq(high, 0.7, 0.02)
 
 
-## A print made on a wind-scoured crest carries no trench keys at all, and the
-## snow between it and the last one must be left alone. This is the half of the
-## gate a screenshot cannot show, because "no groove here" and "a groove too
-## faint to see" look identical.
-func test_a_footprint_without_a_trench_leaves_the_snow_between_untouched() -> void:
+## A furrow event with both ends draws; one missing an end draws nothing rather
+## than a groove from the world origin, which is the mistake the trench payload
+## it replaces made once already.
+func test_a_furrow_event_ploughs_and_a_half_specified_one_does_not() -> void:
+	_mask._on_furrow({
+		"from": Vector3.ZERO, "to": Vector3(0.6, 0.0, 0.0), "half_width": 0.16, "depth": 0.7,
+	})
+	assert_almost_eq(_mask.value_at(Vector3(0.3, 0.0, 0.0)), 0.7, 0.02)
+
+	_mask._on_furrow({"from": Vector3(5.0, 0.0, 0.0), "half_width": 0.16, "depth": 0.7})
+	assert_almost_eq(_mask.value_at(Vector3(5.3, 0.0, 0.0)), 0.0, 0.01)
+	_mask._on_furrow(null)
+	_mask._on_furrow("not a furrow")
+	assert_almost_eq(_mask.value_at(Vector3(0.3, 0.0, 0.0)), 0.7, 0.02)
+
+
+## Two prints on a wind-scoured crest carry no furrow between them, and the snow
+## between them must be left alone. This is the half of the gate a screenshot
+## cannot show, because "no groove here" and "a groove too faint to see" look
+## identical.
+func test_two_footprints_alone_leave_the_snow_between_untouched() -> void:
 	_mask._on_footprint({"position": Vector3.ZERO, "radius": 0.28, "strength": 0.9})
 	_mask._on_footprint({"position": Vector3(0.72, 0.0, 0.0), "radius": 0.28, "strength": 0.9})
 	assert_almost_eq(_mask.value_at(Vector3(0.36, 0.0, 0.0)), 0.0, 0.01)
 
-	# ...and the same pair with the keys present does join up. `trench_to` is
-	# the walker's centre, not the print's position, so both ends are given.
-	_mask._on_footprint({
-		"position": Vector3(1.44, 0.0, 0.0),
-		"radius": 0.28,
-		"strength": 0.9,
-		"trench_from": Vector3(0.72, 0.0, 0.0),
-		"trench_to": Vector3(1.44, 0.0, 0.0),
-		"trench_strength": 0.45,
-		"trench_radius": 0.13,
-	})
-	assert_true(
-		_mask.value_at(Vector3(1.08, 0.0, 0.0)) > 0.2,
-		"the trench keys must reach TrackMask.drag()"
-	)
 
-	# A half-specified payload draws nothing rather than a groove from the
-	# origin: `trench_from` alone used to default its other end to the print.
-	_mask._on_footprint({
-		"position": Vector3(6.0, 0.0, 0.0),
-		"radius": 0.28,
-		"strength": 0.9,
-		"trench_from": Vector3(5.28, 0.0, 0.0),
-		"trench_strength": 0.45,
-		"trench_radius": 0.13,
-	})
-	assert_almost_eq(_mask.value_at(Vector3(5.64, 0.0, 0.0)), 0.0, 0.01)
+## The furrow lives on the DYNAMIC layer, so the wind and the falling snow work
+## on it exactly as they work on a footprint. A groove that outlived the trail it
+## belongs to would leave the player's route legible long after the prints that
+## made it had gone -- which is GDD section 8's whole mechanic, inverted.
+func test_a_furrow_fills_in_with_the_weather_like_a_print() -> void:
+	var spot := _grid(3.0, -2.0)
+	_mask.plough(spot - Vector3(0.5, 0.0, 0.0), spot + Vector3(0.5, 0.0, 0.0), 0.17, 0.8)
+	var fresh: float = _mask.value_at(spot)
+	assert_almost_eq(fresh, 0.8, 0.01, "setup: the furrow only reached %f" % fresh)
+	assert_almost_eq(_mask.static_value_at(spot), 0.0, 0.001, "a furrow is not baked terrain")
+
+	for _slice in range(80):
+		_mask.decay(0.5)
+	assert_true(
+		_mask.value_at(spot) < fresh - 0.2,
+		"forty seconds of still weather left the furrow at %f, from %f"
+			% [_mask.value_at(spot), fresh]
+	)
 
 
 ## An event carrying a payload this system does not understand must be ignored,

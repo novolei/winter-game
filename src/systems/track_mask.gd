@@ -17,11 +17,18 @@ extends Node
 ## TWO LAYERS, which Art Bible section 3 requires and which is why this file is
 ## not simply the dynamic mask it started as:
 ##
-##   dynamic -- footprints, made while the game runs, in a window that follows
-##              the player and scrolls. The wind will erase this one.
-##   static  -- ploughed furrows and old tyre tracks, baked once at startup into
-##              a window that is FIXED in the world and never scrolls. The wind
-##              must never touch it.
+##   dynamic -- footprints, and the channel a walker drags behind him in snow too
+##              deep to lift his feet clear of, made while the game runs, in a
+##              window that follows the player and scrolls. The wind will erase
+##              this one.
+##   static  -- the ploughed field and old tyre tracks, baked once at startup
+##              into a window that is FIXED in the world and never scrolls. The
+##              wind must never touch it.
+##
+## Both layers hold something called a furrow and they are not the same thing:
+## the static layer's are the field's, cut by a plough last autumn and part of
+## the terrain, while plough() below draws the one the player cuts with his own
+## legs as he wades, which fades like every other mark he leaves.
 ##
 ## Without the split the first gust flattens the farmland along with the
 ## footprints, and the only texture the Art Bible allows an otherwise empty
@@ -110,6 +117,7 @@ const STATIC_CELL_M := STATIC_EXTENT_M / float(STATIC_RESOLUTION)
 const RECENTER_SLACK_M := 3.0
 
 const FOOTPRINT_EVENT := &"player.footprint"
+const FURROW_EVENT := &"player.furrow"
 
 ## Lobes across the width of one print. Two or three reads as a boot edge
 ## crumbling; ten reads as static.
@@ -203,6 +211,7 @@ func _ready() -> void:
 	var bus := get_node_or_null("/root/EventBus")
 	if bus != null:
 		bus.subscribe(FOOTPRINT_EVENT, _on_footprint)
+		bus.subscribe(FURROW_EVENT, _on_furrow)
 
 
 func _exit_tree() -> void:
@@ -212,6 +221,7 @@ func _exit_tree() -> void:
 	var bus := get_node_or_null("/root/EventBus")
 	if bus != null:
 		bus.unsubscribe(FOOTPRINT_EVENT, _on_footprint)
+		bus.unsubscribe(FURROW_EVENT, _on_furrow)
 
 
 ## Builds both layers centred on `centre`. Separate from _ready() so a test can
@@ -459,42 +469,111 @@ func _grown(box: Rect2i, x: int, y: int) -> Rect2i:
 	return box.expand(Vector2i(x, y)).expand(Vector2i(x + 1, y + 1))
 
 
-## Drags a shallow groove along a stretch of the walker's path, so a trail
-## through the deepest powder reads as slightly connected rather than as a row
-## of isolated holes.
+## ---------------------------------------------------------------------------
+## The ploughed furrow
+## ---------------------------------------------------------------------------
+## Ploughs one short length of the channel a wading walker drags behind him.
 ##
-## That is what wading leaves: below about knee depth the legs never clear the
-## snow between footfalls, they plough through it, and the gaps between the
-## boot pockets partly fill in. On a wind-scoured crest none of that happens and
-## the prints stay separate and sharp -- so the caller gates this on snow depth
-## and simply does not call it up there.
+## THE PHYSICS, which the two rejected passes at this were both missing. In snow
+## past wading depth you cannot lift your feet clear of it: you drag them, and a
+## dragged boot does not stamp, it ploughs, the way a plough turns a furrow. What
+## it leaves is not a shallow version of a footprint. It is a groove with an
+## INVERTED-TRIANGLE cross-section -- 倒三角 -- deepest along the centre line and
+## rising in a straight taper to the surface at both edges.
 ##
-## Deliberately far weaker and narrower than the prints it runs past. Composited
-## with max() like everything else here, so wherever a print is deeper the print
-## wins outright and keeps its outline and its rim. A groove wide or strong
-## enough to be read as a groove in its own right is the failure mode, not the
-## goal -- this has been overshot twice.
+## So the profile here is LINEAR in the distance off the centre line, and that is
+## the one line of this method that must not be changed back:
 ##
-## Geometrically it is `stamp()`'s profile measured from a segment instead of
-## from a point -- flat to `core`, then smoothstep out, with the same edge noise
-## warping the outline. `irregularity` matters more here than on a print,
-## because a channel with two straight parallel sides reads as machined.
-func drag(
-	from: Vector3,
-	to: Vector3,
-	radius_m: float,
-	strength: float,
-	core := 0.55,
-	irregularity := 0.0,
-	edge_seed := 0.0
-) -> void:
-	if _mask == null or strength <= 0.0:
+##     value = depth * (1 - distance / half_width)
+##
+## not the flat core and smoothstep shoulder `stamp()` and `_groove()` use. The
+## difference is the whole read. A smoothstep sits at full depth across the
+## middle half of its width, which is a channel with a floor -- a ribbon laid on
+## the snow. A straight taper gives two flat facets meeting at a line, and under
+## a sun eleven degrees up two flat facets at opposite tilts take DIFFERENT
+## palette tones out of the cel bands. The groove is drawn by the shading, not by
+## the tint, which is the only way it can read at gameplay framing at all.
+##
+## `half_width_m` is the half-width, and `depth` the value on the centre line.
+## Composited with max() like everything else here, so wherever a boot pocket is
+## deeper the print wins outright and keeps its outline and its rim -- the legs
+## plough the channel down the middle and the boots punch pockets either side
+## of it.
+##
+## SHORT SEGMENTS, and this is the other half of the fix. The caller emits one of
+## these per physics tick from the walker's real position, so each is a few
+## centimetres long against a half-width of about seventeen. Where the segment is
+## shorter than the groove is wide, the union of the whole run IS the exact swept
+## region of the path -- max() of the capsules is the distance field to the
+## polyline -- so the groove curves because the walk curves and there is no joint
+## anywhere to see. A segment per FOOTFALL is twelve times longer than the groove
+## is wide, which is a polyline by construction with a visible elbow at every
+## change of direction; that is what the second pass shipped and what was
+## rejected. No strength reduction fixes a corner.
+##
+## No edge noise. A stamp is a pure function of its arguments (see `edge_seed` on
+## stamp() for why), and the variation this shape needs runs along its LENGTH
+## rather than around its outline -- so the caller wobbles `depth` and
+## `half_width_m` down the run, from a noise indexed by distance walked. Warping
+## the outline per segment instead would decorrelate neighbouring segments and
+## put the joints back.
+func plough(from: Vector3, to: Vector3, half_width_m: float, depth: float) -> void:
+	if _mask == null or depth <= 0.0 or half_width_m <= 0.0:
 		return
-	_written(_groove(
+	_written(_furrow(
 		_mask, RESOLUTION, CELL_M,
 		cell_of(Vector2(from.x, from.z)), cell_of(Vector2(to.x, to.z)),
-		radius_m, strength, core, irregularity, edge_seed
+		half_width_m, depth
 	))
+
+
+func _furrow(
+	image: Image,
+	resolution: int,
+	cell_m: float,
+	start: Vector2,
+	finish: Vector2,
+	half_width_m: float,
+	depth: float
+) -> Rect2i:
+	var touched := Rect2i()
+	var radius := maxf(half_width_m / cell_m, 1.0)
+	var min_x := maxi(int(floorf(minf(start.x, finish.x) - radius)), 0)
+	var max_x := mini(int(ceilf(maxf(start.x, finish.x) + radius)), resolution - 1)
+	var min_y := maxi(int(floorf(minf(start.y, finish.y) - radius)), 0)
+	var max_y := mini(int(ceilf(maxf(start.y, finish.y) + radius)), resolution - 1)
+	var clamped := clampf(depth, 0.0, 1.0)
+
+	var span := finish - start
+	var length := span.length()
+	# A walker who has not moved ploughs nothing, and normalising a zero-length
+	# span is a division by zero.
+	var direction := Vector2.RIGHT
+	if length > 0.0001:
+		direction = span / length
+	var sideways := Vector2(-direction.y, direction.x)
+	var length_units := length / radius
+
+	for y in range(min_y, max_y + 1):
+		for x in range(min_x, max_x + 1):
+			var offset := Vector2(float(x) - start.x, float(y) - start.y)
+			# The channel's own frame, in half-widths: how far along it, and how
+			# far off its centre line. Capping `along` at the two ends is what
+			# rounds the segment off into its neighbours instead of cutting it
+			# square across them.
+			var along := offset.dot(direction) / radius
+			var across := offset.dot(sideways) / radius
+			var past_end := maxf(maxf(-along, along - length_units), 0.0)
+			var distance := sqrt(past_end * past_end + across * across)
+			if distance >= 1.0:
+				continue
+			# The inverted triangle. See the block above plough().
+			var value := clamped * (1.0 - distance)
+			var current := image.get_pixel(x, y).r
+			if value > current:
+				image.set_pixel(x, y, Color(value, 0.0, 0.0, 1.0))
+				touched = _grown(touched, x, y)
+	return touched
 
 
 func _groove(
@@ -989,21 +1068,6 @@ func _on_footprint(payload) -> void:
 	if not (payload is Dictionary):
 		return
 	var data: Dictionary = payload
-	# The groove first, so the print is composited over it -- immaterial with
-	# max(), but it is the order the two things happen in.
-	# `trench_to` is the walker's centre at this step, which is NOT the print's
-	# position -- the print sits a half-stride-width off it. The groove runs
-	# down the centre line; see player_controller._place_print().
-	if data.has("trench_from") and data.has("trench_to"):
-		drag(
-			data.get("trench_from", Vector3.ZERO),
-			data.get("trench_to", Vector3.ZERO),
-			data.get("trench_radius", 0.12),
-			data.get("trench_strength", 0.0),
-			data.get("core", 0.55),
-			data.get("trench_irregularity", 0.0),
-			data.get("edge_seed", 0.0)
-		)
 	stamp(
 		data.get("position", Vector3.ZERO),
 		data.get("radius", 0.28),
@@ -1015,4 +1079,23 @@ func _on_footprint(payload) -> void:
 		data.get("edge_seed", 0.0),
 		data.get("fall", Vector2.ZERO),
 		data.get("downhill_scale", 1.0)
+	)
+
+
+## One tick of the walker's drag. Both ends are required rather than defaulted:
+## a payload carrying only `from` used to plough a groove from the world origin
+## to wherever the walker was, which is a line ruled across snow nobody walked on
+## and is the kind of defect that only shows up in a screenshot of somewhere else
+## entirely.
+func _on_furrow(payload) -> void:
+	if not (payload is Dictionary):
+		return
+	var data: Dictionary = payload
+	if not (data.has("from") and data.has("to")):
+		return
+	plough(
+		data.get("from", Vector3.ZERO),
+		data.get("to", Vector3.ZERO),
+		data.get("half_width", 0.0),
+		data.get("depth", 0.0)
 	)

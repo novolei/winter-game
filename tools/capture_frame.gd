@@ -52,6 +52,33 @@ const ROUTE := [
 	[30.5, 36.0, &"move_left"],
 ]
 
+## ---------------------------------------------------------------------------
+## `--route curve` -- a walk with no straight lines in it
+## ---------------------------------------------------------------------------
+## ROUTE above is eight straight legs, and a straight leg cannot photograph the
+## one defect that has now been shipped twice in the tracks: a trail assembled
+## from segments is a polyline by construction and only shows it where the walk
+## changes direction. So there is a second route that never stops turning.
+##
+## The heading is a slow lap with a fast weave laid over it:
+##
+##     heading(t) = 2*PI*t/CURVE_LAP + CURVE_SWING * sin(2*PI*t/CURVE_WEAVE)
+##
+## The lap keeps the walker inside one drift -- at wading pace it closes a
+## circle about 5 m across -- while the weave reverses the curvature twice a
+## period, so a single frame holds hard left turns, hard right turns and the
+## straight moments between them. The tightest radius is about 1.6 m, which is
+## far tighter than anything a player would walk and is the point.
+##
+## Driven through Input.action_press's STRENGTH argument rather than by pressing
+## keys, because four digital keys can only express eight headings and every one
+## of those is a corner. The controller reads Input.get_vector(), which sums the
+## action strengths, so an analogue press is the same code path a gamepad takes.
+const CURVE_LAP := 20.0
+const CURVE_WEAVE := 5.0
+const CURVE_SWING := 0.5
+const CURVE_START := 0.5
+
 var _elapsed := 0.0
 var _output := DEFAULT_OUTPUT
 var _capture_at := 37.0
@@ -63,6 +90,7 @@ var _has_start := false
 var _look := Vector2.ZERO
 var _has_look := false
 var _preset := ""
+var _curve := false
 
 # Sampled along the route so the run can state, rather than assume, that the
 # snow actually varies and that speed actually responds to it. A shot of a
@@ -125,6 +153,10 @@ func _ready() -> void:
 	# shutter -- see the header.
 	_preset = _string_arg(args, "--preset", "")
 
+	# `--route curve` swaps the eight straight legs for a walk that never stops
+	# turning. See the CURVE_ constants for what it is for.
+	_curve = _string_arg(args, "--route", "loop") == "curve"
+
 	# `--start x,z` walks the same route from somewhere else. The camera frames
 	# 17 m by 15 m of ground, so anything more than a short walk from the origin
 	# -- the farmhouse, for one -- cannot be photographed from the spawn point at
@@ -167,6 +199,9 @@ func _process(delta: float) -> void:
 
 
 func _drive() -> void:
+	if _curve:
+		_drive_curve()
+		return
 	var wanted: Dictionary = {}
 	for row in ROUTE:
 		if _elapsed >= float(row[0]) and _elapsed <= float(row[1]):
@@ -179,6 +214,34 @@ func _drive() -> void:
 		if not wanted.has(action):
 			Input.action_release(action)
 			_held.erase(action)
+
+
+## The analogue walk. `_held` is still the record of what is down, so
+## _release_all() at the shutter works for both routes.
+func _drive_curve() -> void:
+	if _elapsed < CURVE_START:
+		return
+	var t := _elapsed - CURVE_START
+	var heading := TAU * t / CURVE_LAP + CURVE_SWING * sin(TAU * t / CURVE_WEAVE)
+	# Unit length, so get_vector() returns a full-strength direction: the walker
+	# is always at his top speed and only the heading changes.
+	var wanted := Vector2(sin(heading), cos(heading))
+	_axis(&"move_right", &"move_left", wanted.x)
+	# move_forward is -Y in the controller's Input.get_vector() call, so "up the
+	# screen" is the negative of this axis.
+	_axis(&"move_back", &"move_forward", wanted.y)
+
+
+func _axis(positive: StringName, negative: StringName, amount: float) -> void:
+	var pressed := positive if amount >= 0.0 else negative
+	var released := negative if amount >= 0.0 else positive
+	if _held.has(released):
+		Input.action_release(released)
+		_held.erase(released)
+	# Re-pressed every frame rather than only on the edge: action_press carries
+	# the strength, and the strength is the whole of this route.
+	Input.action_press(pressed, absf(amount))
+	_held[pressed] = true
 
 
 func _sample() -> void:

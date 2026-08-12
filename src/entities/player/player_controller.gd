@@ -27,6 +27,7 @@ const STEP_SOUND_PATHS := [
 	"res://assets/audio/foley/footstep_snow_02.wav",
 ]
 const FOOTPRINT_EVENT := &"player.footprint"
+const FURROW_EVENT := &"player.furrow"
 
 ## The four takes this slice uses, out of the twenty-one in the merged library.
 ## Shooting, aiming, sneaking, the limp, the knockdown and the two deaths are
@@ -124,37 +125,95 @@ const BREATH_MOUTH_OFFSET := Vector3(0.0, 0.16, 0.17)
 @export var print_scale_jitter := 0.08
 
 ## ---------------------------------------------------------------------------
-## Prints trenching together in the deepest snow
+## The furrow the legs plough in deep snow
 ## ---------------------------------------------------------------------------
-## Past about knee depth the legs stop clearing the snow between footfalls and
-## start ploughing through it, so the gap between consecutive prints partly
-## fills in. On a scoured crest nothing of the sort happens, which is why this
-## is gated on the same depth ratio that already drives the print's size,
-## softness and raggedness -- one fact about the snow, read four ways.
+## Past wading depth you cannot lift your feet clear of the snow. You drag them,
+## and a dragged boot does not stamp, it PLOUGHS -- so what the walker leaves
+## between his prints is not a fainter footprint, it is a groove with an
+## inverted-triangle cross-section (倒三角): deepest along the centre line and
+## rising in a straight taper to the surface at both edges. TrackMask.plough()
+## holds that shape and the reasoning for it.
 ##
-## A HINT, and the numbers here are what "a hint" costs. Two earlier passes were
-## both plainly wrong and both are worth recording, because the failure is not
-## the one you would guess:
+## THREE PASSES AT THIS, AND THE FIRST TWO ARE WORTH KEEPING ON THE RECORD,
+## because neither failure is the one the numbers suggest:
 ##
-##   0.50 strength / 0.70 width, from 0.45 depth -- the prints dissolved
-##       outright and the trail became a continuous white ridge.
+##   0.50 strength / 0.70 width, from 0.45 depth -- the prints dissolved outright
+##       and the trail became a continuous white ridge.
 ##   0.30 strength / 0.42 width, from 0.55 depth -- still a ribbon: an angular
 ##       zigzag snake with the prints absorbed into its corners.
+##   0.16 strength / 0.32 width, from 0.80 depth -- tuned down far enough to
+##       escape the second failure and straight past "a hint" into absent. There
+##       was no trench at all, only isolated ovals.
 ##
-## The second failure was geometric rather than a matter of degree, and no
-## reduction in strength would have fixed it -- see _place_print() on why the
-## groove now runs down the centre line instead of foot to foot. What is left is
-## a groove a sixth as strong as a print, a third of its width, and only in the
-## deepest fifth of the depth range.
-@export var trench_depth_start := 0.8
-@export var trench_strength := 0.16
-@export var trench_width := 0.32
-@export var trench_irregularity := 0.25
+## The second failure was GEOMETRIC and no amount of tuning addressed it, which
+## is why the third pass -- tuning -- landed on nothing rather than on something.
+## A groove emitted as one segment per footfall is a polyline by construction:
+## the segment is 0.72 m long and the groove is 0.17 m wide, so every change of
+## direction is a twelve-to-one elbow with a hard corner in it. Noise does not
+## hide a corner, it gives you a noisy corner. 需要避免之前那种连续的折线的感官.
+##
+## So the furrow is no longer drawn between footfalls at all. advance_furrow()
+## samples the walker's REAL position every physics tick and stamps along the
+## path actually travelled, in segments shorter than the groove is wide -- and
+## then the groove curves because the walk curves, with no joint anywhere to see.
+##
+## THE GATE, in metres of snow rather than as a fraction of whatever the field's
+## maximum happens to be. 0.42 m is SnowField.deep_depth_m, the depth the game
+## already calls "reduced to a trudge": the furrow starts exactly where wading
+## starts, which is the physical claim rather than a tuned one. Measured over an
+## 80 m square of the shipped field, 41% of the ground is at or above it, 35%
+## carries no snow at all, and the maximum is 0.60 m -- so a scoured crest never
+## furrows and a drift always does. The taper out at a drift's edge needs no
+## second rule: `bite` below goes to zero on its own.
+@export var furrow_depth_start_m := 0.42
 
-## A groove is only drawn between two steps that actually followed each other.
-## Beyond this many strides apart the walker stopped, turned, or the game
-## restarted, and joining them would rule a line across untouched snow.
-@export var trench_max_stride_gap := 1.8
+## Peak depth on the centre line, in mask units, in the deepest snow. Against a
+## footprint's 1.0 at the same depth -- so the boot pockets still win outright
+## wherever they overlap the channel, which is what keeps their outlines.
+@export var furrow_strength := 0.72
+
+## Half-width in the deepest snow. About a 34 cm channel, which is the width of
+## a pair of legs dragged through a drift, and the number that sets how steep the
+## two flanks are: at this depth and width they meet the snow at about 13
+## degrees, which is enough to put them either side of the shader's grain band.
+@export var furrow_half_width_m := 0.17
+
+## Shallower snow ploughs a narrower channel as well as a shallower one, down to
+## this fraction of the width at the gate.
+@export var furrow_narrow_at_gate := 0.55
+
+## How fast the furrow bites once it bites at all. Below 1 it rises steeply just
+## past the gate and flattens off deeper in -- which is what stops the third
+## pass's failure from coming back, because a linear ramp across the 0.42 .. 0.60
+## band spends its first metres of drift drawing something invisible.
+@export var furrow_onset := 0.5
+
+## How far the walker travels between furrow samples. Small ENOUGH IS THE WHOLE
+## POINT: it has to stay under furrow_half_width_m, because that is what makes
+## the union of the segments the exact swept region of the path rather than a
+## chain of capsules with visible joins. At 6 cm it is a third of the width, and
+## about two and a half physics ticks at walking pace.
+@export var furrow_sample_m := 0.06
+
+## Further than this in one tick is not a walk. A respawn, a scene restart or a
+## `--start` teleport puts the walker somewhere he did not walk to, and joining
+## the two would rule a furrow across untouched snow. Well over the 9 cm a
+## physics tick can cover at full sprint.
+@export var furrow_max_jump_m := 0.5
+
+## The wobble down the run, so the channel does not read as an extruded ribbon.
+## Indexed by DISTANCE WALKED rather than sampled per segment, so it is a smooth
+## function of the path and neighbouring segments agree with each other -- which
+## is what keeps the joints invisible while the depth and width still wander.
+##
+## The wavelength has to stay comfortably longer than the groove is wide. The
+## segments composite with max(), so a wobble whose own slope beats the flank's
+## is flattened into its own upper envelope; at 1.1 m against a 0.17 m width
+## there is a factor of twenty in hand.
+@export var furrow_wobble_wavelength_m := 1.1
+@export var furrow_depth_wobble := 0.22
+@export var furrow_width_wobble := 0.25
+@export var furrow_wobble_seed := 20260812
 
 ## How far a print skews down the fall line, per unit of slope. The mask is a
 ## plan view, so a shape that is round on a tilted surface is already stored
@@ -307,8 +366,10 @@ var _stride_accumulator := 0.0
 var _left_foot := true
 var _facing := Vector3.FORWARD
 var _grounded := false
-var _last_print_centre := Vector3.ZERO
-var _has_last_print := false
+var _furrow_noise: FastNoiseLite
+var _furrow_anchor := Vector3.ZERO
+var _has_furrow_anchor := false
+var _furrow_travel := 0.0
 
 
 func _ready() -> void:
@@ -861,10 +922,13 @@ func _physics_process(delta: float) -> void:
 	# physics body, so the field is read directly. Feet land between the bare
 	# ground and the snow surface -- on a scoured crest those are the same
 	# place, in a hollow they are a metre apart and the body sinks into it.
+	var snow_depth := 0.0
+	var snow_max := 1.0
 	if _snow != null:
 		var ground: float = _snow.terrain_height_at(global_position)
-		var depth: float = _snow.depth_at(global_position)
-		var wanted_y := ground + depth * (1.0 - sink_fraction)
+		snow_depth = _snow.depth_at(global_position)
+		snow_max = maxf(_snow.max_depth_m, 0.0001)
+		var wanted_y := ground + snow_depth * (1.0 - sink_fraction)
 		if _grounded:
 			var blend := 1.0 - exp(-vertical_smoothing * delta)
 			global_position.y = lerpf(global_position.y, wanted_y, blend)
@@ -873,6 +937,15 @@ func _physics_process(delta: float) -> void:
 			# from wherever the scene happened to place the body.
 			global_position.y = wanted_y
 			_grounded = true
+
+	# The furrow, from where the body ACTUALLY is on this tick -- not from where
+	# the last foot landed. See advance_furrow(): that distinction is the whole
+	# of the third pass at this feature. Called whatever the snow is doing, so
+	# the anchor keeps up with the walker across ground too thin to plough.
+	var furrows := advance_furrow(global_position, snow_depth, snow_max)
+	if _bus != null:
+		for sample in furrows:
+			_bus.emit_event(FURROW_EVENT, sample)
 
 	var travelled := Vector2(global_position.x - before.x, global_position.z - before.z).length()
 	if travelled > 0.0001:
@@ -920,13 +993,6 @@ func _place_print() -> void:
 	# darker than one across a wind-scoured patch -- and sound different too.
 	var depth_ratio := clampf(depth / max_depth, 0.0, 1.0)
 	var strength := clampf(0.34 + 0.66 * depth_ratio, 0.0, 1.0)
-
-	# The walker's centre line, not the foot. Recorded whether or not the event
-	# goes out, so the next step measures its gap from the right place.
-	var previous := _last_print_centre
-	var had_previous := _has_last_print
-	_last_print_centre = global_position
-	_has_last_print = true
 
 	if _bus == null:
 		return
@@ -979,30 +1045,97 @@ func _place_print() -> void:
 		"pack_amount": 0.09,
 	}
 
-	# Ramped in rather than switched on: a hard threshold would put a visible
-	# line across the snow at whatever depth it sat at, with a channel on one
-	# side of it and separate prints on the other.
-	var trench := smoothstep(trench_depth_start, 1.0, depth_ratio)
-	if trench > 0.0 and had_previous \
-			and global_position.distance_to(previous) <= stride_length * trench_max_stride_gap:
-		# DOWN THE CENTRE LINE, not from the last print to this one. Consecutive
-		# prints alternate sides, so joining them draws a polyline that reverses
-		# its lateral offset at every step -- an angular zigzag with a hard
-		# corner in each print, which is what the second pass shipped and what
-		# made it read as a snake rather than as snow. The walker's own path has
-		# no such corners: it is a smooth curve sampled every stride, so the
-		# segments meet almost straight. It is also what actually happens --
-		# the legs plough a channel down the middle and the boots punch pockets
-		# either side of it.
-		payload["trench_from"] = previous
-		payload["trench_to"] = global_position
-		payload["trench_strength"] = strength * trench_strength * trench
-		# Measured off the print's half-width, not its half-length -- the groove
-		# is as wide as the leg that dragged through it, and the print is longer
-		# than it is wide. At this width it reaches the inner edge of each print
-		# and no further, which is the whole of the effect: the gap partly fills,
-		# the outlines survive.
-		payload["trench_radius"] = print_radius * scale / print_aspect * trench_width
-		payload["trench_irregularity"] = trench_irregularity * trench
-
 	_bus.emit_event(FOOTPRINT_EVENT, payload)
+
+
+## ---------------------------------------------------------------------------
+## The furrow
+## ---------------------------------------------------------------------------
+## Every furrow segment the walk from the last anchor to `here` has earned.
+##
+## Called once per physics tick with the body's real position, and it returns
+## payloads rather than emitting them so the geometry can be tested without a
+## scene tree, a bus or a snow field. That matters more than it usually would:
+## the two rejected passes at this feature failed on GEOMETRY -- the shape of the
+## line, not the strength of it -- and a straight-line screenshot cannot tell a
+## good version from a bad one. tests/unit/test_furrow.gd walks an arc and
+## measures the corner in degrees.
+##
+## The anchor advances whether or not anything is drawn, so a walker crossing
+## from a drift onto a scoured crest and back again does not join the two drifts
+## with a line across the bare ground between them.
+func advance_furrow(here: Vector3, depth: float, max_depth: float) -> Array[Dictionary]:
+	var samples: Array[Dictionary] = []
+	if not _has_furrow_anchor:
+		_has_furrow_anchor = true
+		_furrow_anchor = here
+		return samples
+
+	var from := _furrow_anchor
+	var step := Vector2(here.x - from.x, here.z - from.z).length()
+	if step > furrow_max_jump_m:
+		# Not a walk: a respawn, a restart, or a harness dropping the body
+		# somewhere else. Re-anchor and draw nothing.
+		_furrow_anchor = here
+		return samples
+	if step < furrow_sample_m:
+		return samples
+	_furrow_anchor = here
+
+	# A physics tick cannot cover more than about 9 cm at full sprint, so this
+	# splits nothing in practice. It is here for the frame that stalls: one long
+	# segment is exactly the polyline the whole design avoids.
+	var pieces := maxi(int(ceilf(step / maxf(furrow_sample_m, 0.001))), 1)
+	for index in range(pieces):
+		var a := from.lerp(here, float(index) / float(pieces))
+		var b := from.lerp(here, float(index + 1) / float(pieces))
+		# Advanced even when the gate is shut, so the wobble stays a continuous
+		# function of ground covered rather than of ground covered in deep snow.
+		_furrow_travel += step / float(pieces)
+		var sample := _furrow_sample(a, b, depth, max_depth)
+		if not sample.is_empty():
+			samples.append(sample)
+	return samples
+
+
+## One segment, or an empty dictionary where the snow is too thin to plough.
+func _furrow_sample(from: Vector3, to: Vector3, depth: float, max_depth: float) -> Dictionary:
+	var span := maxf(max_depth - furrow_depth_start_m, 0.001)
+	var bite := clampf((depth - furrow_depth_start_m) / span, 0.0, 1.0)
+	if bite <= 0.0:
+		return {}
+	# See furrow_onset: below 1 this rises steeply off the gate, so the first
+	# metres of a drift draw something you can actually see.
+	bite = pow(bite, furrow_onset)
+	return {
+		"from": from,
+		"to": to,
+		"depth": maxf(
+			furrow_strength * bite * (1.0 + _wobble(_furrow_travel) * furrow_depth_wobble),
+			0.0
+		),
+		"half_width": maxf(
+			furrow_half_width_m
+				* lerpf(furrow_narrow_at_gate, 1.0, bite)
+				* (1.0 + _wobble(_furrow_travel + WOBBLE_WIDTH_PHASE) * furrow_width_wobble),
+			0.01
+		),
+	}
+
+
+## Far enough along the same noise that the width never tracks the depth. Any
+## large offset does; this one is prime and unmemorable on purpose.
+const WOBBLE_WIDTH_PHASE := 613.0
+
+
+## The wobble, as a function of metres walked. One noise field, built once, with
+## a fixed seed -- the variation has to be reproducible or a print laid down on
+## one frame could be redrawn differently on the next.
+func _wobble(travel: float) -> float:
+	if _furrow_noise == null:
+		_furrow_noise = FastNoiseLite.new()
+		_furrow_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+		_furrow_noise.fractal_octaves = 2
+		_furrow_noise.seed = furrow_wobble_seed
+		_furrow_noise.frequency = 1.0 / maxf(furrow_wobble_wavelength_m, 0.01)
+	return _furrow_noise.get_noise_1d(travel)
