@@ -333,3 +333,21 @@ git ls-files -z -- '*.gd' '*.gdshader' '*.md' '*.tres' '*.tscn' | xargs -0 grep 
 ```
 
 Why it matters even though git hides it: an exact-string `Edit` against a CRLF file can fail to match a pattern written with LF, and the failure looks like the string being absent rather than the line endings differing. **When writing files from a script, write LF explicitly** (`newline="\n"` in Python's `open`) rather than relying on the platform default.
+
+### Trap 12 — `use_custom_timeline` stops the skeleton, and every parameter still reads correct
+
+Blending two locomotion clips of different cycle lengths needs them put on a common period. `AnimationNodeAnimation.use_custom_timeline` looks like exactly that feature, and on 4.7.1 it **does not work here**: enable it and the skeleton stops moving. Measured thigh swing range **0.000 rad** at gait 0.5 and at gait 1.0.
+
+There is no error, no warning, and nothing in the inspector looks wrong — `blend_amount`, `scale`, every parameter reads back the value you set. The only symptom is a character standing still while the graph insists it is running.
+
+Put each clip behind its own `AnimationNodeTimeScale` instead, holding a constant that maps its natural period onto the shared one:
+
+```
+walk (1.0667 s) -> TimeScale 1.60 --\
+                                     >-- Blend2 (sync = true) --> TimeScale (pace) -->
+run  (0.6667 s) -> TimeScale 1.00 --/
+```
+
+Then compute the downstream pace in **strides**, not in metres per second — once the clips are re-timed, neither is playing at its own length any more, so a pace derived from a clip's authored ground speed is wrong.
+
+Related and in the same graph: **`AnimationNodeBlend2.sync` defaults to `false`**, which freezes an input at whatever frame it held when its weight last reached 0, so it re-enters the mix at a stale phase. Set it deliberately on every Blend2 and say why in a comment. Unsynced blending of two locomotion cycles produced a **2.02 s beat** in this project while both endpoints measured clean 0.67 s strides — the character walked with his legs splayed apart, and it looked like a broken animation asset rather than a wiring fault.
