@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="UITokens" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/ui_tokens.gd" id="1_he6so"]
+
+[resource]
+script = ExtResource("1_he6so")
+ink_primary = Color(0.56078434, 0.6901961, 0.84705883, 1)
+ink_secondary = Color(0.45490196, 0.56078434, 0.73333335, 1)
+ink_muted = Color(0.3647059, 0.48235294, 0.6509804, 1)
+line_hairline = Color(0.2, 0.28627452, 0.43137255, 1)
+line_deep = Color(0.10980392, 0.16470589, 0.27058825, 1)
+scrim_veil = Color(0.07450981, 0.10980392, 0.1882353, 1)
+life_warm = Color(1, 0.69803923, 0.34117648, 1)
+life_ember = Color(0.627451, 0.3529412, 0.20784314, 1)
+alarm_blood = Color(0.43137255, 0.18431373, 0.18039216, 1)
+opacity_steps = PackedFloat32Array(1, 0.72, 0.48, 0.24, 0.12)
+display_latin_path = "res://assets/fonts/CormorantGaramond-VF.ttf"
+display_cjk_path = "res://assets/fonts/NotoSerifSC-VF.otf"
+interface_latin_path = "res://assets/fonts/Inter-VF.ttf"
+interface_cjk_path = "res://assets/fonts/NotoSansSC-VF.otf"
+instrument_path = "res://assets/fonts/IBMPlexMono-Light.ttf"
