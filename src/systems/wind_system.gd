@@ -96,6 +96,8 @@ extends Node
 
 const SERVICE := &"wind"
 const PROFILE_PATH := "res://data/weather/wind_valley.tres"
+const MAP_PATH := "res://data/weather/wind_map.tres"
+const LIGHTING_SERVICE := &"lighting"
 
 ## The group `Snowfall` publishes its layers in. Spelled out rather than read off
 ## `SnowfallLayer.GROUP`, so this file holds no reference to that one: deleting
@@ -112,9 +114,26 @@ const EVENT_SQUALL_STARTED := &"wind.squall_started"
 const EVENT_SQUALL_ENDED := &"wind.squall_ended"
 const EVENT_DIRECTION_SHIFTED := &"wind.direction_shifted"
 
-## The weather this run opens on. A different file is a different wind; see
-## `data/weather/wind_gale.tres`, which exists to prove exactly that.
+## Which wind blows under which sky. Five profiles, mapped onto the six lighting
+## presets, because a whiteout is not a pale day with more snow -- see
+## `src/definitions/wind_map.gd` for the whole of that argument and for why
+## `deep_night` gets the calmest wind in the game.
+@export var map_path := MAP_PATH
+
+## The wind used when there is no map and no lighting to ask. Also what
+## `--profile` on the capture tool loads.
 @export var profile_path := PROFILE_PATH
+
+## How long the wind takes to become a different wind when the sky changes, as a
+## time constant. Matched to `Snowfall.rate_response_seconds` and to the lighting
+## crossfade, because all three are showing the SAME weather and they must not
+## disagree about when it happened.
+##
+## The crossfade is on the OUTPUT, not on the parameters: both profiles are pure
+## functions of the same `t`, so the outgoing wind goes on gusting its own way
+## while the incoming one takes over. Interpolating the parameters instead would
+## have produced a third wind nobody authored, for six seconds, every dusk.
+@export var profile_response_seconds := 6.0
 
 ## Multiplies the clock the model is sampled against. For tools only --
 ## `tools/capture_gust.gd` needs a squall inside a few seconds of capture, and
@@ -138,6 +157,16 @@ const EVENT_DIRECTION_SHIFTED := &"wind.direction_shifted"
 @export var rescan_seconds := 2.0
 
 var _profile: WindProfile = null
+## The wind we are crossfading OUT of, and how far through. See
+## `profile_response_seconds`.
+var _previous: WindProfile = null
+var _blend := 1.0
+var _map: WindMap = null
+var _lighting = null
+## The look the current profile came from, so a change is noticed once.
+var _seen_preset: StringName = &""
+## True once a weather system has taken the wheel with `set_profile()`.
+var _overridden := false
 var _bus = null
 var _elapsed := 0.0
 var _strength := 0.0
@@ -281,6 +310,16 @@ func strength() -> float:
 	return _strength
 
 
+## The wind now blowing, which is the incoming profile once a crossfade is over.
+func active_profile() -> WindProfile:
+	return _profile
+
+
+## 1.0 when the wind is fully whichever profile the sky asks for.
+func profile_blend() -> float:
+	return _blend
+
+
 func heading_degrees() -> float:
 	return _heading
 
@@ -302,6 +341,16 @@ func profile() -> WindProfile:
 	return _profile
 
 
+func set_map(map) -> void:
+	_map = map
+	_seen_preset = &""
+
+
+func set_lighting(lighting) -> void:
+	_lighting = lighting
+	_seen_preset = &""
+
+
 func elapsed() -> float:
 	return _elapsed
 
@@ -316,9 +365,46 @@ func elapsed() -> float:
 ## changed, and resetting would put every profile change on the same phase of the
 ## same gust, which is the one way to make weather look scripted.
 func set_profile(profile_resource) -> void:
+	_overridden = true
+	_adopt(profile_resource, true)
+
+
+## Takes a new wind without claiming ownership -- what the sky change uses.
+## `immediate` skips the crossfade, which only the first frame of a run wants.
+func _adopt(profile_resource, immediate: bool) -> void:
+	if profile_resource == null or profile_resource == _profile:
+		return
+	if _profile != null and not immediate:
+		_previous = _profile
+		_blend = 0.0
+	else:
+		_previous = null
+		_blend = 1.0
 	_profile = profile_resource
-	if _profile != null:
+	if immediate:
 		_settle()
+
+
+## The wind the sky is asking for, or nothing if nobody can say. Resolved through
+## the ServiceRegistry rather than by path, the same way `Snowfall.set_lighting()`
+## does, and guarded on the METHOD rather than the type so a stand-in or a
+## director that has not registered yet is a quiet no-op.
+func _wanted_profile() -> WindProfile:
+	if _overridden or _map == null:
+		return null
+	if _lighting == null:
+		var registry := _registry()
+		if registry != null:
+			_lighting = registry.get_service(LIGHTING_SERVICE)
+	if _lighting == null or not _lighting.has_method("active_preset"):
+		return null
+	var look = _lighting.active_preset()
+	if look == null:
+		return null
+	if look.id == _seen_preset:
+		return null
+	_seen_preset = look.id
+	return _map.profile_for(look.id)
 
 
 ## `WeatherEventDefinition.wind_speed_multiplier`, which already exists in the
@@ -348,8 +434,14 @@ func _ready() -> void:
 	var registry := _registry()
 	if registry != null:
 		registry.register(SERVICE, self)
+	if _map == null:
+		_map = load(map_path)
 	if _profile == null:
-		_profile = load(profile_path)
+		# The sky is asked on the first frame rather than here: LightingDirector is
+		# a sibling and a node's _ready() runs before its later siblings' do, so
+		# resolving the look now would read a director that has not chosen one.
+		# SnowAccumulation arms itself the same way and for the same reason.
+		_profile = _map.default_profile() if _map != null else load(profile_path)
 	if _bus == null and is_inside_tree():
 		_bus = get_node_or_null("/root/EventBus")
 	_settle()
@@ -376,6 +468,8 @@ func _registry() -> Node:
 func _settle() -> void:
 	if _profile == null:
 		return
+	_previous = null
+	_blend = 1.0
 	_strength = strength_at(_profile, _elapsed)
 	_heading = heading_at(_profile, _elapsed)
 	_reported_heading = _heading
@@ -395,9 +489,45 @@ func advance(delta: float) -> void:
 	if not _settled:
 		_settle()
 	_elapsed += maxf(delta, 0.0)
-	_strength = strength_at(_profile, _elapsed)
-	_heading = heading_at(_profile, _elapsed)
+	# The sky first, so a look that changed this frame is already being crossfaded
+	# toward rather than starting a frame late.
+	var wanted := _wanted_profile()
+	if wanted != null:
+		_adopt(wanted, false)
+	_advance_blend(delta)
+	_strength = blended(strength_at(_previous, _elapsed), strength_at(_profile, _elapsed), _blend)
+	_heading = blended(heading_at(_previous, _elapsed), heading_at(_profile, _elapsed), _blend)
 	_report()
+
+
+## Exponential ease, frame-rate independent: what is fixed is the fraction of the
+## gap closed per second, not per frame. The same form `Snowfall` and `CameraRig`
+## use, so the sky, the snow and the wind arrive together.
+func _advance_blend(delta: float) -> void:
+	if _previous == null or _blend >= 1.0:
+		_blend = 1.0
+		return
+	if profile_response_seconds <= 0.0 or delta <= 0.0:
+		_blend = 1.0
+	else:
+		_blend = clampf(_blend + (1.0 - _blend) * (1.0 - exp(-delta / profile_response_seconds)), 0.0, 1.0)
+	# RELEASED at 0.995 rather than at 1.0, which an exponential never reaches.
+	# The snap that costs is bounded by 0.005 times the gap between the two winds
+	# -- under 0.005 even from the still night to the gale, against a model whose
+	# ordinary frame-to-frame movement is 0.007. Invisible, and it is what stops a
+	# run evaluating a profile it stopped using half a minute ago.
+	if _blend > 0.995:
+		_blend = 1.0
+		_previous = null
+
+
+## Between the outgoing wind and the incoming one. Static because it is the one
+## place a crossfade could put a step in the picture, and a test should be able to
+## say so without a tree.
+static func blended(before: float, after: float, blend: float) -> float:
+	if blend >= 1.0:
+		return after
+	return lerpf(before, after, clampf(blend, 0.0, 1.0))
 
 
 func _process(delta: float) -> void:

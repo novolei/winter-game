@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="WindProfile" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/wind_profile.gd" id="1_4dfvi"]
+
+[resource]
+script = ExtResource("1_4dfvi")
+id = &"wind_calm"
+display_name = "Calm"
+presets = Array[StringName]([&"flat", &"sunrise"])
+wander_degrees = 20.0
+wander_seconds = 58.0
+gust_veer_degrees = 10.0
+base_strength = 0.04
+gust_depth = 0.18
+gust_seconds = 11.0
+gust_sharpness = 2.5
+squall_gain = 0.18
+squall_seconds = 11.0
+squall_interval_seconds = 110.0
+gust_threshold = 0.16
+lull_threshold = 0.055
+lull_hysteresis = 0.03

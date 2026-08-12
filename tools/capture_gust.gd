@@ -153,6 +153,14 @@ func _capture() -> void:
 		# How far the middle wire has swung from where it was strung. Printed
 		# because five pixels of coherent motion is exactly the size of cue that
 		# is obvious in play and invisible when comparing two stills by eye.
+		# The tyre swing, in degrees off vertical. A pendulum's whole value is that
+		# it LAGS, and a lag is a relationship between two numbers over time --
+		# invisible in any single frame, obvious in a column of them beside the
+		# strength that caused it.
+		var tyre := get_node_or_null("Main/Farmstead/TreeA/TireSwing") as Node3D
+		if tyre != null:
+			var swung := Vector2(tyre.rotation.z, tyre.rotation.x).length()
+			line += "  tyre=%5.2fdeg" % rad_to_deg(swung)
 		var wire := get_node_or_null("Main/Farmstead/Wires/WireDrop") as Node3D
 		if wire != null and _wire_rest != Vector3.INF:
 			line += "  wire=%+.3f,%+.3f,%+.3f" % [

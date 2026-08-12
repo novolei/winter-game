@@ -33,6 +33,16 @@ extends Resource
 @export var id: StringName = &""
 @export var display_name: String = ""
 
+## Which lighting presets this wind blows under. The six presets already carry
+## the weather's identity -- `Snowfall.storm_by_preset` reads them for the same
+## reason -- so a profile naming the looks it serves is how a whiteout comes to
+## have a different wind from a pale day. Resolved through `WindMap`.
+##
+## The same shape `MusicCue` uses for its situations, and for the same reason:
+## one entry can serve several looks (`flat` and `sunrise` share a wind) without
+## anything having to hold a table.
+@export var presets: Array[StringName] = []
+
 @export_group("Direction")
 
 ## Where the wind comes FROM -- no. Where it BLOWS TO, in degrees about +Y, with

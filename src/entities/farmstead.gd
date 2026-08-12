@@ -359,6 +359,50 @@ func _ready() -> void:
 	_settle_all()
 	_string_wires()
 	_draw_the_lines()
+	_join_the_wind()
+
+
+## ---------------------------------------------------------------------------
+## What here moves in the wind
+## ---------------------------------------------------------------------------
+
+
+## Publishes the props that the wind should move, by group, so this file holds no
+## reference to anything in `src/rendering/` and nothing there holds one to this.
+## Deleting the whole wind system has to leave the farm standing.
+##
+## CLASSIFIED BY THE ASSET A PROP WAS INSTANCED FROM, not by its node name.
+## `TreeA`..`TreeJ` is a naming convention and the eleventh tree will be called
+## something else one day; `assets/models/vegetation/` is what the thing IS.
+func _join_the_wind() -> void:
+	for prop in _descendants(self):
+		var joins := wind_group_for(prop.scene_file_path)
+		if joins != &"":
+			prop.add_to_group(joins)
+
+
+## Which wind group, if any, a prop instanced from `scene_path` belongs in.
+##
+## Static and taking the path rather than the node, so the classification can be
+## tested without building a farm -- see tests/unit/test_wind.gd.
+static func wind_group_for(scene_path: String) -> StringName:
+	if scene_path.contains("/vegetation/"):
+		# Bare wood. Stiff, still in a lull, whips when a gust crosses.
+		return &"wind_branches"
+	if scene_path.contains("tire_swing"):
+		# The one true pendulum on the farm: a heavy dark thing on a rope,
+		# isolated against pale snow, whose lag is what says there is air here.
+		return &"wind_swing"
+	return &""
+
+
+static func _descendants(root: Node) -> Array[Node3D]:
+	var found: Array[Node3D] = []
+	for child in root.get_children():
+		if child is Node3D:
+			found.append(child as Node3D)
+		found.append_array(_descendants(child))
+	return found
 
 
 ## ---------------------------------------------------------------------------

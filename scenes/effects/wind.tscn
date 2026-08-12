@@ -1,7 +1,7 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=5 format=3]
 
 ; THE WIND. The source every wind hook in this project was built to be driven by
-; and none of them had -- plus the two things that make it VISIBLE, because a
+; and none of them had -- plus the four things that make it VISIBLE, because a
 ; wind you cannot see is a wind that is not there.
 ;
 ; Instance this anywhere in the world. Nothing here cares where it sits:
@@ -10,16 +10,23 @@
 ;     tree on a timer, so it needs no paths and no ordering.
 ;   * Spindrift places itself on the ground under whatever the camera is looking
 ;     at, every frame, the same way the snowfall layers do.
-;   * WireSway drives whatever has joined the `wind_sway` group, wherever that
-;     is. Farmstead._span() is the only joiner today.
+;   * WireSway, TireSwing and Branches each drive a GROUP. Farmstead is the only
+;     joiner today -- see Farmstead._join_the_wind() and _span().
 ;
-; The two cues are CHILDREN of the system rather than siblings only because they
+; TireSwing and Branches are the SAME SCRIPT with different constants, because a
+; tyre on a rope and a frozen tree are the same equation with different numbers:
+; a driven damped oscillator, integrated, so the motion lags the wind, overshoots
+; it and rings after it. See src/rendering/wind_pendulum.gd for why that memory is
+; the whole difference between a pendulum and a sine.
+;
+; Every cue is a CHILD of the system rather than a sibling only because they
 ; belong together in the inspector. WindSystem's sweep does not treat them
 ; specially and would find them anywhere in the tree.
 
 [ext_resource type="Script" path="res://src/systems/wind_system.gd" id="1_wind"]
 [ext_resource type="Script" path="res://src/rendering/spindrift.gd" id="2_spindrift"]
 [ext_resource type="Script" path="res://src/rendering/wind_sway.gd" id="3_sway"]
+[ext_resource type="Script" path="res://src/rendering/wind_pendulum.gd" id="4_pendulum"]
 
 [node name="Wind" type="Node"]
 script = ExtResource("1_wind")
@@ -29,3 +36,31 @@ script = ExtResource("2_spindrift")
 
 [node name="WireSway" type="Node" parent="."]
 script = ExtResource("3_sway")
+
+; The tyre swing. Period DERIVED from the rope -- 1.74 m to the middle of the
+; tyre gives 2.65 s -- and lightly damped, so it is still swinging well after the
+; gust that started it has passed. That is the cue: not that it moves, but that
+; it is late and then keeps going.
+[node name="TireSwing" type="Node" parent="."]
+script = ExtResource("4_pendulum")
+group = &"wind_swing"
+hangs = true
+damping_ratio = 0.1
+drive_degrees = 13.0
+max_degrees = 24.0
+
+; The bare trees. Stiff and short-periodned rather than swaying: 0.62 s, damped
+; hard enough to take one swing back and stop, and BUFFETED at a few hertz so a
+; gust crossing snaps them instead of easing them over. Amplitude deliberately
+; tiny -- 1.6 degrees holds the crown of a 7 m tree inside 0.2 m and leaves the
+; trunk visually still, which is what frozen wood does.
+[node name="Branches" type="Node" parent="."]
+script = ExtResource("4_pendulum")
+group = &"wind_branches"
+hangs = false
+period_seconds = 0.62
+damping_ratio = 0.28
+drive_degrees = 1.6
+max_degrees = 3.2
+buffet_gain = 0.55
+buffet_hz = 2.3

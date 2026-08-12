@@ -6,6 +6,7 @@
 script = ExtResource("1_r87bm")
 id = &"wind_gale"
 display_name = "Gale"
+presets = Array[StringName]([&"whiteout"])
 wander_degrees = 38.0
 wander_seconds = 31.0
 gust_veer_degrees = 22.0

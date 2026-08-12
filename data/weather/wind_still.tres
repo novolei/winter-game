@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="WindProfile" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/wind_profile.gd" id="1_td6gm"]
+
+[resource]
+script = ExtResource("1_td6gm")
+id = &"wind_still"
+display_name = "Still night"
+presets = Array[StringName]([&"deep_night"])
+wander_degrees = 14.0
+wander_seconds = 71.0
+gust_veer_degrees = 6.0
+base_strength = 0.02
+gust_depth = 0.09
+gust_seconds = 14.0
+gust_sharpness = 3.0
+squall_gain = 0.0
+squall_interval_seconds = 200.0
+gust_threshold = 0.075
+lull_threshold = 0.03
+lull_hysteresis = 0.02

@@ -38,6 +38,7 @@ const SnowfallScript := preload("res://src/rendering/snowfall.gd")
 
 const VALLEY_PATH := "res://data/weather/wind_valley.tres"
 const GALE_PATH := "res://data/weather/wind_gale.tres"
+const MAP_PATH := "res://data/weather/wind_map.tres"
 
 const FRAME := 1.0 / 60.0
 
@@ -106,9 +107,39 @@ func _valley() -> WindProfile:
 	return load(VALLEY_PATH)
 
 
+func _map() -> WindMap:
+	return load(MAP_PATH)
+
+
+func _every_profile_path() -> Array:
+	var paths := []
+	for profile in _map().profiles:
+		paths.append(profile.resource_path)
+	return paths
+
+
+## The mean strength of a profile over four minutes.
+func _mean(profile: WindProfile) -> float:
+	var values := _sample(profile, FOUR_MINUTES, 0.25)
+	var total := 0.0
+	for v in values:
+		total += v
+	return total / float(values.size())
+
+
 func _system() -> Node:
 	var wind := WindScript.new()
 	wind.set_profile(_valley())
+	return _keep(wind)
+
+
+## A system that has NOT been handed a profile, so the sky is still allowed to
+## choose one. `set_profile()` claims ownership for good -- see
+## `test_a_weather_system_that_takes_the_wheel_keeps_it` -- so a test about the
+## sky choosing cannot use `_system()`.
+func _bare_system() -> Node:
+	var wind := WindScript.new()
+	wind.set_map(_map())
 	return _keep(wind)
 
 
@@ -203,7 +234,7 @@ func test_lulls_outlast_gusts() -> void:
 
 
 func test_the_strength_stays_inside_zero_and_one() -> void:
-	for profile_path in [VALLEY_PATH, GALE_PATH]:
+	for profile_path in _every_profile_path():
 		var profile: WindProfile = load(profile_path)
 		var t := 0.0
 		while t <= 600.0:
@@ -496,7 +527,7 @@ func _crossings(values: Array, level: float) -> int:
 ## does.
 func test_the_shipped_profiles_say_what_the_generator_says() -> void:
 	var Generator := load("res://tools/generate_wind_profiles.gd")
-	for spec in [Generator.VALLEY, Generator.GALE]:
+	for spec in Generator.ALL:
 		var path := "res://data/weather/%s.tres" % spec["id"]
 		var profile: WindProfile = load(path)
 		assert_not_null(profile, path)
@@ -505,6 +536,15 @@ func test_the_shipped_profiles_say_what_the_generator_says() -> void:
 		for key in spec:
 			var wanted = spec[key]
 			var found = profile.get(key)
+			if key == "presets":
+				# Array[StringName] against the generator's plain strings.
+				assert_eq(profile.presets.size(), (wanted as Array).size(), path)
+				for preset in wanted:
+					assert_true(
+						profile.presets.has(StringName(preset)),
+						"%s does not claim %s" % [path, preset]
+					)
+				continue
 			if wanted is float:
 				assert_almost_eq(
 					float(found), float(wanted), 0.00001,
@@ -515,7 +555,7 @@ func test_the_shipped_profiles_say_what_the_generator_says() -> void:
 
 
 func test_both_profiles_load_and_name_themselves() -> void:
-	for path in [VALLEY_PATH, GALE_PATH]:
+	for path in _every_profile_path():
 		var profile: WindProfile = load(path)
 		assert_not_null(profile, path)
 		assert_true(profile.id != &"", "%s has no id" % path)
@@ -687,3 +727,461 @@ func test_two_spans_get_different_phases() -> void:
 		assert_true(phase >= 0.0 and phase <= TAU)
 		seen[snappedf(phase, 0.0001)] = true
 	assert_eq(seen.size(), 5)
+
+
+# --- the pendulums: the tyre, and the frozen trees ---------------------------
+#
+# THE PROPERTY THAT MATTERS HERE IS MEMORY.
+#
+# A sine scaled by wind strength is exactly in phase with the wind at every
+# instant, and reads as a value being applied to an object rather than as an
+# object being pushed by air. Everything convincing about a pendulum is the ways
+# it FAILS to track its forcing: it arrives late, it goes past, and it is still
+# going after the gust has gone. Each of those is a test below, and not one of
+# them can pass for a sine.
+
+const PendulumScript := preload("res://src/rendering/wind_pendulum.gd")
+const FarmsteadScript := preload("res://src/entities/farmstead.gd")
+
+## The tyre: 1.74 m of rope to the middle of the tyre.
+const ROPE_M := 1.74
+const TYRE_ZETA := 0.10
+
+
+func _tyre_omega() -> float:
+	return sqrt(PendulumScript.GRAVITY / ROPE_M)
+
+
+## Runs the integrator against a constant drive and returns the angle every step.
+func _swing(drive: float, omega: float, zeta: float, seconds: float, step := FRAME) -> Array:
+	var angles := []
+	var angle := 0.0
+	var rate := 0.0
+	var t := 0.0
+	while t < seconds:
+		var next: Array = PendulumScript.step(angle, rate, drive, omega, zeta, step)
+		angle = next[0]
+		rate = next[1]
+		angles.append(angle)
+		t += step
+	return angles
+
+
+func _peak(angles: Array) -> float:
+	var peak := 0.0
+	for angle in angles:
+		peak = maxf(peak, absf(angle))
+	return peak
+
+
+func test_a_pendulum_in_still_air_does_not_move() -> void:
+	for angle in _swing(0.0, _tyre_omega(), TYRE_ZETA, 20.0):
+		assert_almost_eq(angle, 0.0, 0.000001)
+
+
+## IT ARRIVES LATE. A tenth of a period after the wind steps on, a real pendulum
+## has barely begun to move; a sine would already be wherever the wind says.
+func test_the_tyre_arrives_late() -> void:
+	var omega := _tyre_omega()
+	var drive := 0.22
+	var period := TAU / omega
+	var angles := _swing(drive, omega, TYRE_ZETA, period * 0.1)
+	var settled: float = PendulumScript.equilibrium(drive)
+	var reached: float = angles[angles.size() - 1]
+	assert_true(
+		reached < settled * 0.35,
+		"a tenth of a period in, it was already %.1f percent of the way there -- that is a sine"
+			% (100.0 * reached / settled)
+	)
+
+
+## IT GOES PAST. A step of wind carries it well beyond where that same wind can
+## hold it, which is the half of the motion that says the thing has mass.
+func test_the_tyre_overshoots_what_the_wind_can_hold() -> void:
+	var drive := 0.22
+	var angles := _swing(drive, _tyre_omega(), TYRE_ZETA, 12.0)
+	var settled: float = PendulumScript.equilibrium(drive)
+	var peak := _peak(angles)
+	assert_true(
+		peak > settled * 1.3,
+		"it peaked at %.4f against a resting angle of %.4f -- no overshoot at all" % [peak, settled]
+	)
+	# ...and then settles where the wind asks, rather than ringing forever.
+	assert_almost_eq(angles[angles.size() - 1], settled, 0.02)
+
+
+## IT IS STILL GOING AFTERWARDS. The gust passes and the tyre does not stop with
+## it. Lightly damped on purpose: this is the single most convincing thing the
+## effect does, and it is free.
+func test_the_tyre_goes_on_swinging_after_the_wind_drops() -> void:
+	var omega := _tyre_omega()
+	var angle := 0.0
+	var rate := 0.0
+	var t := 0.0
+	# Four seconds of wind...
+	while t < 4.0:
+		var next: Array = PendulumScript.step(angle, rate, 0.22, omega, TYRE_ZETA, FRAME)
+		angle = next[0]
+		rate = next[1]
+		t += FRAME
+	# ...then nothing at all.
+	var crossings := 0
+	var was_positive: bool = angle > 0.0
+	var widest_after := 0.0
+	t = 0.0
+	while t < 8.0:
+		var next: Array = PendulumScript.step(angle, rate, 0.0, omega, TYRE_ZETA, FRAME)
+		angle = next[0]
+		rate = next[1]
+		widest_after = maxf(widest_after, absf(angle))
+		if (angle > 0.0) != was_positive:
+			crossings += 1
+			was_positive = angle > 0.0
+		t += FRAME
+	assert_true(crossings >= 3, "it stopped dead with the wind: %d crossings in 8 s" % crossings)
+	assert_true(widest_after > 0.02, "nothing left to see: it only reached %.4f rad" % widest_after)
+
+
+## Measures the damped period from an impulse, by zero crossings.
+func _period_of(omega: float) -> float:
+	var angle := 0.3
+	var rate := 0.0
+	var t := 0.0
+	var first := -1.0
+	var last := -1.0
+	var crossings := 0
+	var was_positive := true
+	while t < 30.0:
+		var next: Array = PendulumScript.step(angle, rate, 0.0, omega, TYRE_ZETA, FRAME)
+		angle = next[0]
+		rate = next[1]
+		t += FRAME
+		if (angle > 0.0) != was_positive:
+			was_positive = angle > 0.0
+			crossings += 1
+			if first < 0.0:
+				first = t
+			last = t
+	if crossings < 3:
+		return 0.0
+	# Two crossings to a full cycle.
+	return 2.0 * (last - first) / float(crossings - 1)
+
+
+## The period is a fact about the rope, not a number somebody picked.
+func test_a_longer_rope_swings_slower() -> void:
+	var short := _period_of(sqrt(PendulumScript.GRAVITY / 0.6))
+	var long := _period_of(sqrt(PendulumScript.GRAVITY / 2.4))
+	assert_true(long > short * 1.7, "0.6 m swung in %.2f s and 2.4 m in %.2f s" % [short, long])
+	# TAU * sqrt(1.74 / 9.81) = 2.65 s, and lightly damped it is barely longer.
+	var tyre := _period_of(_tyre_omega())
+	assert_true(
+		tyre > 2.5 and tyre < 2.9,
+		"the tyre period came out at %.2f s against the 2.65 s its rope asks for" % tyre
+	)
+
+
+## No wind this game can produce puts the tyre over the branch it hangs from.
+##
+## Two separate guarantees, and it is worth keeping them apart. The RESTING angle
+## is bounded by construction, because the restoring term is `sin(theta)` rather
+## than a small-angle `theta` -- so `asin` caps it at a quarter turn whatever is
+## asked. The TRANSIENT is not: an underdamped step response goes 73 per cent
+## past its own equilibrium, every time, and that is the overshoot the whole
+## effect is built on.
+##
+## So the number that matters is the SUM. At the shipped `drive_degrees` of 13
+## the equilibrium is 13.0 degrees and the peak is 22.5, and `max_degrees` is set
+## at 24 -- above the natural overshoot on purpose, so the clamp is a backstop for
+## a pathological frame and never a thing that shapes the motion.
+func test_no_wind_can_put_the_tyre_over_the_branch() -> void:
+	var lean := sin(deg_to_rad(13.0))
+	var peak := _peak(_swing(lean, _tyre_omega(), TYRE_ZETA, 30.0))
+	assert_true(
+		peak < deg_to_rad(24.0),
+		"the tyre peaked at %.1f degrees against a ceiling of 24" % rad_to_deg(peak)
+	)
+	# ...and the clamp is a backstop rather than the shape of the motion: it must
+	# sit ABOVE what the physics actually does, or the swing would flatten off at
+	# the top of every gust and read as a mechanism.
+	assert_true(
+		peak > deg_to_rad(18.0),
+		"the peak of %.1f degrees is so far under the 24 degree clamp that "
+			% rad_to_deg(peak) + "drive_degrees and max_degrees have drifted apart"
+	)
+	# The resting angle is capped whatever is asked, which is what `asin` buys.
+	for drive in [0.5, 1.0, 4.0, 40.0]:
+		assert_true(absf(PendulumScript.equilibrium(drive)) <= PI * 0.5 + 0.0001)
+
+
+## A hanging thing and a standing thing lean opposite ways for the same weather,
+## because the mass is below the pivot in one case and above it in the other.
+func test_a_hanging_thing_and_a_standing_tree_lean_opposite_ways() -> void:
+	var hung: Basis = PendulumScript.tilt_basis(0.2, 0.0, true)
+	var stood: Basis = PendulumScript.tilt_basis(0.2, 0.0, false)
+	assert_true((hung * Vector3.DOWN).x > 0.05, "the tyre did not swing downwind")
+	assert_true((stood * Vector3.UP).x > 0.05, "the tree did not lean downwind")
+
+
+## Frozen wood is stiff. Still in a lull, moving in a gust -- and the contrast
+## between the two is the cue, so the ratio is what this asserts.
+func test_the_branches_are_still_in_a_lull_and_move_in_a_gust() -> void:
+	var omega := TAU / 0.62
+	var lean := sin(deg_to_rad(1.6))
+	var lull := _peak(_swing(lean * 0.06, omega, 0.28, 6.0))
+	var gust := _peak(_swing(lean * 0.60, omega, 0.28, 6.0))
+	assert_true(
+		gust > lull * 8.0,
+		"a gust moved them %.5f rad against %.5f in a lull -- there is no contrast" % [gust, lull]
+	)
+	# ...and small. These are frozen branches, not palm fronds: 1.6 degrees holds
+	# the crown of a 7 m tree inside 0.2 m and leaves the trunk visually still.
+	assert_true(
+		gust < deg_to_rad(2.6),
+		"the trees bent %.2f degrees, which is foliage in a breeze" % rad_to_deg(gust)
+	)
+
+
+## Turbulence is what makes bare wood WHIP rather than sway, and it has to be
+## per-tree: one eddy crossing eleven trees in step is a hedge, not a wood.
+func test_no_two_trees_are_hit_by_the_same_eddy() -> void:
+	var apart := 0.0
+	var t := 0.0
+	while t < 6.0:
+		var a: float = PendulumScript.buffet(t, 2.3, PendulumScript.phase_for(74311))
+		var b: float = PendulumScript.buffet(t, 2.3, PendulumScript.phase_for(90210))
+		apart = maxf(apart, absf(a - b))
+		t += 0.02
+	assert_true(apart > 0.4, "two trees were never more than %.3f apart" % apart)
+
+
+## An explicit integrator on an oscillator GAINS energy every cycle, and a tyre
+## swing that slowly winds itself up to a full loop is not a thing anybody would
+## guess at from the symptom. Checked at a deliberately cruel frame rate.
+func test_the_integrator_does_not_wind_itself_up_at_a_low_frame_rate() -> void:
+	for rate_hz in [60.0, 30.0, 15.0]:
+		var angles := _swing(0.22, _tyre_omega(), TYRE_ZETA, 120.0, 1.0 / rate_hz)
+		var settled: float = PendulumScript.equilibrium(0.22)
+		var late: float = angles[angles.size() - 1]
+		assert_true(
+			absf(late - settled) < 0.05,
+			"at %.0f fps it ended two minutes at %.4f against a resting %.4f"
+				% [rate_hz, late, settled]
+		)
+	# ...and the same for the trees, which are the stiffest thing here and so the
+	# hardest on the step size.
+	var stiff := _swing(0.03, TAU / 0.62, 0.28, 120.0, 1.0 / 15.0)
+	assert_true(_peak(stiff) < deg_to_rad(5.0), "the trees wound up at 15 fps")
+
+
+## Measured off the model rather than authored: the tyre swing .glb is built with
+## its origin at the hang point precisely so this is answerable.
+func test_the_rope_length_is_measured_off_the_model() -> void:
+	var hanger := _keep(Node3D.new()) as Node3D
+	var tyre := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = Vector3(0.5, 0.5, 0.5)
+	tyre.mesh = box
+	# Bottom of the box at -2.15, which is where the tyre swing model puts it.
+	tyre.position = Vector3(0.0, -1.9, 0.0)
+	hanger.add_child(tyre)
+	assert_almost_eq(PendulumScript.hang_length(hanger, 0.81, 1.74), 2.15 * 0.81, 0.01)
+	# Nothing hanging at all falls back rather than dividing by zero.
+	var bare := _keep(Node3D.new()) as Node3D
+	assert_almost_eq(PendulumScript.hang_length(bare, 0.81, 1.74), 1.74, 0.0001)
+
+
+## A prop is classified by the ASSET it came from, not by its node name. TreeA to
+## TreeJ is a convention and the eleventh tree will be called something else one
+## day; assets/models/vegetation/ is what the thing IS.
+func test_the_farmstead_sorts_its_props_by_the_asset_they_came_from() -> void:
+	assert_eq(
+		FarmsteadScript.wind_group_for("res://assets/models/vegetation/tree_bare_a.glb"),
+		&"wind_branches"
+	)
+	assert_eq(
+		FarmsteadScript.wind_group_for("res://assets/models/props/tire_swing.glb"),
+		&"wind_swing"
+	)
+	for standing in [
+		"res://assets/models/props/power_pole.glb",
+		"res://assets/models/props/power_wire.glb",
+		"res://assets/models/buildings/tool_shed/tool_shed.glb",
+		"res://assets/models/props/pickup_truck.glb",
+		"",
+	]:
+		assert_eq(FarmsteadScript.wind_group_for(standing), &"", standing)
+
+
+# --- the wind belongs to the weather ----------------------------------------
+#
+# THE DEFECT THESE WERE WRITTEN FOR, and it was found by another agent rather
+# than by me: the wind system shipped with ONE profile and drove it under every
+# sky, so a whiteout and a pale day produced the same 0.11 .. 0.90.
+#
+# It was nobody's decision. It fell out of the wind and the snow accumulation
+# being built in parallel, and it had a consequence neither of us would have
+# designed: the load's accumulation scales with SNOWFALL and its scour scales
+# with WIND, so an unchanging wind made the wind BITE HARDEST IN LIGHT SNOW.
+#
+# GDD section 7's weather kinds differ from each other in wind and snow TOGETHER
+# -- 暴雪 is both, 寒流's whole tell is 空气变得极静, 雪雾 is snow with almost no
+# wind -- so a model that cannot say "still and heavy" or "dry and blowing"
+# cannot express four of the six.
+
+
+## The headline: two skies, two winds.
+func test_a_whiteout_and_a_pale_day_do_not_get_the_same_wind() -> void:
+	var map := _map()
+	var day := map.profile_for(&"pale_day")
+	var storm := map.profile_for(&"whiteout")
+	assert_not_null(day)
+	assert_not_null(storm)
+	assert_true(day != storm, "the whiteout and the pale day share one profile")
+	var day_mean := _mean(day)
+	var storm_mean := _mean(storm)
+	assert_true(
+		storm_mean > day_mean * 2.0,
+		"a whiteout averages %.3f against a pale day's %.3f" % [storm_mean, day_mean]
+	)
+
+
+## GDD section 8: 风大 → 足迹速消 → 你安全；风停 → 足迹留存 → 你被跟上. The night
+## that leaves your trail intact is the night something follows it, so the
+## calmest wind in the game belongs to the deepest dark -- by decision, and this
+## is where the decision is written down.
+func test_the_still_night_is_the_calmest_wind_in_the_game() -> void:
+	var map := _map()
+	var night := map.profile_for(&"deep_night")
+	assert_not_null(night)
+	var calmest := _mean(night)
+	for profile in map.profiles:
+		if profile == night:
+			continue
+		assert_true(
+			_mean(profile) > calmest,
+			"%s is calmer than the deep night" % profile.id
+		)
+	# ...and calm enough that TrackMask's gale term is effectively off: at this
+	# strength a print keeps most of the eighty seconds its still-air decay gives.
+	assert_true(calmest < 0.10, "the still night averages %.3f, which is a breeze" % calmest)
+
+
+## Every look the lighting can present has a wind. A preset nothing claims falls
+## back to the default, which is correct but silent, so this is the check that
+## says the fallback is not doing the work.
+func test_every_lighting_preset_has_a_wind_of_its_own() -> void:
+	var map := _map()
+	var claimed := map.claimed_presets()
+	for preset in [&"flat", &"pale_day", &"sunrise", &"nightfall", &"deep_night", &"whiteout"]:
+		assert_true(claimed.has(preset), "no wind claims the %s sky" % preset)
+	# No look may be claimed twice: two profiles answering for one sky is a
+	# lookup whose answer depends on array order.
+	for preset in claimed:
+		var claims := 0
+		for profile in map.profiles:
+			if profile.presets.has(preset):
+				claims += 1
+		assert_eq(claims, 1, "%s is claimed by %d profiles" % [preset, claims])
+
+
+## The five winds are ordered, and the ordering is the design: still, calm,
+## valley, rising, gale. A run walks up it as the week goes on.
+func test_the_five_winds_are_in_the_order_the_week_needs() -> void:
+	var map := _map()
+	var previous := -1.0
+	for id in [&"wind_still", &"wind_calm", &"wind_valley", &"wind_rising", &"wind_gale"]:
+		var profile: WindProfile = map.by_id(id)
+		assert_not_null(profile, id)
+		if profile == null:
+			continue
+		var mean := _mean(profile)
+		assert_true(mean > previous, "%s averages %.3f, under the one before it" % [id, mean])
+		previous = mean
+
+
+## ...and they differ in STRUCTURE, not only in level. A whiteout that was the
+## valley wind with the volume up would still read as one weather.
+func test_the_winds_differ_in_character_and_not_only_in_volume() -> void:
+	var map := _map()
+	var valley: WindProfile = map.by_id(&"wind_valley")
+	var gale: WindProfile = map.by_id(&"wind_gale")
+	var still: WindProfile = map.by_id(&"wind_still")
+	# The gale gusts far more often than the valley...
+	assert_true(gale.gust_seconds < valley.gust_seconds * 0.5)
+	# ...with the lulls nearly closed up...
+	assert_true(gale.gust_sharpness < valley.gust_sharpness * 0.75)
+	# ...and the still night has no squalls at all, which is what makes it quiet
+	# rather than merely weak.
+	assert_almost_eq(still.squall_gain, 0.0, 0.0001)
+	assert_true(still.gust_seconds > valley.gust_seconds)
+
+
+## The sky changes over eight seconds and the snow over six. The wind must not
+## be the one thing in the picture that steps.
+func test_the_wind_crossfades_rather_than_cutting_when_the_sky_changes() -> void:
+	var wind := _bare_system()
+	var sky := SkyStandIn.new()
+	sky.preset = PresetStandIn.new()
+	sky.preset.id = &"pale_day"
+	wind.set_lighting(sky)
+	for i in 600:
+		wind.advance(FRAME)
+	var before: float = wind.strength()
+	sky.preset.id = &"whiteout"
+	var previous := before
+	var biggest_step := 0.0
+	# Forty seconds. The ease is exponential, so it approaches rather than
+	# arrives: at one time constant it is 63 per cent through and at six it is
+	# close enough that the crossfade releases the outgoing profile.
+	for i in 2400:
+		wind.advance(FRAME)
+		var now: float = wind.strength()
+		biggest_step = maxf(biggest_step, absf(now - previous))
+		previous = now
+	assert_true(
+		biggest_step < 0.03,
+		"the wind stepped by %.4f when the sky changed" % biggest_step
+	)
+	# ...and it did actually arrive, rather than easing so gently it never got
+	# there. The gale's floor alone is 0.28.
+	assert_eq(wind.active_profile().id, &"wind_gale")
+	assert_almost_eq(wind.profile_blend(), 1.0, 0.001)
+
+
+## A weather system taking the wheel keeps it. Two things easing the same number
+## in opposite directions is worse than either -- the same rule `Snowfall` and
+## `SnowAccumulation` already state for their own overrides.
+func test_a_weather_system_that_takes_the_wheel_keeps_it() -> void:
+	var wind := _bare_system()
+	var sky := SkyStandIn.new()
+	sky.preset = PresetStandIn.new()
+	sky.preset.id = &"pale_day"
+	wind.set_lighting(sky)
+	wind.set_profile(load(GALE_PATH))
+	sky.preset.id = &"deep_night"
+	for i in 600:
+		wind.advance(FRAME)
+	assert_eq(wind.active_profile().id, &"wind_gale")
+
+
+## A lighting director, in the one respect this reads one. RefCounted, so it
+## frees itself (briefing section 2.2).
+class PresetStandIn extends RefCounted:
+	var id: StringName = &""
+
+
+class SkyStandIn extends RefCounted:
+	var preset: PresetStandIn = null
+
+	func active_preset() -> PresetStandIn:
+		return preset
+
+
+## The map falls back rather than returning nothing when a sky names a look no
+## profile claims -- a new preset must not stop the wind.
+func test_an_unknown_sky_falls_back_instead_of_stopping_the_wind() -> void:
+	var map := _map()
+	var fallback: WindProfile = map.profile_for(&"eclipse")
+	assert_not_null(fallback, "an unclaimed preset left the world with no wind at all")
+	assert_eq(fallback.id, map.default_id)

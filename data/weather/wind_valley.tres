@@ -6,3 +6,4 @@
 script = ExtResource("1_ixsvw")
 id = &"wind_valley"
 display_name = "Valley wind"
+presets = Array[StringName]([&"pale_day"])

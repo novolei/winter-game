@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="WindMap" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/wind_profile.gd" id="1_8o5gj"]
+[ext_resource type="Resource" path="res://data/weather/wind_still.tres" id="2_h11hp"]
+[ext_resource type="Resource" path="res://data/weather/wind_calm.tres" id="3_lvtpl"]
+[ext_resource type="Resource" path="res://data/weather/wind_valley.tres" id="4_o2hwd"]
+[ext_resource type="Resource" path="res://data/weather/wind_rising.tres" id="5_abkhk"]
+[ext_resource type="Resource" path="res://data/weather/wind_gale.tres" id="6_6srjo"]
+[ext_resource type="Script" path="res://src/definitions/wind_map.gd" id="7_oetqy"]
+
+[resource]
+script = ExtResource("7_oetqy")
+profiles = Array[ExtResource("1_8o5gj")]([ExtResource("2_h11hp"), ExtResource("3_lvtpl"), ExtResource("4_o2hwd"), ExtResource("5_abkhk"), ExtResource("6_6srjo")])

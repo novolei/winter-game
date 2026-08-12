@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="WindProfile" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/wind_profile.gd" id="1_l0txy"]
+
+[resource]
+script = ExtResource("1_l0txy")
+id = &"wind_rising"
+display_name = "Rising"
+presets = Array[StringName]([&"nightfall"])
+wander_degrees = 31.0
+wander_seconds = 39.0
+gust_veer_degrees = 17.0
+base_strength = 0.13
+gust_depth = 0.3
+gust_seconds = 6.5
+gust_sharpness = 1.9
+squall_gain = 0.34
+squall_seconds = 11.0
+squall_interval_seconds = 48.0
+gust_threshold = 0.34
+lull_threshold = 0.17
