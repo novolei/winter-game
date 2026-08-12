@@ -1,7 +1,23 @@
 @tool
 extends EditorScenePostImport
 
-## Repaints an imported model's surfaces from data/palette/color_bible.tres.
+## Repaints an imported model's surfaces from data/palette/color_bible.tres,
+## and gives it its collision.
+##
+## ---------------------------------------------------------------------------
+## TWO JOBS, ONE HOOK
+## ---------------------------------------------------------------------------
+## A model's `.import` file can name exactly one `import_script/path`, and this
+## project's is already this file: every world model carries the line, and
+## `tests/art/test_import_wiring.gd` fails by name on one that does not. The
+## collision pass is therefore a second call from here rather than a second
+## script -- which would mean a second line in every `.import`, a second gate to
+## keep it there, and a second thing to forget when a model is added.
+##
+## The two jobs do not touch. Repainting rewrites materials and never looks at a
+## node; `tools/model_collision.gd` adds nodes and never looks at a material. A
+## Shape3D has no surface, so nothing about Art Bible rules 8 and 9 or the gates
+## that enforce them moves because a building became solid.
 ##
 ## ---------------------------------------------------------------------------
 ## WHY a model cannot simply carry its own materials
@@ -33,12 +49,18 @@ extends EditorScenePostImport
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
 const UNRESOLVED := Color(1.0, 0.0, 1.0)
 
+## What each mesh name collides as, and the geometry that works it out. See that
+## file's header for why the trees get a trunk cylinder rather than a hull and
+## why the farmhouse's doorway has to be cut out by hand.
+const CollisionScript := preload("res://tools/model_collision.gd")
+
 var _cache: Dictionary = {}
 
 
 func _post_import(scene: Node) -> Object:
 	var bible: Resource = load(PALETTE_PATH)
 	_repaint(scene, bible)
+	CollisionScript.attach(scene)
 	return scene
 
 

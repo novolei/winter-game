@@ -57,6 +57,7 @@ const REQUIRED := {
 func _initialize() -> void:
 	var changed := 0
 	var skipped := 0
+	var forgotten := 0
 	for path in _models():
 		if AssetScannerScript.is_surface_rule_exempt(path):
 			skipped += 1
@@ -67,20 +68,52 @@ func _initialize() -> void:
 			continue
 		var before := FileAccess.get_file_as_string(import_path)
 		var after := rewrite(before)
-		if after == before:
-			continue
-		var file := FileAccess.open(import_path, FileAccess.WRITE)
-		if file == null:
-			printerr("could not write ", import_path)
-			continue
-		file.store_string(after)
-		file.close()
-		changed += 1
-		print("  wired: ", import_path)
-	print("wire_model_imports: %d file(s) changed, %d exempt model(s) left alone." % [changed, skipped])
-	if changed > 0:
-		print("wire_model_imports: run `--headless --import` now, or the change has no effect.")
+		if after != before:
+			var file := FileAccess.open(import_path, FileAccess.WRITE)
+			if file == null:
+				printerr("could not write ", import_path)
+				continue
+			file.store_string(after)
+			file.close()
+			changed += 1
+			print("  wired: ", import_path)
+		forgotten += _forget(after)
+	print("wire_model_imports: %d file(s) changed, %d cached import(s) forgotten, %d exempt model(s) left alone." % [
+		changed, forgotten, skipped])
+	print("wire_model_imports: run `--headless --import` now, or none of this has any effect.")
 	quit()
+
+
+## ---------------------------------------------------------------------------
+## WHY THIS PASS THROWS THE IMPORT CACHE AWAY
+## ---------------------------------------------------------------------------
+## Godot decides whether a model needs reimporting from the source file and the
+## `[params]` block. **It does not look at the import script those params point
+## at.** So `tools/palette_import_materials.gd` can be edited -- to fix a colour,
+## or, as in this wave, to start building collision -- and `--headless --import`
+## will reimport nothing at all. Every model keeps what it was built with, the
+## editor shows no error, and the only symptom is the thing the edit was
+## supposed to fix still being broken.
+##
+## That is not a hypothesis. It cost one full cycle in this wave: the collision
+## pass was written, wired, imported, and every model came back hollow.
+##
+## Removing the cached product leaves the `.import` pointing at a file that is
+## not there, which is the one condition the importer cannot skip.
+func _forget(import_text: String) -> int:
+	var removed := 0
+	for line in import_text.split("\n"):
+		var trimmed := line.strip_edges()
+		if not trimmed.begins_with("path="):
+			continue
+		var target := trimmed.substr(5).strip_edges().trim_prefix("\"").trim_suffix("\"")
+		if not target.begins_with("res://.godot/imported/"):
+			continue
+		for file in [target, target.get_basename() + ".md5"]:
+			if FileAccess.file_exists(file):
+				DirAccess.remove_absolute(ProjectSettings.globalize_path(file))
+				removed += 1
+	return removed
 
 
 ## Pure, so it can be tested without a filesystem. Replaces a key that is present
