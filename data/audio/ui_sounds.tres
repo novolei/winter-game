@@ -26,6 +26,44 @@ gain_db = -8.0
 pitch_scale = 0.8408964
 notes = "菜单返回。Section 8: the confirm sound, three semitones down. Same file; the pitch is the whole difference."
 
+[sub_resource type="Resource" id="Resource_d3plj"]
+script = ExtResource("1_ufs2m")
+cue_id = &"ui.bloom"
+stream_path = "res://assets/audio/ui/breath.wav"
+gain_db = -20.0
+pitch_spread = 0.05
+notes = "元素 呵 -- HEAVY blooms only: day/night, Tab, endings. See the header for why not every bloom."
+
+[sub_resource type="Resource" id="Resource_nxxih"]
+script = ExtResource("1_ufs2m")
+cue_id = &"ui.ripple"
+stream_path = "res://assets/audio/ui/ripple.wav"
+gain_db = -12.0
+pitch_spread = 0.03
+notes = "交互确认。Starts on the same frame as the 涟漪 ring expanding from the world anchor (section 5.1)."
+
+[sub_resource type="Resource" id="Resource_6io21"]
+script = ExtResource("1_ufs2m")
+cue_id = &"ui.threshold"
+stream_path = "res://assets/audio/ui/heartbeat.mp3"
+gain_db = -16.0
+notes = "阈值恶化。Section 8's 45 Hz heartbeat."
+
+[sub_resource type="Resource" id="Resource_o2qyu"]
+script = ExtResource("1_ufs2m")
+cue_id = &"ui.critical"
+stream_path = "res://assets/audio/ui/heartbeat.mp3"
+gain_db = -11.0
+pitch_scale = 0.7936
+notes = "阈值濒危。Substitute: section 8 wants heartbeat + tinnitus and there is no tinnitus asset."
+
+[sub_resource type="Resource" id="Resource_k4xba"]
+script = ExtResource("1_ufs2m")
+cue_id = &"ui.nightfall"
+stream_path = "res://assets/audio/ui/nightfall_thump.mp3"
+gain_db = -3.0
+notes = "入夜。GDD section 3 makes NIGHTFALL = GO HOME a literal deadline; this is the loudest cue in the map on purpose."
+
 [resource]
 script = ExtResource("2_yforq")
-cues = Array[ExtResource("1_ufs2m")]([SubResource("Resource_gdgnf"), SubResource("Resource_fdb7j"), SubResource("Resource_h82j8")])
+cues = Array[ExtResource("1_ufs2m")]([SubResource("Resource_gdgnf"), SubResource("Resource_fdb7j"), SubResource("Resource_h82j8"), SubResource("Resource_d3plj"), SubResource("Resource_nxxih"), SubResource("Resource_6io21"), SubResource("Resource_o2qyu"), SubResource("Resource_k4xba")])

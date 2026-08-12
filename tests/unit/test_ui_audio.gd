@@ -60,13 +60,61 @@ func test_every_cue_points_at_a_file_that_exists() -> void:
 		assert_true(ResourceLoader.exists(cue.stream_path),
 			"cue %s points at %s, which is not in the project" % [cue.cue_id, cue.stream_path])
 
-## Section 8 names these three, and they are the three the shipped assets cover.
-func test_the_three_menu_cues_are_all_present() -> void:
+## Every cue section 8 names that an asset now exists for.
+func test_every_shipped_cue_is_present() -> void:
 	assert_not_null(_map)
 	if _map == null:
 		return
-	for id in [&"ui.move", &"ui.confirm", &"ui.back"]:
+	for id in [&"ui.move", &"ui.confirm", &"ui.back", &"ui.bloom",
+			&"ui.ripple", &"ui.threshold", &"ui.critical", &"ui.nightfall"]:
 		assert_not_null(_map.cue(id), "section 8 requires a %s cue" % id)
+
+## The same relationship ui.back has with ui.confirm: one file, and the pitch is
+## the only thing telling the player which state they are in. Asserted as a
+## number because "sounds worse" is not a specification.
+func test_the_critical_heartbeat_is_the_ordinary_one_pitched_down() -> void:
+	assert_not_null(_map)
+	if _map == null:
+		return
+	var ordinary := _map.cue(&"ui.threshold")
+	var critical := _map.cue(&"ui.critical")
+	assert_not_null(ordinary)
+	assert_not_null(critical)
+	if ordinary == null or critical == null:
+		return
+	assert_eq(critical.stream_path, ordinary.stream_path, "one heartbeat, two states")
+	assert_true(critical.pitch_scale < ordinary.pitch_scale,
+		"the critical heartbeat must be the lower one")
+	assert_true(critical.gain_db > ordinary.gain_db,
+		"and the louder one -- it is the last warning the player gets")
+
+## GDD section 3 makes NIGHTFALL = GO HOME a literal deadline, and section 5.4
+## calls it the most important single piece of information in the game. If it is
+## not the loudest thing the interface says, the mix is arguing with the design.
+func test_nightfall_is_the_loudest_thing_the_interface_says() -> void:
+	assert_not_null(_map)
+	if _map == null:
+		return
+	var nightfall := _map.cue(&"ui.nightfall")
+	assert_not_null(nightfall)
+	if nightfall == null:
+		return
+	for cue in _map.cues:
+		if cue.cue_id == &"ui.nightfall":
+			continue
+		assert_true(nightfall.gain_db > cue.gain_db,
+			"%s is at %.1f dB, at or above nightfall's %.1f" % [cue.cue_id, cue.gain_db, nightfall.gain_db])
+
+## Rule 6 puts these sounds INSIDE the wind rather than over it, so nothing in
+## the map may sit at unity gain -- there is no headroom above the world.
+func test_nothing_in_the_map_plays_at_full_level() -> void:
+	assert_not_null(_map)
+	if _map == null:
+		return
+	for cue in _map.cues:
+		assert_true(cue.gain_db < 0.0,
+			"%s plays at %.1f dB, which is over the world rather than under it"
+				% [cue.cue_id, cue.gain_db])
 
 func test_cue_ids_are_unique() -> void:
 	assert_not_null(_map)
