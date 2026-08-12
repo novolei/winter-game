@@ -309,3 +309,27 @@ This project sets `window/stretch/mode="canvas_items"`. Under that mode the engi
 If you are reasoning in **pixels a human will see** — a minimum legible size, a screen-space particle radius, a UI hit area measured against a screenshot — **`Window.size` is the one that matches the rendered frame.** The other two are internally correct for their own purposes and will silently give you a value 10–25% off from what your screenshot shows.
 
 The failure is quiet. A legibility floor fed the canvas rect simply engages at the wrong moment; nothing errors, and the symptom is a system that behaves slightly differently from what its own test asserts. Found by comparing all three against the actual saved PNG, which is the only way to settle it — **when a number is supposed to describe the picture, check it against the picture.**
+
+### Trap 11 — `git checkout --` will not repair CRLF, and reports success anyway
+
+`.gitattributes` enforces `eol=lf` across this repo, and the committed blobs are always LF. But a helper script that writes with Python's default text mode — or anything else that emits CRLF on Windows — leaves **CRLF in the working copy** while the blob stays LF.
+
+Git then normalises on read, sees no difference, and `git status` is clean. Which means:
+
+```bash
+git checkout -- path/to/file.gd     # exits 0, prints nothing, changes NOTHING
+```
+
+It skips the write because it believes the file already matches. A repair command that succeeds and does nothing is worse than one that fails. The fix is to remove the file first so there is nothing to compare against:
+
+```bash
+rm path/to/file.gd && git checkout -- path/to/file.gd
+```
+
+Find them with:
+
+```bash
+git ls-files -z -- '*.gd' '*.gdshader' '*.md' '*.tres' '*.tscn' | xargs -0 grep -lU $'\r'
+```
+
+Why it matters even though git hides it: an exact-string `Edit` against a CRLF file can fail to match a pattern written with LF, and the failure looks like the string being absent rather than the line endings differing. **When writing files from a script, write LF explicitly** (`newline="\n"` in Python's `open`) rather than relying on the platform default.
