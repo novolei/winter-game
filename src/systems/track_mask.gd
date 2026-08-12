@@ -119,9 +119,128 @@ const RECENTER_SLACK_M := 3.0
 const FOOTPRINT_EVENT := &"player.footprint"
 const FURROW_EVENT := &"player.furrow"
 
-## Lobes across the width of one print. Two or three reads as a boot edge
-## crumbling; ten reads as static.
-const EDGE_NOISE_LOBES := 1.6
+## ---------------------------------------------------------------------------
+## What a print in snow actually looks like
+## ---------------------------------------------------------------------------
+## Judged against a photograph of real prints, and the gap it named was not
+## subtlety of amount, it was the wrong SHAPE in three separate ways:
+##
+##   1. a print is first and foremost a dark hole. The shadow carries the depth;
+##      the outline barely matters. Ours read as a pale oval with a dark crescent
+##      down one side.
+##   2. the outline is TORN at a coarse scale -- lobes, tears, bites out of the
+##      shape -- not a fine wobble on a smooth oval. "An oval with noise applied"
+##      against "a hole that fell in on itself".
+##   3. in thin snow the foot SCRAPES rather than punches, so the mark there is a
+##      broken scuffed patch and not a small version of the hole.
+##
+## HOW THE SHADOW IS ACTUALLY DRAWN, because it decides every number below. The
+## mask is never seen. What is seen is the normal snow_ground.gdshader rebuilds
+## from it by central difference at 6 cm, run through a two-band cel: with the
+## sun 21.5 degrees up and the band at 0.12, a patch of snow goes dark once its
+## own surface tilts more than about 15 degrees away from the sun, and it is
+## fully dark past 19. Nothing else in this file can make a print dark. So the
+## question a profile has to answer is not "how deep" but "over how much of its
+## area does it hold 15 degrees of tilt".
+##
+## Measured with a CPU model of that shader over one print, as a fraction of the
+## print's own plan area:
+##
+##   flat core + smoothstep shoulder (what this was)     19 %
+##   ...lowering `core` toward a dome                    14 %   (worse)
+##   ...raising `core` toward a punched cylinder         19 %   (no better)
+##   ...a pow(1 - t, 1.3) taper instead of the smoothstep 19 %   (no better)
+##   ...tearing the outline hard                         19 %   (no better)
+##   ...doubling track_depth in the ground shader        29 %   (and it would
+##                                                              take the road and
+##                                                              the furrow with it)
+##
+## SO THE FIRST OF THE THREE IS CAPPED, and it is worth being plain about why.
+## The shadow only ever falls on the WALL of a print, the wall is at most as wide
+## as the shader's own 6 cm epsilon smears it, and the print is 37 cm across --
+## so a fifth of it is the ceiling for any shape this file can write. The palette
+## caps the other end: the darkest snow tone in color_bible.tres is 74% of the
+## lit tone's luminance, and a print at the very bottom of that range is still
+## nothing like a photograph's black hole. Measured over a whole print, the mark
+## reads at about 90% of untouched snow and this pass moved that by a point.
+##
+## What the shape CAN do is the other two, and they are what the rest of this
+## block is: an outline that is torn instead of rippled, and a mark in thin snow
+## that is a scrape instead of a small hole.
+
+## Lobes across one print. COARSE, deliberately: 1.6 -- what this was -- puts
+## three wavelengths across a print and reads as a noisy ellipse, which is
+## exactly what was rejected. At 1.05 there are about two, so each one is a lobe
+## of the boot's own size and a bite out of it is visible as a bite.
+const EDGE_NOISE_LOBES := 1.05
+
+## How hard that noise is squared off. Simplex is a wobble and a wall does not
+## collapse in a sine: tanh pushes the middle of the range out to the ends, so
+## what is left is broad lobes with short steep transitions between them -- torn
+## rather than rippled.
+##
+## tanh() rather than the obvious sign(n) * pow(abs(n), p): the power form has an
+## infinite slope at zero, so the outline would move by a whole lobe between two
+## adjacent texels wherever the noise crossed it. tanh is smooth everywhere and
+## still arrives flat at both ends.
+##
+## EDGE_TEAR_GAIN is 1 / tanh(EDGE_TEAR * 0.94) -- 0.94 being the peak this
+## noise field actually reaches, measured -- so a lobe at the field's own maximum
+## warps the outline by the full `irregularity` and no more.
+const EDGE_TEAR := 2.2
+const EDGE_TEAR_GAIN := 1.033
+
+## The outline collapses INWARD more often than it bulges out, which is both what
+## a bite is and what keeps this change from undoing the furrow's. Two prints a
+## stride apart are 0.81 m between centres against a 0.28 m half-length: an
+## outline free to grow by the full irregularity would close that gap and run the
+## chain back into the continuous ribbon it took three passes to escape.
+const EDGE_BITE_BIAS := 0.24
+
+## ...and the tear is a thing that happens to the WALLS. Held off the middle of
+## the print, where the sole's own mark is, and brought fully in by the shoulder.
+const EDGE_TEAR_FROM := 0.15
+const EDGE_TEAR_FULL := 0.75
+
+## ...and what DOES go outward goes where the foot pushed. A boot displaces snow
+## ahead of the sole and out to the sides, not evenly around a ring, and a ring
+## is what reads as procedural. Behind the print the outward reach is scaled by
+## this; ahead of it, by 1.
+const EDGE_PUSH_BEHIND := 0.4
+
+## THE BROKEN FLOOR, and the one thing here sampled in WORLD space rather than in
+## the print's own.
+##
+## That is not an implementation detail, it is the whole of requirement 5 -- where
+## the walker stopped or turned, the prints have to churn together into one broken
+## patch with no clean outlines in it. Everything on this layer composites with
+## max(), and max() of two prints that each carry their own private floor noise is
+## smoother than either: the peaks of one fill the troughs of the other and heavy
+## overlap converges on a flat plateau, which is the exact opposite of churn.
+## Sampled in world space the two prints share the same field, and
+## max(P1*(1-b), P2*(1-b)) is (1-b)*max(P1,P2) -- the break survives any amount of
+## overlap exactly.
+##
+## A hand span, because the shader cannot see anything finer. Its normal is a
+## central difference at 6 cm, whose response is sin(ke)/(ke): at a 0.28 m
+## wavelength that is 0.72, at 0.15 m it is 0.03, and below 0.12 m it INVERTS.
+## Relief finer than a hand span is not subtle in this renderer, it is absent.
+const FLOOR_BREAK_M := 0.28
+const FLOOR_BREAK_GAIN := 0.85
+
+## THE SCUFF. In snow too thin to punch through, the foot scrapes: the mark is a
+## broken scraped patch that is longer than the boot, has no pressed floor under
+## it, and carries almost no shadow. It is a different event from a hole and not
+## a small one, so these are what `scuff` morphs the shape toward.
+##
+## `SCUFF_CORE` rather than zero: even a scrape presses a little of the snow flat
+## where the sole first touched. Everything else about it is the absence of the
+## hole -- no floor, a longer and narrower mark, and relief that is almost
+## entirely broken rather than a shape with a rim.
+const SCUFF_STRETCH := 0.7
+const SCUFF_NARROW := 0.18
+const SCUFF_CORE := 0.03
+const SCUFF_BREAK := 0.9
 
 ## The decay sweep's unit of work. 128 texels is 5.6 m of world and 0.4 ms of
 ## GDScript, measured; the whole mask in one go is 81 ms, which is why this
@@ -183,6 +302,7 @@ var _mask: Image
 var _texture: ImageTexture
 var _dirty := false
 var _edge_noise: FastNoiseLite
+var _floor_noise: FastNoiseLite
 
 var _static_origin := Vector2.ZERO
 var _static: Image
@@ -241,6 +361,15 @@ func build_at(centre: Vector3 = Vector3.ZERO) -> void:
 		# distance 1, so the frequency is in lobes-per-print rather than in
 		# anything to do with world scale.
 		_edge_noise.frequency = EDGE_NOISE_LOBES
+	if _floor_noise == null:
+		_floor_noise = FastNoiseLite.new()
+		_floor_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+		# One octave, unlike the edge noise: a second would land at 15 cm, which
+		# is inside the shader's blind spot. See FLOOR_BREAK_M.
+		_floor_noise.fractal_octaves = 1
+		# ...and in METRES, because unlike the outline this one is a fact about
+		# the ground rather than about the boot that stood on it.
+		_floor_noise.frequency = 1.0 / FLOOR_BREAK_M
 	var tiles := DECAY_TILES_ACROSS * DECAY_TILES_ACROSS
 	if _tile_inked.size() != tiles:
 		_tile_inked.resize(tiles)
@@ -310,15 +439,25 @@ func static_extent() -> float:
 ## and the whole transition happens in the outer 45% of the radius -- large
 ## print, compact edge, rather than a small print with a wide gentle halo.
 ##
-## `irregularity` breaks the outline. A perfect ellipse is what makes a print
-## read as *stamped*: real snow crumbles unevenly and no two steps collapse the
-## same way. The edge is warped by noise sampled in the print's own space, so
-## the raggedness scales with the print rather than with the world.
+## `irregularity` is HOW FAR THE WALLS FELL IN, and it drives both halves of
+## that: the outline is torn into coarse lobes and bitten into, and the floor
+## under it is broken up by what fell onto it. A perfect ellipse is what makes a
+## print read as *stamped*; real snow collapses, and no two steps collapse the
+## same way. See the shape block at the top of this file for the measurements
+## that set the character of it -- the short version is that a fine wobble on a
+## smooth oval is not what a print looks like and is not what this now draws.
 ##
 ## `edge_seed` shifts that noise. It is a parameter rather than a randf() inside
 ## because a stamp has to be a pure function of its arguments -- the caller
 ## varies it per step, and the tests can hold it still. Once written, a print is
 ## texels and can never shimmer or redraw itself differently.
+##
+## `scuff` is 0 for a boot punched into a drift and 1 for one SCRAPED across snow
+## too thin to punch through. It is a different event, not a smaller one: the
+## scrape is longer than the boot that made it, has no pressed floor under it and
+## carries almost no shadow, which is why it is a parameter here rather than a
+## smaller `radius_m` at the call site. The caller morphs it continuously with the
+## snow, so there is no moment at which the mark changes kind.
 ##
 ## `fall` and `downhill_scale` put the print into the ground rather than onto
 ## it. This mask is a plan view -- it is sampled by world XZ -- so a shape that
@@ -336,13 +475,16 @@ func stamp(
 	irregularity := 0.0,
 	edge_seed := 0.0,
 	fall := Vector2.ZERO,
-	downhill_scale := 1.0
+	downhill_scale := 1.0,
+	scuff := 0.0
 ) -> void:
 	if _mask == null:
 		return
 	_written(_blob(
 		_mask, RESOLUTION, CELL_M, cell_of(Vector2(world.x, world.z)),
-		radius_m, strength, forward, aspect, core, irregularity, edge_seed, fall, downhill_scale
+		Vector2(world.x, world.z),
+		radius_m, strength, forward, aspect, core, irregularity, edge_seed, fall,
+		downhill_scale, scuff
 	))
 
 
@@ -373,11 +515,17 @@ func _ink(box: Rect2i) -> void:
 				_tile_elapsed[index] = 0.0
 
 
+## Shapes the raw noise into lobes. See EDGE_TEAR.
+func _lobed(noise_value: float) -> float:
+	return clampf(tanh(noise_value * EDGE_TEAR) * EDGE_TEAR_GAIN, -1.0, 1.0)
+
+
 func _blob(
 	image: Image,
 	resolution: int,
 	cell_m: float,
 	cell: Vector2,
+	centre_world: Vector2,
 	radius_m: float,
 	strength: float,
 	forward: Vector2,
@@ -386,18 +534,32 @@ func _blob(
 	irregularity: float,
 	edge_seed: float,
 	fall: Vector2,
-	downhill_scale: float
+	downhill_scale: float,
+	scuff: float
 ) -> Rect2i:
 	var touched := Rect2i()
+	var scrape := clampf(scuff, 0.0, 1.0)
 	var radius := maxf(radius_m / cell_m, 1.0)
+	# A scrape is longer than the boot that made it AND narrower, so the two axes
+	# move in opposite directions -- and the box below has to be told, or the ends
+	# of the scrape are clipped square across. Both need a heading to have a
+	# meaning; with none given the mark stays round whatever `scuff` says.
+	var stretch := 1.0 + SCUFF_STRETCH * scrape
+	var narrow := 1.0 - SCUFF_NARROW * scrape
 	# The warp pushes the outline outward as often as inward, so the box has to
 	# allow for it or the ragged edge is clipped back to a straight line.
-	var reach := radius * (1.0 + maxf(irregularity, 0.0))
+	var reach := radius * (1.0 + maxf(irregularity, 0.0)) * stretch
 	var min_x := maxi(int(floorf(cell.x - reach)), 0)
 	var max_x := mini(int(ceilf(cell.x + reach)), resolution - 1)
 	var min_y := maxi(int(floorf(cell.y - reach)), 0)
 	var max_y := mini(int(ceilf(cell.y + reach)), resolution - 1)
 	var clamped := clampf(strength, 0.0, 1.0)
+	# The pressed floor goes as the mark stops being a hole -- see SCUFF_CORE.
+	var pressed := lerpf(core, SCUFF_CORE, scrape)
+	# How much of the floor is broken up by what fell onto it. Both terms, because
+	# the two are different events with the same symptom: a deep print's walls
+	# collapse into it, and a scrape never had a floor to begin with.
+	var broken := clampf(FLOOR_BREAK_GAIN * maxf(irregularity, 0.0) + SCUFF_BREAK * scrape, 0.0, 0.9)
 
 	var along := Vector2.ZERO
 	if forward.length_squared() > 0.0001 and aspect > 1.0:
@@ -434,25 +596,77 @@ func _blob(
 				# axis narrows the oval without rotating the sampling grid.
 				var across := Vector2(-along.y, along.x)
 				local = Vector2(
-					offset.dot(along) / radius,
-					offset.dot(across) / (radius / aspect)
+					offset.dot(along) / (radius * stretch),
+					offset.dot(across) / (radius * narrow / aspect)
 				)
 			var distance := local.length()
 			if irregularity > 0.0:
 				# Warping the distance rather than the radius means the outline
 				# is displaced in whatever direction the noise happens to run,
 				# which is what makes it crumble rather than merely ripple.
-				distance += _edge_noise.get_noise_2d(
+				# Warping the distance UP moves the outline inward, which is a
+				# bite; warping it down moves the outline out, which is snow the
+				# boot displaced. The bias is what keeps the first commoner than
+				# the second -- see EDGE_BITE_BIAS.
+				var warp := _lobed(_edge_noise.get_noise_2d(
 					local.x + edge_seed, local.y + edge_seed
-				) * irregularity
+				)) + EDGE_BITE_BIAS
+				if warp < 0.0 and distance > 0.0001:
+					# Displaced snow goes where the foot pushed it -- ahead of the
+					# sole and out to the sides, not evenly around a ring, and an
+					# even ring is exactly what reads as procedural.
+					warp *= lerpf(
+						EDGE_PUSH_BEHIND, 1.0, 0.5 + 0.5 * local.x / distance
+					)
+				# ...and it is the WALLS that fall in, not the sole's own mark. Left
+				# ungated, a warp this coarse tears the print into three or four
+				# disconnected islands -- which is not a bite out of a hole, it is
+				# the ring of hard little fragments that was rejected once already.
+				distance += warp * irregularity * smoothstep(
+					EDGE_TEAR_FROM, EDGE_TEAR_FULL, distance
+				)
 			if distance >= 1.0:
 				continue
-			# Flat to `core`, then smoothstep out. smoothstep rather than a
+			# Flat to `pressed`, then smoothstep out. smoothstep rather than a
 			# linear ramp or 1 - d*d because it arrives flat at both ends, so
 			# the rim meets the snow without a slope discontinuity -- a
 			# discontinuity in the height field is a crease in the normal, and
 			# a crease is what shows up as a shard.
-			var value := clamped * (1.0 - smoothstep(core, 1.0, distance))
+			#
+			# A pow(1 - t, 1.3) taper was tried here on the argument that a
+			# smoothstep is flat across the middle of its shoulder and so only
+			# holds a usable tilt over part of it -- which is the argument that
+			# won for the furrow's V. It is not true at this scale and the CPU
+			# model of the shader says so: both drop the same depth over the same
+			# distance, the shader's 6 cm normal epsilon is as wide as the whole
+			# shoulder, and the shaded fraction came out 18.6% against 19.1%.
+			# It cost tone across the shoulder for nothing. Left recorded so the
+			# next pass does not spend the afternoon rediscovering it.
+			var profile := 1.0 - smoothstep(pressed, 1.0, distance)
+			if broken > 0.0 and distance > pressed:
+				# The rubble, in WORLD space so that overlapping prints churn
+				# together instead of averaging each other smooth -- see
+				# FLOOR_BREAK_M.
+				#
+				# On the SHOULDER only, faded in across it, and SIGNED. The sole
+				# presses the floor of the print flat and it is the collapsed
+				# wall that is broken, so breaking the floor as well merely spent
+				# the print's depth -- it measured a third of it, and a third of
+				# the depth is a third of every shadow the mark has. Signed for
+				# the same reason: a break that only ever subtracts is a print
+				# that is always shallower than the one it replaced.
+				#
+				# Fading it in from the core is what keeps the join smooth. A
+				# break applied to the shoulder outright is a step at the core
+				# boundary, which is a crease ring in the normal.
+				var out := (distance - pressed) / maxf(1.0 - pressed, 0.0001)
+				var here := centre_world + Vector2(
+					float(x) - cell.x, float(y) - cell.y
+				) * cell_m
+				profile *= 1.0 + broken * out * 0.5 * _lobed(
+					_floor_noise.get_noise_2d(here.x, here.y)
+				)
+			var value := clamped * clampf(profile, 0.0, 1.0)
 			var current := image.get_pixel(x, y).r
 			if value > current:
 				image.set_pixel(x, y, Color(value, 0.0, 0.0, 1.0))
@@ -1078,7 +1292,8 @@ func _on_footprint(payload) -> void:
 		data.get("irregularity", 0.0),
 		data.get("edge_seed", 0.0),
 		data.get("fall", Vector2.ZERO),
-		data.get("downhill_scale", 1.0)
+		data.get("downhill_scale", 1.0),
+		data.get("scuff", 0.0)
 	)
 
 

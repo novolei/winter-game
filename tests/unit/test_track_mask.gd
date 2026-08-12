@@ -163,6 +163,245 @@ func test_a_print_on_level_ground_is_unchanged_by_the_slope_path() -> void:
 
 
 ## ---------------------------------------------------------------------------
+## The shape of a print, judged against a photograph of real ones
+## ---------------------------------------------------------------------------
+## Three claims, and none of them is a matter of degree:
+##
+##   a print is a hole that fell in on itself, not an oval with noise on it;
+##   a mark in thin snow is a SCRAPE, which is a different event and not a
+##     smaller hole;
+##   where the walker stopped or turned, the prints churn together into one
+##     broken patch rather than into a clean plateau.
+##
+## Each is measured here rather than looked at, because the difference between
+## "torn" and "rippled" -- and between "churned" and "flattened" -- is invisible
+## in a still until you already know which one you are looking at.
+
+## The shipped deep-snow print, from PlayerController's print block. Duplicated
+## rather than read off the controller because these tests are about what the
+## mask does with the numbers, and a test that reads its inputs from the thing it
+## is testing cannot fail.
+const DEEP_RADIUS := 0.28
+const DEEP_CORE := 0.66
+const DEEP_IRREGULARITY := 0.46
+const STRIDE := 0.72
+
+
+## The outline, in `samples` directions, as the distance at which the mark falls
+## away. Measured on a CIRCULAR print so that everything this returns is the tear
+## and none of it is the boot's own oval.
+func _outline(strength: float, seed_value: float, samples: int) -> Array[float]:
+	_mask.build_at(Vector3.ZERO)
+	_mask.stamp(
+		Vector3.ZERO, DEEP_RADIUS, strength, Vector2.ZERO, 1.0, DEEP_CORE,
+		DEEP_IRREGULARITY, seed_value
+	)
+	var edges: Array[float] = []
+	for index in range(samples):
+		var angle := TAU * float(index) / float(samples)
+		var direction := Vector3(cos(angle), 0.0, sin(angle))
+		var reach := 0.0
+		var probe := 0.02
+		while probe < DEEP_RADIUS * 1.6:
+			if _mask.value_at(direction * probe) > strength * 0.15:
+				reach = probe
+			probe += 0.01
+		edges.append(reach)
+	return edges
+
+
+## A TORN outline and not a rippled one, which is the whole of the difference
+## between "an oval with noise applied" and "a hole that fell in on itself".
+##
+## Two assertions, and it takes both: the spread says the outline moves, and the
+## crossing count says it moves in a few big lobes rather than in a fine wobble.
+## A high-frequency ripple of the same amplitude passes the first and fails the
+## second, and it is exactly what this replaced.
+func test_the_outline_is_torn_into_a_few_coarse_lobes() -> void:
+	var samples := 64
+	var edges := _outline(1.0, 4.0, samples)
+	var lowest := INF
+	var highest := -INF
+	var total := 0.0
+	for reach in edges:
+		lowest = minf(lowest, reach)
+		highest = maxf(highest, reach)
+		total += reach
+	var mean := total / float(samples)
+	assert_true(
+		highest - lowest > mean * 0.25,
+		"the outline only moves %.3f m about a mean of %.3f -- that is an oval"
+			% [highest - lowest, mean]
+	)
+
+	var crossings := 0
+	for index in range(samples):
+		var here := edges[index] - mean
+		var next := edges[(index + 1) % samples] - mean
+		if (here < 0.0) != (next < 0.0):
+			crossings += 1
+	assert_true(
+		crossings <= 12,
+		"the outline crosses its own mean %d times in one turn, which is %d lobes -- "
+			% [crossings, crossings / 2]
+			+ "a fine wobble on an oval rather than a torn edge"
+	)
+
+
+## ...and the tear must not go so far that the mark stops being one mark. Left
+## ungated, a warp this coarse tears the print into three or four islands, which
+## is not a bite out of a hole -- it is the ring of hard little fragments that
+## was put around every print once and rejected.
+func test_a_torn_print_is_still_one_mark_and_not_a_scatter_of_fragments() -> void:
+	for seed_value in [0.0, 37.3, 74.6, 211.9]:
+		_mask.build_at(Vector3.ZERO)
+		_mask.stamp(
+			Vector3.ZERO, DEEP_RADIUS, 1.0, Vector2.ZERO, 1.0, DEEP_CORE,
+			DEEP_IRREGULARITY, seed_value
+		)
+		for index in range(24):
+			var angle := TAU * float(index) / 24.0
+			var probe := Vector3(cos(angle), 0.0, sin(angle)) * DEEP_RADIUS * 0.45
+			assert_true(
+				_mask.value_at(probe) > 0.6,
+				"seed %.1f: the middle of the print is holed at %s, reading %f"
+					% [seed_value, probe, _mask.value_at(probe)]
+			)
+
+
+## THE GUARD ON THE FURROW, and the reason the tear leans inward.
+##
+## Two prints are one stride apart and the snow between them has to stay snow. An
+## outline free to grow by the full irregularity closes an 0.16 m gap on a 0.28 m
+## half-length, and a chain of prints that touch is the continuous ribbon the
+## furrow work spent three passes escaping.
+func test_two_prints_a_stride_apart_do_not_run_together() -> void:
+	for seed_value in [0.0, 37.3, 74.6, 211.9, 400.1]:
+		_mask.build_at(Vector3.ZERO)
+		_mask.stamp(
+			Vector3.ZERO, DEEP_RADIUS, 1.0, Vector2.RIGHT, 1.5, DEEP_CORE,
+			DEEP_IRREGULARITY, seed_value
+		)
+		_mask.stamp(
+			Vector3(STRIDE, 0.0, 0.0), DEEP_RADIUS, 1.0, Vector2.RIGHT, 1.5, DEEP_CORE,
+			DEEP_IRREGULARITY, seed_value + 13.0
+		)
+		var between: float = _mask.value_at(Vector3(STRIDE * 0.5, 0.0, 0.0))
+		assert_true(
+			between < 0.25,
+			"seed %.1f: the snow between two prints reads %f, so the chain has joined up"
+				% [seed_value, between]
+		)
+
+
+## A SCRAPE IS A DIFFERENT EVENT, not a smaller hole. In snow too thin to punch
+## through, the foot scrapes: the mark runs further along the way he was going,
+## is narrower across, and has no pressed floor under it.
+func test_a_scuff_is_a_longer_narrower_flatter_mark_than_a_hole() -> void:
+	var hole := _mark(0.0)
+	var scrape := _mark(1.0)
+	assert_true(
+		scrape.x > hole.x * 1.2,
+		"the scrape runs %.3f m along the walk against the hole's %.3f -- it is a "
+			% [scrape.x, hole.x]
+			+ "smaller hole rather than a longer mark"
+	)
+	assert_true(
+		scrape.y < hole.y,
+		"the scrape is %.3f m across against the hole's %.3f, so it did not narrow"
+			% [scrape.y, hole.y]
+	)
+	assert_true(
+		scrape.z < hole.z - 0.05,
+		"the scrape keeps a pressed floor (%f against the hole's %f), which is the "
+			% [scrape.z, hole.z]
+			+ "one thing a scraped foot does not leave"
+	)
+
+
+## (reach along the walk, reach across it, the depth a third of the way out) for
+## one mark, averaged over four steps.
+##
+## The reaches are the extent of the whole mark rather than the range of one ray
+## outward: the outline is torn, so a ray lands in whatever bite happens to be in
+## front of it and measures the bite instead of the print.
+func _mark(scuff: float) -> Vector3:
+	var along := 0.0
+	var across := 0.0
+	var floor_depth := 0.0
+	var seeds := [5.0, 61.0, 143.0, 289.0]
+	for seed_value in seeds:
+		_mask.build_at(Vector3.ZERO)
+		_mask.stamp(
+			Vector3.ZERO, DEEP_RADIUS, 0.5, Vector2.RIGHT, 1.5, DEEP_CORE, 0.34,
+			seed_value, Vector2.ZERO, 1.0, scuff
+		)
+		var probe_x := -0.7
+		while probe_x <= 0.7:
+			var probe_z := -0.7
+			while probe_z <= 0.7:
+				if _mask.value_at(Vector3(probe_x, 0.0, probe_z)) > 0.03:
+					along = maxf(along, absf(probe_x))
+					across = maxf(across, absf(probe_z))
+				probe_z += 0.01
+			probe_x += 0.01
+		floor_depth += _mask.value_at(Vector3(DEEP_RADIUS * 0.4, 0.0, 0.0))
+	return Vector3(along, across, floor_depth / float(seeds.size()))
+
+
+## WHERE HE STOPPED OR TURNED. Prints composite with max(), and max() of two
+## marks that each carry their own private floor noise is SMOOTHER than either --
+## the peaks of one fill the troughs of the other, and a churned patch converges
+## on a flat plateau. The break is therefore sampled in world space, where every
+## print overlapping a place agrees about it, and this is the test that says so:
+## move that noise back into the print's own frame and the patch flattens.
+func test_prints_trodden_over_each_other_churn_rather_than_flatten() -> void:
+	var spots := [
+		Vector2(0.0, 0.0), Vector2(0.16, 0.09), Vector2(-0.13, 0.14),
+		Vector2(0.07, -0.15), Vector2(-0.18, -0.06), Vector2(0.2, 0.02),
+	]
+	for index in range(spots.size()):
+		var spot: Vector2 = spots[index]
+		_mask.stamp(
+			Vector3(spot.x, 0.0, spot.y), DEEP_RADIUS, 1.0, Vector2.RIGHT, 1.5,
+			DEEP_CORE, DEEP_IRREGULARITY, float(index) * 61.7
+		)
+	var lowest := INF
+	var highest := -INF
+	var probe_x := -0.3
+	while probe_x <= 0.3:
+		var probe_z := -0.3
+		while probe_z <= 0.3:
+			var value: float = _mask.value_at(Vector3(probe_x, 0.0, probe_z))
+			if value > 0.5:
+				lowest = minf(lowest, value)
+				highest = maxf(highest, value)
+			probe_z += 0.02
+		probe_x += 0.02
+	assert_true(highest > 0.9, "setup: the trodden patch never reached full depth")
+	assert_true(
+		highest - lowest > 0.12,
+		"six prints trodden over each other left a patch flat to within %f -- "
+			% (highest - lowest)
+			+ "that is a plateau, not churned snow"
+	)
+
+
+## The break is SIGNED, and this is what that buys: it lifts the shoulder as
+## often as it drops it, so a torn print is not simply a shallower print. The
+## deepest point is still exactly as deep as the caller asked for.
+func test_tearing_a_print_does_not_quietly_make_it_shallower() -> void:
+	_mask.stamp(
+		Vector3.ZERO, DEEP_RADIUS, 0.9, Vector2.RIGHT, 1.5, DEEP_CORE,
+		DEEP_IRREGULARITY, 91.0
+	)
+	assert_almost_eq(
+		_mask.value_at(Vector3.ZERO), 0.9, 0.02,
+		"a torn print no longer reaches the depth it was asked for"
+	)
+
+
+## ---------------------------------------------------------------------------
 ## The ploughed furrow
 ## ---------------------------------------------------------------------------
 ## A footprint is a soft dome. A furrow is a V, and getting that cross-section

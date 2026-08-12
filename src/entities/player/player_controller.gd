@@ -366,24 +366,56 @@ const AUTO_RUN_SETTING := "winter_time/controls/auto_run_delay_seconds"
 ## How a print changes with the snow it is made in
 ## ---------------------------------------------------------------------------
 ## Deep snow: the full-size print that was approved -- more snow displaced, and
-## the walls of the hole collapse, so the edge is softer and more ragged.
-## Thin snow on a scoured crest: smaller, sharper, barely more than a scuff.
+## the walls of the hole collapse in on it, so the edge is torn and the floor is
+## broken up by what fell onto it.
+## Thin snow on a scoured crest: the foot SCRAPES rather than punches, and what
+## it leaves is a broken scuffed patch rather than a small hole. That is a
+## different event, not a smaller one, which is what `scuff` below carries into
+## TrackMask.stamp() -- see the shape block at the top of that file.
 ##
 ## This is what ties the trail to the terrain. A chain of prints deepening as it
 ## descends into a hollow tells you where the drifts are without anything having
 ## to draw them, which is Art Bible rule 11's point about the lines in the snow
 ## being narrative -- they record what happened.
+##
+## ALL OF IT READS ONE FACT, and since this pass that fact is `wade` --
+## SnowField.wade_factor(), the depth against SnowField.deep_depth_m, which is
+## already what decides whether he is reduced to a trudge and where the furrow
+## starts. It was depth against max_depth_m, which is a different question (how
+## deep is this against the deepest drift in the world) and put the change of
+## character in a place nothing else in the game agrees is a boundary. One
+## threshold, four readings.
+##
+## `print_core_deep` went 0.48 -> 0.66 in this pass, and it is the one number
+## here that moved for a measured reason rather than a described one. The core is
+## the pressed floor, and the sole presses a floor whatever the snow is doing --
+## what deep snow changes is the WALL, which is now `irregularity`'s job. Wider
+## floor, tighter wall: measured against the CPU model of the ground shader, the
+## shaded fraction of a print goes 20.1% -> 21.7% and its mean luminance 90% ->
+## 89% of untouched snow. Small, and it is the whole of what the shape can do --
+## see the measurements at the top of TrackMask.
 @export var print_thin_scale := 0.74
-@export var print_core_deep := 0.48
+@export var print_core_deep := 0.66
 @export var print_core_thin := 0.74
-@export var print_irregularity_deep := 0.3
-@export var print_irregularity_thin := 0.08
+@export var print_irregularity_deep := 0.46
+@export var print_irregularity_thin := 0.34
+
+## How much of a mark a foot leaves on ground that has nothing but a dusting on
+## it. The floor under the depth, not a separate case: see `strength` below.
+@export var print_scrape_depth := 0.22
 
 ## Per-step variation, so no two prints share an outline. Applied on top of
 ## everything above.
+##
+## `print_bite_jitter` is the one the photograph asked for: a real trail is not a
+## repeated stamp, and some steps punch through while others barely break the
+## crust. Taken off the depth rather than added to it, because in deep snow the
+## print is already at full depth and a symmetric jitter would clamp half its
+## range away and leave only the shallow half.
 @export var print_heading_jitter := 0.22
 @export var print_aspect_jitter := 0.12
 @export var print_scale_jitter := 0.08
+@export var print_bite_jitter := 0.3
 
 ## ---------------------------------------------------------------------------
 ## The furrow the legs plough in deep snow
@@ -1744,14 +1776,32 @@ func _place_print() -> void:
 
 	var depth := 0.0
 	var max_depth := 1.0
+	var wade := 0.0
 	if _snow != null:
 		depth = _snow.depth_at(spot)
 		max_depth = maxf(_snow.max_depth_m, 0.0001)
+		# The SAME reading the trudge speed and the furrow gate take: depth
+		# against SnowField.deep_depth_m. See the print block above.
+		wade = _snow.wade_factor(spot)
 	# A print in bare snow is a scuff; a print in a drift is a hole. Depth at
 	# the spot, not a constant, is what makes a trail through a drift read
 	# darker than one across a wind-scoured patch -- and sound different too.
 	var depth_ratio := clampf(depth / max_depth, 0.0, 1.0)
-	var strength := clampf(0.34 + 0.66 * depth_ratio, 0.0, 1.0)
+	# ...and one step is not the next. Always downward, so deep snow keeps its
+	# full-depth prints and merely stops giving every one of them -- and SKEWED,
+	# so most steps land near full depth and a few fall well short of it. A flat
+	# jitter takes an even 15% off the whole trail, which is not variation, it is
+	# a shallower trail; the photograph's prints are mostly deep with the odd one
+	# that barely broke the crust.
+	var bite := 1.0 - print_bite_jitter * pow(randf(), 2.2)
+	# A MARK CANNOT BE DEEPER THAN THE SNOW IT IS MADE IN, which is what `wade`
+	# already says: it is this depth over the depth at which a boot stops
+	# touching the ground. So the strength IS the wade, floored at the scrape --
+	# on ground with nothing but a dusting on it the foot still takes the surface
+	# off. It was 0.34 + 0.66 * wade, which put two thirds of a full-depth print
+	# into 10 cm of snow and is why the thin ground photographed as small holes
+	# rather than as the scuffs it is supposed to leave.
+	var strength := clampf(maxf(wade, print_scrape_depth) * bite, 0.0, 1.0)
 
 	if _bus == null:
 		return
@@ -1762,7 +1812,7 @@ func _place_print() -> void:
 	var heading := Vector2(_facing.x, _facing.z).rotated(
 		randf_range(-print_heading_jitter, print_heading_jitter)
 	)
-	var scale := lerpf(print_thin_scale, 1.0, depth_ratio) * (
+	var scale := lerpf(print_thin_scale, 1.0, wade) * (
 		1.0 + randf_range(-print_scale_jitter, print_scale_jitter)
 	)
 
@@ -1787,8 +1837,12 @@ func _place_print() -> void:
 		"radius": print_radius * scale,
 		"forward": heading,
 		"aspect": print_aspect * (1.0 + randf_range(-print_aspect_jitter, print_aspect_jitter)),
-		"core": lerpf(print_core_thin, print_core_deep, depth_ratio),
-		"irregularity": lerpf(print_irregularity_thin, print_irregularity_deep, depth_ratio),
+		"core": lerpf(print_core_thin, print_core_deep, wade),
+		"irregularity": lerpf(print_irregularity_thin, print_irregularity_deep, wade),
+		# 0 in snow deep enough to punch through, 1 on ground too thin to do
+		# anything but scrape across. Morphed rather than switched, so there is no
+		# depth at which the mark changes kind in front of you.
+		"scuff": 1.0 - wade,
 		# Any large spread works; it only has to move the noise far enough that
 		# two prints never see the same patch of it.
 		"edge_seed": randf() * 997.0,
