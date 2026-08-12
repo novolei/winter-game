@@ -47,6 +47,32 @@ extends Node3D
 ## metres rather than the handful a perspective camera would need.
 ##
 ## ---------------------------------------------------------------------------
+## STANDING ON A WIRE THAT MOVES
+## ---------------------------------------------------------------------------
+## `src/rendering/wind_sway.gd` slides every span up to 0.14 m across the wind
+## once a frame. A bird placed from a perch position sampled at landing is
+## therefore wrong from the next frame onward, and at the tight framing stop --
+## crow 26 px, wire a one-to-two-pixel stroke -- 0.14 m is a bird standing on
+## nothing.
+##
+## So the bird holds the DECLARATION rather than the position: `grip()` keeps the
+## `PerchPoints` that offered the perch and the place on it in that node's own
+## basis, and `ride()` resolves the two afresh. It is not parented to the wire,
+## because `Farmstead._span()` puts `scale.z = length` on the span and a child
+## would be stretched by it.
+##
+## `ride()` costs one transform read and, on the frames where nothing moved, one
+## comparison and nothing else -- which is most frames of most days, since the
+## sway is zero at a strength of zero. The write is what is worth avoiding: it
+## dirties this node and the whole rig under it.
+##
+## THE BIRD REACTS AS WELL AS TRACKS, and that is the half worth having. Wave 2
+## imported `flap` (Malbers' `Rav_Fly_Stand` -- wings worked without leaving the
+## perch) and never played it. A crow on a wire that is moving under it opens its
+## wings for balance, and above a harder threshold still it gives up and leaves,
+## which is `CrowFlock`'s decision and uses the departure that already exists.
+##
+## ---------------------------------------------------------------------------
 ## THE COLOUR, AND THE ONE PLACE IT IS NOT THE WORLD'S RULE
 ## ---------------------------------------------------------------------------
 ## Black, from the palette's darkest structure tone -- the same value Art Bible
@@ -59,10 +85,23 @@ extends Node3D
 ## The one departure from the world's shading is `snow_receptivity`. Every solid
 ## in this game accumulates snow on its upward faces across the seven days, and a
 ## crow's back is an upward face -- so by day six the flock would be white, which
-## is the silhouette this whole choice exists to protect, gone. The bird is
-## therefore painted by its OWN CelPainter instance (materials are cached per
-## painter) so setting the receptivity to zero on it cannot reach the trees and
-## roofs that share its colour.
+## is the silhouette this whole choice exists to protect, gone.
+##
+## That refusal now goes through the mechanism the roof work built rather than
+## through a private one. `CelPainter.material_for(lit, bare)` takes `bare` as
+## part of its CACHE KEY -- the roof planes, the wires and every tree in the wood
+## are all `PAL_STRUCT_4` and only some of them refuse snow, so they have to be
+## two materials. Writing `snow_receptivity` onto the material afterwards, which
+## is what this file did first, is precisely the defect that key exists to
+## prevent: it was safe only because the bird kept a private painter, and the day
+## anybody handed the flock the world's painter through `set_painter()` -- which
+## exists, and is public -- every tree sharing `#131C30` would have stopped
+## taking snow, silently, in a way no gate could see.
+##
+## The crow does not carry the `_BARE` slot NAME, because that name is written by
+## `tools/blender/propkit.py` into a `.glb`'s material and the crow is an FBX
+## from a third-party pack whose material is called `01 - Default`. The name is
+## how a Blender-built prop asks; the argument is what it asks for.
 
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
 const MODEL := preload("res://assets/models/characters/crow/crow.fbx")
@@ -120,6 +159,22 @@ enum State {
 ## instant snap to the heading reads as a teleport at this size.
 @export var turn_rate := 4.0
 
+## The wind at which a perched bird opens its wings for balance, and the weaker
+## wind at which it settles again.
+##
+## MEASURED, not chosen. Swept over an hour of each shipped profile, a latch at
+## 0.45 on / 0.36 off holds 10.8 per cent of the time on `wind_valley` -- the
+## `pale_day` wind, and the only one a daylight bird lives in -- in stretches
+## averaging 8.3 s. Long enough to read; rare enough to stay an event. On
+## `wind_calm` (`flat` and `sunrise`) the wind never reaches 0.45 at all and the
+## bird simply sits, which is what a still bright morning should look like.
+##
+## The band between them is the hysteresis, and it is not decoration: `_play()`
+## restarts the take every call, so a strength jittering across one threshold
+## would be a bird vibrating rather than a bird balancing.
+const BALANCE_ON := 0.45
+const BALANCE_OFF := 0.36
+
 var _state: State = State.PERCHED
 var _wait := 0.0
 var _elapsed := 0.0
@@ -129,6 +184,15 @@ var _from := Vector3.ZERO
 var _facing := Vector3(0.0, 0.0, -1.0)
 var _player: AnimationPlayer = null
 var _painter: CelPainter = null
+var _material: ShaderMaterial = null
+## What it is standing on, where on it, and which way along it -- see `grip()`.
+## Null for a bird placed straight onto a position, which is what a capture and
+## most of the unit tests do.
+var _anchor: PerchPoints = null
+var _anchor_local := Vector3.ZERO
+var _anchor_local_facing := Vector3(0.0, 0.0, -1.0)
+var _anchor_seen := Transform3D()
+var _balancing := false
 
 
 func _ready() -> void:
@@ -137,9 +201,13 @@ func _ready() -> void:
 
 
 ## The bird's own painter, or one the flock hands it so a whole wire of crows
-## shares one material. See the header for why it must not be the world's.
+## shares one material. Safe to hand the world's, now that the snow refusal goes
+## through the painter's own bare key rather than being written onto a shared
+## material -- see the header.
 func set_painter(painter: CelPainter) -> void:
 	_painter = painter
+	# Whatever was already resolved came from the previous painter.
+	_material = null
 
 
 func state() -> State:
@@ -175,6 +243,22 @@ func heading() -> Vector3:
 	return _heading
 
 
+## Which way its beak points. Flat, always -- a perched bird stands upright on a
+## sloping wire rather than pointing its beak up the hill.
+func facing() -> Vector3:
+	return _facing
+
+
+## Wings out, holding on. See BALANCE_ON.
+func is_balancing() -> bool:
+	return _balancing
+
+
+## The declaration it is standing on, or null for a bird placed at a position.
+func anchor() -> PerchPoints:
+	return _anchor
+
+
 ## How far it has travelled since it left. For a test, and for the flock's own
 ## bookkeeping.
 func travelled() -> float:
@@ -188,15 +272,44 @@ func where() -> Vector3:
 
 
 ## Put it on a wire, facing along it.
+##
+## A position and nothing else, so the bird knows WHERE it is standing and not
+## WHAT on. That is enough for a capture that wants a bird at a chosen spot, and
+## it is not enough for a wire in a gust -- see `grip()`.
 func perch_on(at: Vector3, facing: Vector3) -> void:
 	_state = State.PERCHED
 	_velocity = Vector3.ZERO
 	_elapsed = 0.0
 	_from = at
 	_facing = _normalised(facing, Vector3(0.0, 0.0, -1.0))
+	_anchor = null
+	_balancing = false
 	_place(at)
 	_aim(_facing)
 	_play(CrowAnimations.PERCH)
+
+
+## Take hold of a perch a prop declared -- `{at, facing, anchor, local,
+## local_facing}` out of `PerchPoints.perches()`.
+##
+## The bird keeps the DECLARATION and the place on it, not the world position, so
+## `ride()` can put it back on the wire every frame the wind moves one. A
+## dictionary with no `anchor` -- a capture's hand-made perch, a test's stand-in
+## wire -- degrades to `perch_on()` and simply does not ride.
+func grip(perch: Dictionary) -> void:
+	perch_on(
+		perch.get("at", Vector3.ZERO),
+		perch.get("facing", Vector3(0.0, 0.0, -1.0))
+	)
+	var declaration := perch.get("anchor", null) as PerchPoints
+	if declaration == null or not is_instance_valid(declaration):
+		return
+	_anchor = declaration
+	_anchor_local = perch.get("local", Vector3.ZERO)
+	_anchor_local_facing = _normalised(
+		perch.get("local_facing", Vector3(0.0, 0.0, -1.0)), Vector3(0.0, 0.0, -1.0)
+	)
+	_anchor_seen = _anchor.placement()
 
 
 ## Go, in `heading`, `delay` seconds from now.
@@ -211,10 +324,81 @@ func scatter(heading: Vector3, delay := 0.0) -> bool:
 	_elapsed = 0.0
 	_from = _where()
 	_state = State.WAITING
+	# Wings down and the flag cleared before the departure's own takes start, so
+	# a bird that was balancing when it was told to go does not carry the balance
+	# into its launch and does not have `look` cut off by the next gust reading.
+	_balancing = false
 	# The look is the tell. Even at nought delay it plays for the length of the
 	# launch, because the launch take starts from a bird that has already noticed.
 	_play(CrowAnimations.LOOK)
 	return true
+
+
+## One frame of standing on something that is moving.
+##
+## Two jobs, both only while the bird is still on the wire: follow whatever it is
+## gripping, and decide whether the wind is hard enough to need its wings out.
+## Driven from `CrowFlock`, like `advance()`, and for the same reason -- see this
+## file's note on why there is no `_process` here.
+func ride(wind_strength := 0.0) -> void:
+	if not is_on_the_wire():
+		return
+	_follow_the_anchor()
+	_balance(wind_strength)
+
+
+## Put the bird back on the wire, if the wire has gone anywhere.
+##
+## THE COMPARISON IS THE POINT. Writing `global_position` dirties this node and
+## the whole rig beneath it, so on a still day -- and `WireSway` returns exactly
+## zero at a strength of zero, which is most of most days -- the cheap thing is
+## to notice nothing moved and stop.
+##
+## The comparison is on the WHOLE transform, not on its origin. Written that way
+## first, and it is wrong for the one case the re-aim exists for: turning a prop
+## about its own origin leaves the origin exactly where it was while moving every
+## perch on it, so an origin-only check skips the frame and the bird stays where
+## the prop used to point.
+func _follow_the_anchor() -> void:
+	if _anchor == null or not is_instance_valid(_anchor):
+		return
+	var now := _anchor.placement()
+	if now.is_equal_approx(_anchor_seen):
+		return
+	var turned := not now.basis.is_equal_approx(_anchor_seen.basis)
+	_anchor_seen = now
+	_from = now * _anchor_local
+	_place(_from)
+	if not turned:
+		return
+	# Only when the prop actually turned. `WireSway` never rotates a span --
+	# rotating a straight segment about its own chord is a no-op, which is why
+	# that file settled on a rigid slide -- so in the shipped game this branch
+	# does not run, and `test_a_wire_that_only_slides_does_not_turn_the_bird`
+	# is the measurement rather than the claim. It is here because a perch that
+	# followed a prop's position but not its heading would be a bird standing
+	# sideways on a wire the day anything does turn one.
+	var aimed := now.basis * _anchor_local_facing
+	_facing = _normalised(Vector3(aimed.x, 0.0, aimed.z), _facing)
+	_aim(_facing)
+
+
+## Wings out to hold on, and down again when the gust passes. See BALANCE_ON for
+## where the two numbers came from.
+##
+## PERCHED only. A bird in WAITING is playing `look` and one in LAUNCHING is
+## playing `take_off`; starting a balance take over either would cut the
+## departure's own animation off, and the departure is the thing anybody actually
+## sees.
+func _balance(wind_strength: float) -> void:
+	if _state != State.PERCHED:
+		return
+	if not _balancing and wind_strength >= BALANCE_ON:
+		_balancing = true
+		_play(CrowAnimations.FLAP)
+	elif _balancing and wind_strength <= BALANCE_OFF:
+		_balancing = false
+		_play(CrowAnimations.PERCH)
 
 
 func advance(delta: float) -> void:
@@ -293,14 +477,24 @@ func _build_rig() -> void:
 	_player.add_animation_library(CrowAnimations.LIBRARY, CrowAnimations.build())
 
 
-## Every surface onto the world's two-band cel shader, in the palette's darkest
-## structure tone, with the snow turned off. See the header.
-func _paint(rig: Node3D) -> void:
+## The material this bird wears: the palette's darkest structure tone on the
+## world's two-band cel shader, keyed BARE so no snow ever settles on it.
+##
+## `bare` goes through `material_for`'s cache key rather than being written onto
+## the material afterwards -- see the header. That is what makes the crow safe to
+## share a painter with the trees, which are the same colour and do take snow.
+func material() -> ShaderMaterial:
+	if _material != null:
+		return _material
 	if _painter == null:
 		_painter = CelPainter.new()
-	var tone := palette_tone()
-	var material := _painter.material_for(tone)
-	material.set_shader_parameter("snow_receptivity", 0.0)
+	_material = _painter.material_for(palette_tone(), true)
+	return _material
+
+
+## Every surface onto that material. See the header.
+func _paint(rig: Node3D) -> void:
+	var material := material()
 	for node in rig.find_children("*", "MeshInstance3D", true, false):
 		var instance := node as MeshInstance3D
 		var mesh := instance.mesh

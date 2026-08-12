@@ -155,6 +155,78 @@ func test_a_span_with_no_length_offers_nothing() -> void:
 	assert_eq(_perches.perches().size(), 0, "a wire of zero length still offered somewhere to sit")
 
 
+# --- what the prop is, not only where it was --------------------------------
+#
+# A perch used to be a pair of world vectors, and a world vector is a photograph
+# of a moment. `src/rendering/wind_sway.gd` moves the spans up to 0.14 m every
+# frame, so the moment expires immediately. Each perch now also carries the
+# declaration that owns it and the place ON it, which is what a bird has to hold
+# on to.
+
+
+func test_a_perch_carries_the_declaration_that_offered_it() -> void:
+	_perches.kind = PerchPoints.Kind.POINTS
+	_perches.points = [Vector3(0.6, 8.0, 0.0)]
+	var perch: Dictionary = _perches.perches()[0]
+	assert_true(perch.has("anchor"), "a perch does not say what declared it, so nothing can follow it")
+	assert_eq(perch["anchor"], _perches, "a perch named something other than its own declaration as its anchor")
+	assert_eq(perch["local"], Vector3(0.6, 8.0, 0.0), "a POINTS perch's local place is the point that was declared")
+
+
+## The whole contract in one line: resolving the local place through the
+## declaration's CURRENT transform must land exactly where the perch was offered.
+## True for both kinds and at every point along a span.
+func test_every_perch_resolves_back_to_itself_through_its_anchor() -> void:
+	_perches.kind = PerchPoints.Kind.SPAN
+	_perches.spacing_m = 2.0
+	_prop.scale = Vector3(1.0, 1.0, 14.0)
+	_prop.position = Vector3(3.0, 7.0, -2.0)
+	_prop.rotate_y(deg_to_rad(37.0))
+	var placed := _perches.placement()
+	var found := _perches.perches()
+	assert_true(found.size() >= 4, "expected several perches on a 14 m wire, got %d" % found.size())
+	for perch in found:
+		var again: Vector3 = placed * (perch["local"] as Vector3)
+		assert_almost_eq(
+			again.distance_to(perch["at"] as Vector3), 0.0, 0.0001,
+			"a perch resolved from its own local place landed %.4f m from where it was offered" % \
+				again.distance_to(perch["at"] as Vector3)
+		)
+
+
+## And the point of all of it: move the prop, resolve the SAME stored local
+## place, and the perch has moved with it. This is the wire in a gust.
+func test_the_stored_place_follows_a_prop_that_moved() -> void:
+	_perches.kind = PerchPoints.Kind.SPAN
+	_perches.spacing_m = 2.0
+	_prop.scale = Vector3(1.0, 1.0, 8.0)
+	var perch: Dictionary = _perches.perches()[0]
+	var local: Vector3 = perch["local"]
+	_prop.position += Vector3(0.132, 0.042, 0.021)
+	var moved: Vector3 = _perches.placement() * local
+	assert_almost_eq(
+		moved.distance_to(_perches.perches()[0]["at"] as Vector3), 0.0, 0.0001,
+		"the stored place did not follow the prop"
+	)
+	assert_almost_eq(
+		moved.distance_to(perch["at"] as Vector3), 0.1404, 0.001,
+		"the prop moved 0.1404 m and the perch moved %.4f m" % moved.distance_to(perch["at"] as Vector3)
+	)
+
+
+## `placement()` is the public name of the by-hand parent walk that
+## `global_transform` cannot do outside a tree. It is public because a bird holds
+## on to a declaration and has to ask it where it is now.
+func test_placement_composes_the_parent_chain_outside_a_tree() -> void:
+	_perches.kind = PerchPoints.Kind.POINTS
+	_prop.position = Vector3(5.0, 1.0, -3.0)
+	_perches.position = Vector3(0.0, 2.0, 0.0)
+	assert_eq(
+		_perches.placement().origin, Vector3(5.0, 3.0, -3.0),
+		"placement() outside a tree returned %s rather than the composed chain" % _perches.placement().origin
+	)
+
+
 # --- the group ----------------------------------------------------------------
 
 

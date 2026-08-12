@@ -55,6 +55,34 @@ extends Node3D
 ##             once.
 ##
 ## ---------------------------------------------------------------------------
+## AND THE WIND, WHICH IS THE THIRD THING THAT EMPTIES A WIRE
+## ---------------------------------------------------------------------------
+## `src/systems/wind_system.gd` sweeps the tree for anything publishing
+## `set_wind()` / `set_wind_strength()` and pushes the weather into it. This node
+## publishes both, so the flock is driven with no edit to that file, no
+## subscription and no service lookup -- which is also why the wind arrives here
+## and is passed DOWN to the birds rather than each bird finding it: a crow is
+## built at runtime and the sweep runs on a two-second timer, so a bird that
+## landed between sweeps would stand in a gale believing it was still.
+##
+## What the flock does with it, in one sentence each:
+##
+##   EVERY FRAME    every bird still on the wire is told the strength, and
+##                  decides for itself whether to open its wings (`Crow.ride`).
+##   ABOVE 0.75     the flock gives up and goes, DOWNWIND, through the same
+##                  `scatter()` the man's approach uses. Not a second departure.
+##   WHILE BLOWING  nothing lands. A crow does not settle on a wire in a gale,
+##                  and a flock that landed into one would be flushed on the next
+##                  frame -- five birds spawned and freed, over and over.
+##
+## A LEVEL, POLLED, NOT AN EVENT. `wind.gust_started` fires on the crossing of
+## the profile's own threshold and never again as the gust builds, so a flock
+## that refused the event at 0.30 would sit out the 0.83 peak behind it. The
+## question a bird on a wire is answering is "is it bad NOW", and only the level
+## answers that. The hysteresis below is this file's own, for the same reason
+## `WindSystem._report()` has its own.
+##
+## ---------------------------------------------------------------------------
 ## AND THE EVENT NOTHING CONSUMES YET
 ## ---------------------------------------------------------------------------
 ## `wildlife.crows_scattered` is published whenever a flock goes up. Nothing
@@ -67,10 +95,13 @@ const EVENT_SCATTERED := &"wildlife.crows_scattered"
 const EVENT_DAY_STARTED := &"clock.day_started"
 const EVENT_NIGHT_STARTED := &"clock.night_started"
 
-## Why a flock went up. Part of the payload rather than two events, because a
-## listener that wants "something is out there" wants one subscription.
+## Why a flock went up. Part of the payload rather than three events, because a
+## listener that wants "something is out there" wants one subscription -- and
+## because a listener that wants "something is out there" must be able to tell
+## the wind from a bear, which is exactly what this field is for.
 const CAUSE_PLAYER := &"player"
 const CAUSE_NIGHTFALL := &"nightfall"
+const CAUSE_GUST := &"gust"
 
 ## One bird or several -- the owner's words. The upper bound is what the wires
 ## can carry without the farmyard reading as a rookery.
@@ -98,6 +129,30 @@ const CAUSE_NIGHTFALL := &"nightfall"
 @export var climb_min_degrees := 18.0
 @export var climb_max_degrees := 45.0
 
+## The wind at which the flock gives up, and the weaker wind at which it will
+## consider landing again.
+##
+## MEASURED over an hour of each shipped profile rather than chosen. At 0.75 on /
+## 0.62 off:
+##
+##   wind_calm   (flat, sunrise)  ... never. Peak strength is 0.387.
+##   wind_valley (pale_day)       ... 24 times an hour -- a few an afternoon.
+##   wind_rising (nightfall)      ...  9 times an hour.
+##   wind_gale   (whiteout)       ... held 26 per cent of the time; no crow sits.
+##
+## Lower and it stops being an event: every squall in the valley profile reaches
+## 0.62, so anything under about 0.72 takes essentially every flock and the man
+## never gets to flush one. Higher and `wind_rising` stops reaching it at all.
+@export var gust_scatter_strength := 0.75
+@export var gust_release_strength := 0.62
+
+## The fan a wind-blown flock leaves on, against `spread_degrees` for a flock
+## leaving something on the ground. Narrower on purpose: birds startled by a
+## thing run away from the thing in every direction, and birds beaten off a wire
+## all go the same way, because the wind decided and not they. The flock
+## streaming off in one line IS the cue.
+@export var gust_spread_degrees := 44.0
+
 ## Deterministic when non-zero, which is what a capture and a test both need. In
 ## the game it is left at zero and seeded from the clock, so two runs are not the
 ## same afternoon.
@@ -121,10 +176,23 @@ var _subscribed := false
 var _painter: CelPainter = null
 var _rng := RandomNumberGenerator.new()
 var _hatched := 0
+var _wind_strength := 0.0
+var _wind := Vector3.ZERO
+## Latched: true from the frame the wind passed `gust_scatter_strength` until it
+## falls back below `gust_release_strength`.
+var _blowing := false
 
 
 func _ready() -> void:
 	_quiet = first_arrival_seconds
+	# AFTER WHATEVER MOVES THE THINGS THE BIRDS ARE STANDING ON. `_process` runs
+	# in tree order at equal priority, and `Crows` sits above `Wind` in
+	# scenes/main.tscn, so a bird gripping a wire was reading the position the
+	# span held LAST frame -- one frame of lag, measured at 7.9 mm of trailing
+	# through a squall against the 105 mm the bug itself was worth. Sub-pixel at
+	# the tight stop, and free to remove: this is a number, not a scene edit, so
+	# it cannot be undone by the editor resaving `main.tscn`.
+	process_priority = 10
 	attach()
 
 
@@ -151,6 +219,35 @@ func set_service_registry(registry) -> void:
 ## position in a test.
 func set_watched(node: Node3D) -> void:
 	_watched = node
+
+
+# --- the wind hooks ------------------------------------------------------------
+#
+# The two names `WindSystem.drive()` calls. Duck-typed there rather than wired,
+# so these are the whole of the contract and renaming either silently unplugs the
+# flock from the weather -- which `test_crow_gust.gd` asserts by name.
+#
+# NOT `set_snowfall_source`: `WindSystem._is_fed_by_the_sky()` skips any consumer
+# publishing that alongside `wind_strength()`, on the grounds that the sky is
+# already feeding it, and a flock caught by that rule would never be driven.
+
+
+func set_wind(velocity: Vector3) -> void:
+	_wind = velocity
+
+
+func set_wind_strength(strength: float) -> void:
+	_wind_strength = clampf(strength, 0.0, 1.0)
+
+
+func wind_strength() -> float:
+	return _wind_strength
+
+
+## Whether the wind is currently hard enough to keep the wires empty. Public so a
+## test can assert the latch rather than infer it from the birds.
+func is_blowing_them_off() -> bool:
+	return _blowing
 
 
 ## Perches, given rather than gathered. What a test uses instead of building two
@@ -248,22 +345,47 @@ func _process(delta: float) -> void:
 func advance(delta: float) -> void:
 	if not is_finite(delta) or delta <= 0.0:
 		return
+	_read_the_wind()
 	_advance_crows(delta)
 	if not enabled:
 		return
 	if _crows.is_empty():
 		_quiet -= delta
-		if not _night and _quiet <= 0.0 and not _anyone_near(_arrival_guard()):
+		# `_blowing` here as well as in the scatter below: without it a flock
+		# lands into a gale and is flushed on the next frame, forever.
+		if not _night and not _blowing and _quiet <= 0.0 and not _anyone_near(_arrival_guard()):
 			_arrive()
 		return
 	_settled += delta
-	if _settled >= stagger_seconds and _anyone_near(flush_radius_m) and perched_count() > 0:
+	if _settled < stagger_seconds or perched_count() == 0:
+		return
+	# The man first. If he is under the wire in a gale, what took the birds is
+	# still him -- he is the one a Wave 5 listener cares about, and a cue that
+	# reported the weather instead would be reporting the wrong thing.
+	if _anyone_near(flush_radius_m):
 		scatter(CAUSE_PLAYER)
+	elif _blowing:
+		scatter(CAUSE_GUST)
+
+
+## The gust latch. Hysteresis for the same reason `WindSystem._report()` has it:
+## a strength sitting on the threshold would otherwise publish a storm of
+## scatters, and one of the few things worse than a bird that does not react is a
+## bird that reacts sixty times a second.
+func _read_the_wind() -> void:
+	if not _blowing and _wind_strength >= gust_scatter_strength:
+		_blowing = true
+	elif _blowing and _wind_strength <= gust_release_strength:
+		_blowing = false
 
 
 func _advance_crows(delta: float) -> void:
 	var living: Array[Crow] = []
 	for crow in _crows:
+		# Ride BEFORE advancing: put the bird on the wire where the wire is this
+		# frame, then let its own timeline decide whether it is still standing on
+		# it. `ride()` returns immediately for a bird that is already flying.
+		crow.ride(_wind_strength)
 		crow.advance(delta)
 		if crow.is_gone():
 			# Removed from the tree before being freed, so a frame that runs
@@ -305,7 +427,11 @@ func _arrive() -> void:
 	for index in range(wanted):
 		var perch: Dictionary = perches[order[index]]
 		var crow := _build_crow()
-		crow.perch_on(perch["at"], perch["facing"])
+		# `grip`, not `perch_on`: the bird takes hold of the DECLARATION that
+		# offered the perch, so it follows the wire when the wind moves it. A
+		# perch with no `anchor` -- a capture's, a test's -- degrades to a plain
+		# placement and the bird simply does not ride.
+		crow.grip(perch)
 		_crows.append(crow)
 
 
@@ -324,7 +450,12 @@ func scatter(cause: StringName) -> int:
 	perched.sort_custom(func(a: Crow, b: Crow) -> bool:
 		return a.where().distance_squared_to(centre) \
 			< b.where().distance_squared_to(centre))
-	var away := _away_from(centre, perched)
+	# The wind decides the bearing when the wind is what took them; otherwise it
+	# is whatever they are running from. Same burst either way -- one axis and
+	# one spread, chosen rather than duplicated.
+	var blown := cause == CAUSE_GUST and _downwind() != Vector3.ZERO
+	var away := _downwind() if blown else _away_from(centre, perched)
+	var spread := deg_to_rad(gust_spread_degrees if blown else spread_degrees)
 	var middle := (float(perched.size()) - 1.0) * 0.5
 	for index in range(perched.size()):
 		var crow := perched[index]
@@ -332,8 +463,8 @@ func scatter(cause: StringName) -> int:
 		# the shape is a fan rather than a random spray -- and no two are within a
 		# few degrees of each other, which is what a spray keeps producing.
 		var fan := 0.0 if perched.size() == 1 \
-			else (float(index) - middle) / middle * deg_to_rad(spread_degrees) * 0.5
-		var jitter := _rng.randf_range(-1.0, 1.0) * deg_to_rad(spread_degrees) * 0.12
+			else (float(index) - middle) / middle * spread * 0.5
+		var jitter := _rng.randf_range(-1.0, 1.0) * spread * 0.12
 		var climb := deg_to_rad(_rng.randf_range(climb_min_degrees, climb_max_degrees))
 		crow.scatter(_heading(away, fan + jitter, climb), float(index) * stagger_seconds)
 	_emit(EVENT_SCATTERED, {
@@ -365,6 +496,20 @@ static func _heading(away: Vector3, yaw: float, climb: float) -> Vector3:
 		flat = Vector3(0.0, 0.0, -1.0)
 	flat = flat.normalized().rotated(Vector3.UP, yaw)
 	return (flat * cos(climb) + Vector3.UP * sin(climb)).normalized()
+
+
+## The way the wind is blowing, flat, or zero if nobody has told us.
+##
+## `WindSystem` pushes a velocity through `set_wind()`; its length is the
+## vocabulary of whatever asked for it and is of no interest here, only its
+## bearing. Zero is a real answer -- a scene with no wind system in it -- and the
+## caller falls back to the ordinary burst rather than sending five birds due
+## north because a default said so.
+func _downwind() -> Vector3:
+	var flat := Vector3(_wind.x, 0.0, _wind.z)
+	if flat.length_squared() < 0.000001:
+		return Vector3.ZERO
+	return flat.normalized()
 
 
 ## Which way "away" is: from the disturbance toward the middle of the flock.

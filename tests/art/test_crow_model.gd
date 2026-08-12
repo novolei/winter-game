@@ -215,6 +215,40 @@ func test_the_crow_is_painted_from_the_palette() -> void:
 	)
 
 
+## A living bird does not carry a week of settled snow, and the crow is the
+## palette's darkest structure tone -- which is also the trees, the wires and the
+## roof planes.
+##
+## THE MECHANISM MATTERS AND THAT IS THE WHOLE OF THIS TEST. Written first as
+## `material_for(tone)` followed by `set_shader_parameter("snow_receptivity", 0)`,
+## which was safe only because the bird kept a private painter. `CelPainter`
+## caches one material per colour, so the moment anybody passes the world's
+## painter through `Crow.set_painter()` -- public, and exactly what a scene that
+## wanted one material for the whole valley would do -- that write reaches every
+## tree sharing the colour, and no gate in this project could see it. The roof
+## work's `bare` argument is part of the cache key and cannot: the trees and the
+## crow become two materials.
+func test_the_crow_refuses_snow_through_the_painters_key_and_not_by_writing_on_it() -> void:
+	var painter := CelPainter.new()
+	var tone: Color = CrowScript.palette_tone()
+	# What a tree painted the same colour already holds.
+	var a_tree := painter.material_for(tone)
+	var crow: Crow = CrowScript.new()
+	crow.set_painter(painter)
+	var worn := crow.material()
+	assert_not_null(worn, "the crow resolved no material at all")
+	assert_true(worn != a_tree, "the crow and the trees are sharing one material, so one of them decides for both")
+	assert_almost_eq(
+		float(worn.get_shader_parameter("snow_receptivity")), 0.0, 0.0001,
+		"snow settles on the crow, and by day six the flock is white"
+	)
+	assert_true(
+		float(a_tree.get_shader_parameter("snow_receptivity")) > 0.0,
+		"painting the crow turned the snow off for every tree that shares its colour"
+	)
+	crow.free()
+
+
 ## Art Bible rule 12. The pack ships a yellow-beak variant and two near-white
 ## ones; the yellow would be the only warm thing in the sky, and warm is
 ## reserved for windows, fire, beacons, the truck and the scarf.
