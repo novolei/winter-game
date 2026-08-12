@@ -54,6 +54,8 @@ const COPY_PATH := "res://data/ui/threshold_copy.tres"
 const EVENT_THRESHOLD_CROSSED := &"survival.threshold_crossed"
 const EVENT_STAT_DEPLETED := &"survival.stat_depleted"
 const EVENT_STAT_RECOVERED := &"survival.stat_recovered"
+const EVENT_DAY_STARTED := &"clock.day_started"
+const EVENT_NIGHT_STARTED := &"clock.night_started"
 
 ## Section 8's 元素 呵: 极轻的吸气 / 霜裂, 20 ms, -28 dB. Not cut yet, deliberately
 ## not stubbed. Named so it works the day it lands.
@@ -72,6 +74,10 @@ const CUE_BORN := &"ui.breath"
 const LARGE_RADIUS_DESIGN_PX := Engraved.LARGE_RADIUS
 const SMALL_RADIUS_DESIGN_PX := Engraved.SMALL_RADIUS
 const CLUSTER_GAP_DESIGN_PX := Engraved.GAP
+
+## Where the icons live. Named by the row's `glyph`, so a new reading brings its
+## own art and no code learns another noun.
+const ICON_DIRECTORY := "res://assets/ui/icons"
 
 ## HOW LARGE AN ICON STANDS IN ITS GAUGE, as a fraction of that gauge's radius.
 ##
@@ -121,6 +127,10 @@ var _viewport := Vector2(1920.0, 1080.0)
 ## So it lives on the layer, to be composited with everything else, and drives
 ## its own 呵. Section 1.2 still binds: nothing appears instantly.
 var _lighting = null
+var _clock = null
+var _night := false
+var _world := 0.5
+var _icons: Dictionary = {}
 var _focus: StringName = &""
 var _focus_left := 0.0
 
@@ -156,6 +166,8 @@ func build() -> void:
 		set_event_bus(get_node_or_null("/root/EventBus"))
 	if _model == null and is_inside_tree():
 		set_model(get_node_or_null("/root/SurvivalSystem"))
+	if _clock == null and is_inside_tree():
+		set_clock(get_node_or_null("/root/WorldClock"))
 	if _strokes.is_empty():
 		_build_strokes()
 	if _birth == null:
@@ -186,6 +198,15 @@ func set_model(model) -> void:
 	_model = model
 
 
+## The day dial's source. Asked for its PHASE on build as well as subscribed to,
+## for the reason the stats are: a node that only hears transitions can never
+## learn the state it was born into, and `clock.night_started` has already fired
+## by the time a scene reloads after dark.
+func set_clock(clock) -> void:
+	_clock = clock
+	_read_phase()
+
+
 func set_tokens(tokens: UITokens) -> void:
 	_tokens = tokens
 
@@ -212,17 +233,30 @@ func layout() -> VitalLayout:
 ## their authored full, so a scene with no run going shows a well man rather
 ## than a dead one.
 func read_model() -> void:
-	if _model == null:
-		return
 	for stroke in _strokes:
+		var row: VitalReadout = null if _layout == null else _layout.row_for(stroke.stat())
+		if row != null and row.source == VitalReadout.Source.DAYLIGHT:
+			stroke.set_reading(daylight_left(), false, false)
+			continue
+		if _model == null:
+			continue
 		var id := stroke.stat()
 		if id == &"" or not _model.has_stat(id):
 			continue
-		stroke.set_reading(
-			_model.fraction_of(id),
-			_model.is_depleted(id),
-			_model.net_rate_of(id) > 0.0
-		)
+		var fraction: float = _model.fraction_of(id)
+		var depleted: bool = _model.is_depleted(id)
+		var recovering: bool = _model.net_rate_of(id) > 0.0
+		# ONE READING, TWO SITES, AND IT SHOWS THE WORSE. GDD section 5 makes
+		# frostbite local -- hands slow fire-lighting and spoil aim, feet cost
+		# speed -- and a player acts on whichever limb is further gone, so an
+		# average would hide the one that matters behind the one that does not.
+		if row != null and row.second_stat != &"" and _model.has_stat(row.second_stat):
+			var other: float = _model.fraction_of(row.second_stat)
+			if other < fraction:
+				fraction = other
+				depleted = _model.is_depleted(row.second_stat)
+				recovering = _model.net_rate_of(row.second_stat) > 0.0
+		stroke.set_reading(fraction, depleted, recovering)
 
 
 func advance(delta: float) -> void:
@@ -242,6 +276,15 @@ func advance(delta: float) -> void:
 		_focus_left = maxf(_focus_left - delta, 0.0)
 	var focused := _focus_left > 0.0
 	var world := _world_value()
+	if not is_equal_approx(world, _world):
+		_world = world
+		# THE ICONS LIVE ON THIS NODE, NOT ON THE GAUGES -- a CanvasItem carries
+		# one material and the gauges own theirs -- so a stroke redrawing itself
+		# does NOT redraw the icon at its centre. Without this the rings adapt to
+		# the weather and the icons stay at whatever tint they were last drawn
+		# with, which on `deep_night` measured as pale rings around near-black
+		# icons. Visible in a capture, invisible in the code.
+		queue_redraw()
 	for stroke in _strokes:
 		stroke.set_world_value(world)
 		stroke.set_time_scale(scale)
@@ -404,7 +447,7 @@ func _markers_for(stat: StringName) -> Vector4:
 
 
 func _is_heat(stroke: VitalStroke) -> bool:
-	return _layout != null and stroke.stat() == _layout.frost_source
+	return _layout != null and stroke.stat() == _layout.warm_source
 
 
 # --- the glyphs ---------------------------------------------------------------
@@ -428,10 +471,19 @@ func _draw() -> void:
 		var centre := stroke.position + stroke.centre()
 		var reach: float = (stroke.size.x * 0.5
 			- _tokens.design_px(VitalStroke.PAD_DESIGN_PX, _viewport)) * GLYPH_RATIO
-		var colour := VitalTone.colour_for(_tokens, stroke.state(), _is_heat(stroke))
-		var weight := _tokens.design_px(
-			VitalTone.fill_design_px(stroke.state()) * 0.6, _viewport)
-		_draw_glyph(row.glyph, centre, maxf(reach, 2.0), colour, maxf(weight, 1.0))
+		var colour := stroke.reading_colour()
+		var icon := _icon_for(row)
+		if icon == null:
+			_draw_glyph(row.glyph, centre, maxf(reach, 2.0), colour, 1.0)
+			continue
+		# Tinted, never recoloured in the file. The four cool gauges take the
+		# single mark colour and the dial takes its warm value, and both come
+		# from the same place the arcs do -- so an icon can never disagree with
+		# the ring it stands in.
+		draw_texture_rect(
+			icon,
+			Rect2(centre - Vector2(reach, reach), Vector2(reach * 2.0, reach * 2.0)),
+			false, colour)
 
 
 func _draw_glyph(
@@ -458,6 +510,88 @@ func _world_value() -> float:
 	if _lighting == null or not _lighting.has_method("active_preset"):
 		return 0.5
 	return VitalTone.world_value(_lighting.call("active_preset"))
+
+
+## How much of today's daylight is left, 1 at dawn and 0 at dusk. Zero all night.
+##
+## The dial is the one reading that is not a survival stat: GDD section 3 makes
+## `NIGHTFALL = GO HOME` a literal deadline, so the largest thing on the
+## interface is the clock that deadline runs on.
+func daylight_left() -> float:
+	if _clock == null or _night:
+		return 0.0
+	var duration: float = _clock.phase_duration()
+	if duration <= 0.0:
+		return 1.0
+	return clampf(1.0 - float(_clock.phase_elapsed()) / duration, 0.0, 1.0)
+
+
+func is_night() -> bool:
+	return _night
+
+
+func _read_phase() -> void:
+	if _clock != null and _clock.has_method("is_night"):
+		_night = bool(_clock.is_night())
+
+
+func _on_day_started(_payload) -> void:
+	_night = false
+	_refresh_icons()
+
+
+## The dial swaps its icon at the phase change, and that swap IS the signal --
+## the largest thing on the interface changing what it depicts, at the moment the
+## deadline lands.
+func _on_night_started(_payload) -> void:
+	_night = true
+	_refresh_icons()
+
+
+func _refresh_icons() -> void:
+	_icons.clear()
+	queue_redraw()
+
+
+## The icon at the centre of a gauge. White on transparent, tinted here -- so a
+## file that arrives carrying its own colour is a defect rather than something to
+## work around. Cached, because _draw() runs every frame.
+func _icon_for(row: VitalReadout) -> Texture2D:
+	var name: StringName = row.glyph
+	if _night and row.glyph_night != &"":
+		name = row.glyph_night
+	if _icons.has(name):
+		return _icons[name]
+	var path := "%s/%s.png" % [ICON_DIRECTORY, name]
+	# Asked before loading: load() on a path that is not there prints three ERROR
+	# lines, and a dirty console is a failed run by this project's standard.
+	var texture: Texture2D = null
+	if ResourceLoader.exists(path):
+		texture = ResourceLoader.load(path) as Texture2D
+	_icons[name] = texture
+	return texture
+
+
+## How wide and tall the corner cluster is, without needing one to exist.
+##
+## Published so that anything else living in the same corner can keep clear of it
+## without looking this node up by name through the scene tree -- a layout that
+## breaks when somebody renames a node is worse than one constant computed twice
+## from the same data. Section 5.2's notes use it, after a capture showed six
+## lines of copy laid straight across the readings they were naming.
+static func cluster_size(
+	tokens: UITokens, layout: VitalLayout, viewport_size: Vector2
+) -> Vector2:
+	if tokens == null:
+		return Vector2.ZERO
+	var large := tokens.design_px(LARGE_RADIUS_DESIGN_PX, viewport_size)
+	var small := tokens.design_px(SMALL_RADIUS_DESIGN_PX, viewport_size)
+	var gap := tokens.design_px(CLUSTER_GAP_DESIGN_PX, viewport_size)
+	var rows: Array[VitalReadout] = [] if layout == null else layout.ordered()
+	var width := 0.0
+	for row in rows:
+		width += (large if row.stat == layout.warm_source else small) * 2.0 + gap
+	return Vector2(maxf(width - gap, 0.0), large * 2.0)
 
 
 func _canvas_size() -> Vector2:
@@ -495,7 +629,7 @@ func _build_strokes() -> void:
 			stroke.free()
 			index += 1
 			continue
-		stroke.set_is_heat(row.stat == _layout.frost_source)
+		stroke.set_is_heat(row.stat == _layout.warm_source)
 		add_child(stroke)
 		_strokes.append(stroke)
 		index += 1
@@ -507,6 +641,8 @@ func _subscribe() -> void:
 	_bus.subscribe(EVENT_THRESHOLD_CROSSED, _on_threshold_crossed)
 	_bus.subscribe(EVENT_STAT_DEPLETED, _on_stat_depleted)
 	_bus.subscribe(EVENT_STAT_RECOVERED, _on_stat_recovered)
+	_bus.subscribe(EVENT_DAY_STARTED, _on_day_started)
+	_bus.subscribe(EVENT_NIGHT_STARTED, _on_night_started)
 
 
 func _unsubscribe() -> void:
@@ -515,6 +651,8 @@ func _unsubscribe() -> void:
 	_bus.unsubscribe(EVENT_THRESHOLD_CROSSED, _on_threshold_crossed)
 	_bus.unsubscribe(EVENT_STAT_DEPLETED, _on_stat_depleted)
 	_bus.unsubscribe(EVENT_STAT_RECOVERED, _on_stat_recovered)
+	_bus.unsubscribe(EVENT_DAY_STARTED, _on_day_started)
+	_bus.unsubscribe(EVENT_NIGHT_STARTED, _on_night_started)
 
 
 ## PREDELETE as well as EXIT_TREE: a stack built outside a SceneTree never

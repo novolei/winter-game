@@ -22,12 +22,32 @@ extends Resource
 ## somebody reorders one. A stat that is second in the margin and fourth on the
 ## ring is not a design decision, it is a bug that nobody will ever file.
 
-## Where section 6.1 hangs this reading. The ring carries the whole-body stats;
-## frostbite is 局部 (GDD section 5) and grows on the silhouette's own limbs
-## instead -- 冻伤 不在环上.
-enum Anchor { RING, HANDS, FEET }
+## Where section 6.1's Tab readout hangs this reading. The ring carries the
+## whole-body stats; frostbite is 局部 (GDD section 5) and grows on the
+## silhouette's own limbs instead -- 冻伤 不在环上. DIAL is the day dial, which is
+## a corner gauge and has no place on a ring drawn around the character at all.
+enum Anchor { RING, HANDS, FEET, DIAL }
+
+## Where a reading gets its value.
+##
+## Five of the six are survival stats. The sixth is the day dial, whose value is
+## how much daylight is left and which belongs to WorldClock -- so the source has
+## to be a field rather than an assumption, or the layout table could only ever
+## describe stats.
+enum Source { STAT, DAYLIGHT }
+
+@export var source: Source = Source.STAT
 
 @export var stat: StringName = &""
+
+## A second site for a reading that has two.
+##
+## GDD section 5: 冻伤是局部的. Frostbite accumulates per limb and the two limbs
+## cost different things -- hands slow fire-lighting and spoil aim, feet cost
+## speed until treated at a fire. It is NOT a consequence of core temperature and
+## it is not one number; it is one reading with two sites, and this is the
+## second one.
+@export var second_stat: StringName = &""
 
 ## What the interface calls it, in the language the design document is written
 ## in. Not StatDefinition.display_name, which is English and belongs to the
@@ -55,7 +75,8 @@ enum Anchor { RING, HANDS, FEET }
 
 @export var ring_anchor: Anchor = Anchor.RING
 
-## Which pictograph stands in the middle of this reading's gauge.
+## The icon at the centre of this reading's gauge, named without its extension:
+## `assets/ui/icons/<glyph>.png`.
 ##
 ## A NAME, not a file. The glyphs are drawn as vector strokes at runtime, in
 ## palette colour, at whatever weight the reading's state calls for -- so they
@@ -66,4 +87,10 @@ enum Anchor { RING, HANDS, FEET }
 ##
 ## Naming the glyph rather than the stat is what keeps constraint 4: a new stat
 ## picks an existing pictograph in data, and no code learns another noun.
-@export var glyph: StringName = &"crystal"
+@export var glyph: StringName = &"core_temperature"
+
+## The day dial alone: the icon it swaps to after dark. Empty for everything
+## else. The swap IS the nightfall signal -- the largest thing on the interface
+## changing what it depicts, at the moment GDD section 3 calls a literal
+## deadline.
+@export var glyph_night: StringName = &""

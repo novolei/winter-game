@@ -26,7 +26,13 @@ extends Resource
 ## and the readout has no business loading the stat files a second time to find
 ## out -- and because "the stat that kills you" and "the stat that makes ice"
 ## happen to coincide today and are not the same claim.
-@export var frost_source: StringName = &"core_temperature"
+## The one reading allowed to be warm.
+##
+## Rule 3 gives warm exactly one meaning -- 热量的存在 -- and the day dial is warm
+## because SUNLIGHT IS HEAT. Named in data rather than inferred, so the ruling is
+## visible where the layout is, and so nothing in src/ui decides it by a stat's
+## name.
+@export var warm_source: StringName = &"daylight"
 
 
 ## Rows in the order they are drawn.
@@ -50,9 +56,18 @@ func ring_rows() -> Array[VitalReadout]:
 
 func row_for(stat: StringName) -> VitalReadout:
 	for row in readouts:
-		if row != null and row.stat == stat:
+		if row != null and (row.stat == stat or row.second_stat == stat):
 			return row
 	return null
+
+
+## Only the readings that come from the survival model. The day dial does not.
+func stat_rows() -> Array[VitalReadout]:
+	var rows: Array[VitalReadout] = []
+	for row in ordered():
+		if row.source == VitalReadout.Source.STAT:
+			rows.append(row)
+	return rows
 
 
 func has_row(stat: StringName) -> bool:

@@ -135,6 +135,14 @@ func state() -> int:
 	return _state
 
 
+## The colour this reading is being drawn in, so the icon at its centre is tinted
+## with exactly what the arc around it is using and the two cannot disagree.
+func reading_colour() -> Color:
+	if _is_heat:
+		return VitalTone.warm_for(_tokens, _world)
+	return VitalTone.adapt(VitalTone.colour_for(_tokens, _state, false), _world)
+
+
 ## Where this stroke stands and how long it is, in SCREEN pixels. The caller owns
 ## the layout; this owns everything inside its own bounds.
 ##
@@ -354,11 +362,7 @@ func _apply_reading_colour() -> void:
 	# both come from how bright the world is. The dial keeps its hue family and
 	# falls in value, so it goes OUT at nightfall rather than turning cool --
 	# which would be saying the fire had gone out for a different reason.
-	if _is_heat:
-		_paint.set_reserve_colour(VitalTone.warm_for(_tokens, _world))
-	else:
-		_paint.set_reserve_colour(
-			VitalTone.adapt(VitalTone.colour_for(_tokens, _state, false), _world))
+	_paint.set_reserve_colour(reading_colour())
 
 
 func _pad_px() -> float:

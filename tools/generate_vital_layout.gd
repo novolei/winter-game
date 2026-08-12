@@ -34,31 +34,45 @@ const OUT_PATH := "res://data/ui/vital_layout.tres"
 const RING := 0
 const HANDS := 1
 const FEET := 2
+const DIAL := 3
 
-## [stat, label, limb, order, track_weight, ring_degrees, ring_anchor, glyph].
-## Clockwise from the top, which is section 6.1's 段序.
+const FROM_STAT := 0
+const FROM_DAYLIGHT := 1
+
+## [source, stat, second_stat, label, limb, order, track_weight, ring_degrees,
+##  ring_anchor, glyph, glyph_night].
 ##
-## `track_weight` doubles as the gauge hierarchy in the corner cluster: the heat
-## reading is the large ring and everything else is small. 1.4 against 1.0 is
-## section 6.1's 110-against-58 rounded to what fits a corner without creeping
-## toward the middle of the frame.
+## SIX GAUGES: the day dial, large, plus GDD section 5's five stats, small.
 ##
-## TWO OF THE GLYPHS ARE HONEST PLACEHOLDERS. Warmth, hunger, thirst and fatigue
-## have settled pictographic traditions and the strokes below are recognisable
-## instances of them. FROSTBITE HAS NO SUCH TRADITION -- there is no drawing
-## everyone reads as "this limb is freezing" -- so the two limb readings carry a
-## branching crystal, which says the material and the place but not the injury.
-## That is a design question rather than a drawing one and it is flagged as open
-## rather than guessed at.
+## The dial is first and largest and is the only warm one. Rule 3 turned into the
+## design: the biggest thing on the interface is the only warm thing on it, and
+## it is sunlight, which in this game is heat. It drains as the day runs down and
+## goes out at nightfall.
+##
+## FROSTBITE IS ONE READING WITH TWO SITES, not two readings and not a
+## consequence of core temperature. GDD section 5: 冻伤是局部的 -- hands slow
+## fire-lighting and spoil aim, feet cost speed until treated at a fire. Two
+## files in data/stats, one gauge here, and the gauge shows the WORST of them
+## (see Vitals) because the player acts on whichever limb is further gone.
+##
+## `track_weight` is the gauge hierarchy: 2.0 against 1.0 is section 6.1's
+## 110-against-58 rounded to what a corner will hold without creeping toward the
+## middle of the frame.
 const TABLE := [
-	[&"core_temperature", "体温", "", 0, 1.4, 110.0, RING, &"heat"],
-	[&"hunger", "饥饿", "", 1, 1.0, 58.0, RING, &"hunger"],
-	[&"thirst", "口渴", "", 2, 1.0, 58.0, RING, &"thirst"],
-	[&"fatigue", "疲劳", "", 3, 1.0, 58.0, RING, &"fatigue"],
-	[&"frostbite_hands", "冻伤", "手", 4, 0.72, 34.0, HANDS, &"unresolved"],
-	[&"frostbite_feet", "冻伤", "足", 5, 0.72, 34.0, FEET, &"unresolved"],
+	[FROM_DAYLIGHT, &"daylight", &"", "日", "", 0, 2.0, 0.0, DIAL, &"day_sun", &"night_moon"],
+	[FROM_STAT, &"core_temperature", &"", "体温", "", 1, 1.0, 110.0, RING, &"core_temperature", &""],
+	[FROM_STAT, &"hunger", &"", "饥饿", "", 2, 1.0, 58.0, RING, &"hunger", &""],
+	[FROM_STAT, &"thirst", &"", "口渴", "", 3, 1.0, 58.0, RING, &"thirst", &""],
+	[FROM_STAT, &"fatigue", &"", "疲劳", "", 4, 1.0, 58.0, RING, &"fatigue", &""],
+	[FROM_STAT, &"frostbite_hands", &"frostbite_feet", "冻伤", "", 5, 1.0, 34.0, HANDS,
+		&"frostbite_hands", &""],
 ]
 
+## Section 6.1's Tab ring is unchanged by any of this: 体温 110° is still its 主
+## 时钟 and still nearly twice everything else, because that readout is drawn
+## around the CHARACTER and the day dial has no place on it. The corner cluster's
+## hierarchy is carried by `track_weight` instead, which is why the two are
+## separate fields rather than one.
 const RING_GAP_DEGREES := 14.0
 const RING_RADIUS_RATIO := 1.6
 
@@ -70,14 +84,17 @@ func _initialize() -> void:
 	var rows: Array[VitalReadout] = []
 	for entry in TABLE:
 		var row = RowScript.new()
-		row.stat = entry[0]
-		row.label = entry[1]
-		row.limb = entry[2]
-		row.order = int(entry[3])
-		row.track_weight = float(entry[4])
-		row.ring_degrees = float(entry[5])
-		row.ring_anchor = int(entry[6])
-		row.glyph = entry[7]
+		row.source = int(entry[0])
+		row.stat = entry[1]
+		row.second_stat = entry[2]
+		row.label = entry[3]
+		row.limb = entry[4]
+		row.order = int(entry[5])
+		row.track_weight = float(entry[6])
+		row.ring_degrees = float(entry[7])
+		row.ring_anchor = int(entry[8])
+		row.glyph = entry[9]
+		row.glyph_night = entry[10]
 		rows.append(row)
 
 	var layout = LayoutScript.new()
@@ -89,6 +106,7 @@ func _initialize() -> void:
 	layout.readouts = typed
 	layout.ring_gap_degrees = RING_GAP_DEGREES
 	layout.ring_radius_ratio = RING_RADIUS_RATIO
+	layout.warm_source = &"daylight"
 
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT_DIR))
 	var error := ResourceSaver.save(layout, OUT_PATH)
@@ -103,9 +121,10 @@ func _initialize() -> void:
 		quit(1)
 		return
 	for row in written.ordered():
-		print("  %d  %-18s %s%s  track ×%.2f  ring %.0f° anchor %d  glyph %s" % [
-			row.order, row.stat, row.label, row.limb, row.track_weight,
-			row.ring_degrees, row.ring_anchor, row.glyph,
+		print("  %d  %-18s %-6s track ×%.2f  glyph %s%s%s" % [
+			row.order, row.stat, row.label, row.track_weight, row.glyph,
+			" / " + row.glyph_night if row.glyph_night != &"" else "",
+			"  + " + row.second_stat if row.second_stat != &"" else "",
 		])
 	print("  ring opening at the bottom: %.0f°" % written.ring_opening_degrees())
 	quit(0 if error == OK else 1)

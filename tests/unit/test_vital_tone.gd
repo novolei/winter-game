@@ -158,13 +158,36 @@ func test_the_mark_strengthens_as_the_world_darkens() -> void:
 	assert_true(on_whiteout >= VitalTone.OPACITY_FLOOR - 0.001)
 	assert_true(on_night <= VitalTone.OPACITY_CEILING + 0.001)
 
-## Hue never moves at all now: there is only one.
-func test_the_colour_itself_never_changes() -> void:
+## ONE HUE, ONE IDENTITY -- BUT NOT ONE FIXED VALUE.
+##
+## Opacity alone cannot make charcoal legible on `deep_night`: charcoal sits at
+## relative luminance 0.009 and that ground at 0.093, so the ceiling at ANY
+## opacity is 2.42:1. The lightness therefore moves too, and only the lightness:
+## hue and saturation are never touched, which is what keeps it recognisably one
+## material across the six presets.
+func test_the_hue_never_changes_however_the_value_does() -> void:
 	for ground in [0.0, 0.2, 0.475, 0.52, 0.9]:
 		var mark := VitalTone.adapt(VitalTone.CHARCOAL, ground)
-		assert_almost_eq(mark.r, VitalTone.CHARCOAL.r, 0.0001)
-		assert_almost_eq(mark.g, VitalTone.CHARCOAL.g, 0.0001)
-		assert_almost_eq(mark.b, VitalTone.CHARCOAL.b, 0.0001)
+		assert_almost_eq(mark.h, VitalTone.CHARCOAL.h, 0.01,
+			"the mark changed hue at ground %.2f" % ground)
+		assert_almost_eq(mark.s, VitalTone.CHARCOAL.s, 0.03,
+			"the mark changed saturation at ground %.2f" % ground)
+
+## On the bright weather the game spends most of its time in, the mark IS
+## charcoal -- dark, and close to the value it is named for.
+func test_on_bright_weather_the_mark_is_charcoal() -> void:
+	for ground in [0.474, 0.526]:
+		var lit := VitalTone.relative_luminance(VitalTone.adapt(VitalTone.CHARCOAL, ground))
+		assert_true(lit < 0.12, "at ground %.2f the mark should still be dark" % ground)
+
+## And on a frame too dark to be darker than, it goes the other way. Same rule,
+## opposite picture -- and it is the only thing that can be legible there.
+func test_on_a_dark_frame_the_mark_lifts_instead() -> void:
+	var night := VitalTone.relative_luminance(VitalTone.adapt(VitalTone.CHARCOAL, 0.093))
+	assert_true(night > 0.093,
+		"nothing can be usefully darker than a ground at 0.093, so it has to lift")
+	var ratio := (night + 0.05) / (0.093 + 0.05)
+	assert_true(ratio > 3.0, "the lift landed at only %.2f:1" % ratio)
 
 ## The director hands out a BLENDED preset while a crossfade runs, so the
 ## interface has to be a continuous function of it or there is a pop.

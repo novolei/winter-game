@@ -53,8 +53,10 @@ func _wire() -> void:
 
 func test_it_draws_one_reading_per_stat_the_model_carries() -> void:
 	_wire()
-	assert_eq(_vitals.stroke_count(), _model.stat_ids().size(),
-		"a stat with no stroke is a stat the player cannot see")
+	# Five stats, but frostbite is ONE reading with two sites, plus the day dial
+	# which is not a stat at all: six gauges for six stat files.
+	assert_eq(_vitals.stroke_count(), 6)
+	assert_not_null(_vitals.stroke_for(&"daylight"), "the day dial has to exist")
 
 ## Constraint 4. Nothing in src/ui counts the stats; the count comes out of
 ## data/ui/vital_layout.tres, so a sixth stat is a new row and no code change.
@@ -63,10 +65,35 @@ func test_nothing_in_the_element_knows_how_many_stats_there_are() -> void:
 	assert_not_null(_vitals.layout())
 	assert_eq(_vitals.stroke_count(), _vitals.layout().ordered().size())
 
-func test_each_stroke_is_the_stat_its_row_names() -> void:
+func test_every_stat_reaches_a_gauge() -> void:
 	_wire()
+	assert_not_null(_vitals.layout())
+	if _vitals.layout() == null:
+		return
 	for id in _model.stat_ids():
-		assert_not_null(_vitals.stroke_for(id), "no stroke for %s" % id)
+		assert_not_null(_vitals.layout().row_for(id),
+			"%s has no gauge -- the player cannot see it" % id)
+
+## GDD section 5 makes frostbite local and the player acts on whichever limb is
+## further gone, so an average would hide the one that matters behind the one
+## that does not.
+func test_the_frostbite_gauge_shows_the_worse_of_the_two_limbs() -> void:
+	_model.start()
+	_wire()
+	# ADD, not MULTIPLY: the frostbite stats carry no base decay at all -- they
+	# only accumulate through core_temperature's threshold effects -- so scaling
+	# zero leaves it at zero and the fixture proves nothing.
+	_model.push_modifier(&"frostbite_feet", &"test", Modifier.Operation.ADD, 0.02)
+	_model.advance(60.0)
+	_vitals.read_model()
+	var gauge := _vitals.stroke_for(&"frostbite_hands")
+	assert_not_null(gauge)
+	if gauge == null:
+		return
+	assert_true(_model.fraction_of(&"frostbite_feet")
+		< _model.fraction_of(&"frostbite_hands"), "the fixture has to hurt one limb only")
+	assert_true(gauge.state() != VitalTone.State.STEADY,
+		"the gauge stayed calm while one limb was freezing")
 
 # --- it asks, and it listens -------------------------------------------------
 
@@ -118,12 +145,12 @@ func test_a_crossing_thickens_the_ice_on_that_reading_alone() -> void:
 	assert_not_null(hungry)
 	if cold == null or hungry == null:
 		return
-	var before: float = hungry.paint().rime
+	var before: float = hungry.paint().emphasis()
 	_bus.emit_event(&"survival.threshold_crossed", {
 		"stat": &"core_temperature", "threshold": 0.5, "active": true,
 	})
-	assert_almost_eq(cold.paint().rime, 1.0, 0.0001)
-	assert_almost_eq(hungry.paint().rime, before, 0.0001,
+	assert_almost_eq(cold.paint().emphasis(), 1.0, 0.0001)
+	assert_almost_eq(hungry.paint().emphasis(), before, 0.0001,
 		"a crossing on one reading must not thicken the others")
 
 ## `active` false is the stat coming back UP through a threshold. Thickening on
@@ -134,11 +161,11 @@ func test_coming_back_up_through_a_threshold_does_not_thicken_the_ice() -> void:
 	assert_not_null(cold)
 	if cold == null:
 		return
-	var before: float = cold.paint().rime
+	var before: float = cold.paint().emphasis()
 	_bus.emit_event(&"survival.threshold_crossed", {
 		"stat": &"core_temperature", "threshold": 0.5, "active": false,
 	})
-	assert_almost_eq(cold.paint().rime, before, 0.0001)
+	assert_almost_eq(cold.paint().emphasis(), before, 0.0001)
 
 func test_a_stat_bottoming_out_thickens_the_ice() -> void:
 	_wire()
@@ -147,7 +174,7 @@ func test_a_stat_bottoming_out_thickens_the_ice() -> void:
 	if tired == null:
 		return
 	_bus.emit_event(&"survival.stat_depleted", {"stat": &"fatigue", "value": 0.0})
-	assert_almost_eq(tired.paint().rime, 1.0, 0.0001)
+	assert_almost_eq(tired.paint().emphasis(), 1.0, 0.0001)
 
 func test_an_event_about_a_stat_it_has_never_heard_of_is_harmless() -> void:
 	_wire()
@@ -244,18 +271,16 @@ func test_the_heat_gauge_is_visibly_the_largest() -> void:
 	_wire()
 	_vitals._viewport = Vector2(1920, 1080)
 	_vitals.relayout()
-	var main := _vitals.stroke_for(_vitals.layout().frost_source)
+	var main := _vitals.stroke_for(_vitals.layout().warm_source)
 	assert_not_null(main)
 	if main == null:
 		return
-	for id in _model.stat_ids():
-		if id == _vitals.layout().frost_source:
-			continue
-		var other := _vitals.stroke_for(id)
+	for row in _vitals.layout().stat_rows():
+		var other := _vitals.stroke_for(row.stat)
 		if other == null:
 			continue
 		assert_true(main.size.x > other.size.x * 1.3,
-			"%s is nearly as large as the main clock" % id)
+			"%s is nearly as large as the dial" % row.stat)
 
 ## And it is the ONLY warm one. Rule 3 survived every change of look.
 func test_only_the_heat_gauge_is_ever_warm() -> void:
@@ -265,7 +290,7 @@ func test_only_the_heat_gauge_is_ever_warm() -> void:
 	if palette == null:
 		return
 	for id in _model.stat_ids():
-		var is_heat: bool = id == _vitals.layout().frost_source
+		var is_heat: bool = id == _vitals.layout().warm_source
 		for state in [VitalTone.State.STEADY, VitalTone.State.ALARM,
 				VitalTone.State.CRITICAL, VitalTone.State.EMPTY]:
 			var colour := VitalTone.colour_for(_tokens, state, is_heat)
@@ -282,14 +307,14 @@ func test_every_gauge_shares_a_centre_line() -> void:
 	_vitals._viewport = Vector2(1920, 1080)
 	_vitals.relayout()
 	var line := -1.0
-	for id in _model.stat_ids():
-		var stroke := _vitals.stroke_for(id)
+	for row in _vitals.layout().ordered():
+		var stroke := _vitals.stroke_for(row.stat)
 		if stroke == null:
 			continue
 		var mid: float = stroke.position.y + stroke.size.y * 0.5
 		if line < 0.0:
 			line = mid
-		assert_almost_eq(mid, line, 0.5, "%s is off the centre line" % id)
+		assert_almost_eq(mid, line, 0.5, "%s is off the centre line" % row.stat)
 
 ## Gauges must not overlap, at any aspect. Two rings touching is the one layout
 ## fault that reads as a rendering bug rather than as a layout choice.
@@ -372,14 +397,18 @@ func test_the_layer_is_never_given_custody_of_it() -> void:
 	layer.remove_child(_vitals)
 	layer.free()
 
-func test_advancing_grows_the_ice_on_every_reading() -> void:
+## Iterated over the LAYOUT, not over the model's stats: frostbite_feet is a
+## second site on the frostbite gauge rather than a gauge of its own, and the day
+## dial is not a stat at all.
+func test_advancing_brings_every_gauge_all_the_way_in() -> void:
 	_wire()
-	_vitals.advance(Frost.GROWTH_SECONDS + 0.01)
-	for id in _model.stat_ids():
-		var stroke := _vitals.stroke_for(id)
-		assert_not_null(stroke)
+	_vitals.advance(Engraved.ARRIVE_SECONDS + 0.01)
+	for row in _vitals.layout().ordered():
+		var stroke := _vitals.stroke_for(row.stat)
+		assert_not_null(stroke, "no gauge for %s" % row.stat)
 		if stroke != null:
-			assert_almost_eq(stroke.paint().growth, 1.0, 0.0001, "%s never finished growing" % id)
+			assert_almost_eq(stroke.paint().arrival(), 1.0, 0.0001,
+				"%s never finished arriving" % row.stat)
 
 func test_it_survives_having_no_model_at_all() -> void:
 	_vitals.build()
@@ -387,3 +416,54 @@ func test_it_survives_having_no_model_at_all() -> void:
 	_vitals.advance(1.0)
 	assert_true(_vitals.stroke_count() > 0,
 		"a scene with no run going should still show a well man, not an empty screen")
+
+
+# --- the day dial -------------------------------------------------------------
+
+## GDD section 3: `NIGHTFALL = GO HOME` is a literal deadline, so the largest
+## thing on the interface is the clock that deadline runs on.
+func test_the_dial_reads_the_daylight_that_is_left() -> void:
+	var ClockScript := preload("res://src/systems/world_clock.gd")
+	var clock: Node = ClockScript.new()
+	clock.set_event_bus(_bus)
+	clock.load_schedules_from_directory()
+	clock.start()
+	_vitals.set_clock(clock)
+	_wire()
+	var dial := _vitals.stroke_for(&"daylight")
+	assert_not_null(dial)
+	if dial != null:
+		assert_almost_eq(_vitals.daylight_left(), 1.0, 0.05, "a day starts full of daylight")
+	clock.advance(clock.phase_duration() * 0.5)
+	_vitals.read_model()
+	assert_almost_eq(_vitals.daylight_left(), 0.5, 0.05)
+	clock.free()
+
+## ASKED ON BUILD, not only subscribed. A scene reloaded after dark would
+## otherwise show a full day: `clock.night_started` fired before this existed.
+func test_a_dial_built_after_dark_knows_it_is_dark() -> void:
+	var ClockScript := preload("res://src/systems/world_clock.gd")
+	var clock: Node = ClockScript.new()
+	clock.set_event_bus(null)
+	clock.load_schedules_from_directory()
+	clock.start()
+	clock.advance(clock.phase_duration() + 1.0)
+	assert_true(clock.is_night(), "the fixture has to actually reach night")
+	_vitals.set_clock(clock)
+	_wire()
+	assert_true(_vitals.is_night(),
+		"the dial learned nothing from a phase that changed before it existed")
+	assert_almost_eq(_vitals.daylight_left(), 0.0, 0.0001)
+	clock.free()
+
+func test_nightfall_swaps_the_dials_face() -> void:
+	_wire()
+	var layout := _vitals.layout()
+	var dial := layout.row_for(layout.warm_source)
+	assert_not_null(dial)
+	if dial == null:
+		return
+	_bus.emit_event(&"clock.night_started", 3)
+	assert_true(_vitals.is_night())
+	_bus.emit_event(&"clock.day_started", 4)
+	assert_false(_vitals.is_night())

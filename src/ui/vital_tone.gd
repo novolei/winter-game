@@ -264,10 +264,22 @@ const CHARCOAL := Color(0.08627451, 0.09411765, 0.10980392)
 const AMBIENT_TO_LUMINANCE := 0.2547
 const AMBIENT_OFFSET := -0.289
 
-## What the charcoal may fade between. The floor keeps it from becoming a black
-## bar on a bright frame; the ceiling keeps it from becoming a hole on a dark one.
+## What the mark may fade between. The floor keeps it from becoming a black bar
+## on a bright frame; the ceiling keeps it from becoming a hole on a dark one.
 const OPACITY_FLOOR := 0.42
-const OPACITY_CEILING := 0.88
+const OPACITY_CEILING := 0.92
+
+## The contrast the mark tries to hold against the ground behind it.
+##
+## 3.5 rather than 4.0 because 4.0 is not reachable at BOTH ends without the mark
+## going lighter than it needs to on a dark frame. Stored as a ratio and not as a
+## table of six colours: a table is right today and wrong the moment a preset is
+## retuned or a seventh weather is authored.
+const WORLD_CONTRAST := 3.5
+
+## Above this the light option is abandoned for the dark one. A mark pinned at
+## the top of the range has no headroom left and stops tracking at all.
+const LIGHT_CEILING := 0.90
 
 
 ## Relative luminance, the sRGB definition. Used to COMPARE the interface with
@@ -295,19 +307,70 @@ static func world_value(preset) -> float:
 		float(preset.ambient_energy) * AMBIENT_TO_LUMINANCE + AMBIENT_OFFSET, 0.0, 1.0)
 
 
-## The single colour, at the strength today's weather needs.
+## The mark, at the value and strength today's weather needs.
 ##
-## Charcoal on a bright frame reads at almost any opacity. Charcoal on
-## `deep_night` is dark on dark, which is the earlier contrast problem with the
-## sign flipped -- so the opacity LIFTS as the world darkens until the stroke
-## separates again.
+## ---------------------------------------------------------------------------
+## OPACITY ALONE CANNOT DO IT, AND THE ARITHMETIC IS WHY
+## ---------------------------------------------------------------------------
+## Charcoal sits at relative luminance 0.009. `deep_night`'s ground measures
+## 0.093. The best contrast available between them, AT ANY OPACITY, is
 ##
-## This is not a second colour and it is not the adaptive-hue scheme that was
-## rejected. It is the minimum required for ONE colour to survive all six
-## presets, and it is a relationship rather than six tuned numbers.
+##     (0.093 + 0.05) / (0.009 + 0.05) = 2.42 : 1
+##
+## so no strength setting reaches a legible mark on a dark frame. A HUD the
+## player cannot read in the dark is not simple, it is absent.
+##
+## So the VALUE lifts too. One hue, one identity, one place in the code -- but
+## not one fixed value, because "follows the world" has to mean that once the
+## arithmetic is in front of you.
+##
+## The mark takes the dark option while it is reachable and the light one when it
+## is not, which is the same rule producing opposite pictures: charcoal on the
+## bright weather the game spends most of its time in, and a pale neutral of the
+## same hue on `deep_night`. HUE AND SATURATION ARE NEVER TOUCHED, which is what
+## keeps it recognisably one material and keeps rule 3 true through the change.
+##
+## THE COST, STATED: on `deep_night` the mark is no longer charcoal by value. It
+## is the same hue at a much higher lightness. There is no way around that -- see
+## the arithmetic above -- and it is flagged for the owner rather than absorbed.
 static func adapt(_token: Color, world: float) -> Color:
 	var ground := clampf(world, 0.0, 1.0)
-	return Color(CHARCOAL.r, CHARCOAL.g, CHARCOAL.b, opacity_for(ground))
+	# THE CONTRAST IS A FLOOR, NOT A TARGET. Charcoal already gives 8.6:1 on
+	# `whiteout`, and lightening it to land exactly on the floor would THROW
+	# CONTRAST AWAY on the weather the game spends most of its time in -- which
+	# is what the first version of this did, measured: whiteout fell from 8.65:1
+	# to 2.46:1 while fixing the night. So the mark is left alone wherever it is
+	# already dark enough, and only lifts where it cannot be.
+	var darkest := relative_luminance(CHARCOAL)
+	var wanted_dark := (ground + 0.05) / WORLD_CONTRAST - 0.05
+	if darkest <= wanted_dark:
+		var plain := CHARCOAL
+		plain.a = opacity_for(ground)
+		return plain
+	# Nothing can be usefully darker than this ground, so go the other way.
+	var lighter := clampf(WORLD_CONTRAST * (ground + 0.05) - 0.05, 0.0, LIGHT_CEILING)
+	var mark := with_luminance(CHARCOAL, lighter)
+	mark.a = opacity_for(ground)
+	return mark
+
+
+## The same colour at a different lightness. Hue and saturation are preserved.
+##
+## Solved by bisection on HSV value rather than by scaling the channels: scaling
+## drags saturation with it, and a tinted neutral washes toward white as it
+## brightens, which is exactly the drift that would stop it reading as one
+## material across the six presets.
+static func with_luminance(colour: Color, target: float) -> Color:
+	var low := 0.0
+	var high := 1.0
+	var value := colour.v
+	for _step in range(14):
+		value = (low + high) * 0.5
+		if relative_luminance(Color.from_hsv(colour.h, colour.s, value, colour.a)) < target:
+			low = value
+		else:
+			high = value
+	return Color.from_hsv(colour.h, colour.s, value, colour.a)
 
 
 ## The strength the mark is drawn at, for whatever colour it is.
