@@ -965,6 +965,110 @@ func test_a_lit_fire_thaws_him_and_a_dead_one_does_not() -> void:
 	_free(legs)
 
 
+## A stove that was already burning, and a building he was already standing in.
+## Neither ever emits its event again, so a node that only subscribes never
+## learns either.
+class AlreadyBurning extends Node3D:
+	func is_lit() -> bool:
+		return true
+
+	func warmth_at(_point: Vector3) -> float:
+		return 1.0
+
+
+class AlreadyInside extends Node:
+	var who: Node = null
+
+	func is_occupant_inside() -> bool:
+		return true
+
+	func occupant() -> Node:
+		return who
+
+
+## THE SHAPE THAT WILL BITE AGAIN: a node that listens only for a TRANSITION can
+## never learn a state that changed before it existed.
+##
+## `stove.lit` fires once, at ignition, and the farmhouse stove ignites at
+## startup. A walker who begins the run beside it subscribes to a change that has
+## already happened and stands in the warm carrying snow for the rest of the
+## game. It presents as "works when I walk in, broken when I start inside", which
+## reads like a wiring fault and is not one.
+##
+## So the state is ASKED FOR as well as subscribed to. This walks a real tree,
+## because the query only means anything from inside one.
+## Builds a walker inside a detached world, so the scan has something above it to
+## walk. No SceneTree anywhere: `TestCase` is not a Node and has no `get_tree()`,
+## and the scan deliberately starts from the topmost ancestor rather than from
+## `/root` so that this is testable at all.
+func _in_a_world(neighbour: Node) -> Array:
+	var world := Node.new()
+	world.add_child(neighbour)
+	var walker := Node3D.new()
+	walker.name = "Walker"
+	var legs: Node3D = SnowLoadScript.new()
+	legs._ready()
+	walker.add_child(legs)
+	world.add_child(walker)
+	return [world, walker, legs]
+
+
+func test_he_learns_about_a_fire_that_was_already_lit_when_he_arrived() -> void:
+	var built := _in_a_world(AlreadyBurning.new())
+	var world: Node = built[0]
+	var legs: Node3D = built[2]
+
+	# Nothing has been emitted and nothing ever will be: this fire lit before the
+	# node existed.
+	assert_false(legs.is_thawing(), "he is thawing before anything has run")
+	legs._process(0.016)
+	assert_true(
+		legs.is_thawing(),
+		"a fire that was already burning when he arrived never reached him -- the "
+			+ "node subscribed to the change and never asked for the state"
+	)
+	# And it is asked ONCE. A second tick must not rebuild the list.
+	legs._process(0.016)
+	assert_eq(legs._fires.size(), 1, "the world was asked twice and the fire counted twice")
+	world.free()
+
+
+## The same shape for a building, and the same fix. Also pins that the query is
+## SUBJECT-AWARE: a building says who its occupant is, so the bear in Wave 4 does
+## not warm up because the player went inside.
+func test_a_building_only_warms_the_walker_it_actually_holds() -> void:
+	var room := AlreadyInside.new()
+	var built := _in_a_world(room)
+	var world: Node = built[0]
+	var walker: Node3D = built[1]
+	var legs: Node3D = built[2]
+
+	# The room holds somebody else. He must stay cold.
+	var stranger := Node3D.new()
+	world.add_child(stranger)
+	room.who = stranger
+	legs._process(0.016)
+	assert_false(
+		legs.is_thawing(),
+		"a building holding somebody else warmed him: every walker in the scene "
+			+ "would thaw the moment the player stepped indoors"
+	)
+	# The event carries the same building, and must be refused for the same reason.
+	legs._on_interior_entered({"building": "farmhouse", "reveal": room})
+	assert_false(legs.is_thawing(), "the event ignored whose building it was")
+	# And accepted when it IS his.
+	room.who = walker
+	legs._on_interior_entered({"building": "farmhouse", "reveal": room})
+	assert_true(legs.is_thawing(), "his own building did not warm him")
+	legs._on_interior_exited({"building": "farmhouse", "reveal": room})
+	assert_false(legs.is_thawing(), "leaving did not cool him")
+	# A payload with no building in it is still his -- unanswerable means yes, the
+	# same useful default claim_radius_m documents.
+	legs._on_interior_entered({"building": "farmhouse"})
+	assert_true(legs.is_thawing(), "a payload with no reveal was refused rather than accepted")
+	world.free()
+
+
 ## Loose snow does not stay on a shoulder in a gale. The packed crust does.
 func test_the_wind_strips_the_settled_half_and_not_the_packed_one() -> void:
 	var legs := _fresh()

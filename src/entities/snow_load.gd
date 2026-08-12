@@ -324,6 +324,15 @@ const CHILL_SOURCE := &"snow_load"
 ##   `knee_line`  the measured knee, and a hard cap. A crust over the knee is not
 ##                snow off a drift, it is a costume change, and the field can be
 ##                retuned deeper without this having to be re-checked by eye.
+##
+## RULED, AND THE RULING IS LOAD-BEARING: what these produce today is a crust on
+## the BOOT, because 32-45 cm on a 1.88 m figure sunk three quarters into the
+## snow IS the boot, and the crust may NOT be drawn higher than the snow he
+## actually waded to make it read further up the leg. The band's whole value is
+## that it records something true; a flattered number survives today's terrain
+## and breaks the day the drifts get deeper. The snow is what is short, not this.
+## `assets/shaders/snow_load.gdshader` carries the measurements and the second,
+## independent finding that reached the same conclusion.
 @export var boot_line := 0.10
 @export var knee_line := 0.257
 
@@ -600,6 +609,9 @@ var _settle := 0.0
 var _snowfall_rate := 0.0
 var _sky_overridden := false
 var _indoors := false
+## Whether the world has been asked what was already burning and already warm
+## when this node arrived. See `_ask_what_is_already_true()`.
+var _asked_the_world := false
 ## Where the lit fires are. Kept as positions rather than as nodes because that
 ## is what the events carry, and because a fire is a place that is warm rather
 ## than an object this needs to hold on to.
@@ -772,7 +784,7 @@ func is_thawing() -> bool:
 		return true
 	if _fires.is_empty() or _subject == null or not is_instance_valid(_subject):
 		return false
-	var here := _subject.global_position if _subject.is_inside_tree() else _subject.position
+	var here := _origin_of(_subject)
 	for spot in _fires.values():
 		if (spot as Vector3).distance_to(here) <= fire_melt_radius_m:
 			return true
@@ -900,15 +912,109 @@ func set_indoors(inside: bool) -> void:
 
 # --- warmth, off the bus ------------------------------------------------------
 
+## THE STATE THAT WAS ALREADY TRUE BEFORE THIS NODE EXISTED.
+##
+## A node that listens only for a TRANSITION can never learn a state that changed
+## before it was there to hear it. `stove.lit` fires once, at ignition, and the
+## farmhouse stove ignites at startup from `start_lit` -- so a walker who begins
+## the run beside a burning stove subscribes to a change that already happened
+## and stands in the warm carrying snow forever. It presents as "works when I
+## walk in, broken when I start inside", which reads like a wiring fault and is
+## not one.
+##
+## So the change is subscribed to AND the state is asked for, once. Two details
+## that are not incidental:
+##
+##   * ON THE FIRST PROCESS, NOT IN `_ready()`. Ready runs bottom-up in tree
+##     order; this node sits under Player and the stove under Farmhouse further
+##     down the scene, so at our `_ready()` the stove's own `_ready()` has not
+##     run and it is not lit yet whatever `start_lit` says. By the first
+##     `_process` the whole tree is up -- the same reason briefing trap 1 gives
+##     for the test runner ticking before it asserts.
+##   * BY CAPABILITY, NOT BY NAME. Nothing here knows what a stove or a farmhouse
+##     is, so this asks whatever can answer: a thing that both `is_lit()` and can
+##     say how warm a point is, is a fire; a thing that knows whether its occupant
+##     is inside is a building. Duck-typed exactly like the `snowfall_rate()` and
+##     `surface_height_at()` reads elsewhere in this file. Neither publishes
+##     itself as a service, which is the API gap this works around -- see the
+##     report; a registry key or a group for fires would make this a lookup
+##     rather than a walk.
+func _ask_what_is_already_true() -> void:
+	if _asked_the_world:
+		return
+	# From the topmost thing above this node rather than from `get_tree().root`,
+	# which in the game is the same walk and out of a tree is the difference
+	# between working and not being testable at all.
+	var world := get_parent()
+	if world == null:
+		return
+	while world.get_parent() != null:
+		world = world.get_parent()
+	_asked_the_world = true
+	var answered: Array[Node] = []
+	_capable_of(world, answered)
+	for node in answered:
+		if node.has_method(&"is_occupant_inside") and _is_mine(node) \
+				and bool(node.call(&"is_occupant_inside")):
+			_indoors = true
+		if node.has_method(&"is_lit") and node.has_method(&"warmth_at") \
+				and bool(node.call(&"is_lit")) and node is Node3D:
+			_fires[_origin_of(node as Node3D)] = _origin_of(node as Node3D)
+
+
+## Where a Node3D is, without asserting that it is in a tree.
+##
+## `global_position` fails an engine ERROR outside a tree -- the same trap
+## `_place()` already guards -- and by this project's standard a stray ERROR is a
+## failed run whatever the assertions said. Out of a tree the local position IS
+## the world position, because there is no parent transform to compose with.
+static func _origin_of(node: Node3D) -> Vector3:
+	return node.global_position if node.is_inside_tree() else node.position
+
+
+static func _capable_of(node: Node, found: Array[Node]) -> void:
+	if node.has_method(&"is_occupant_inside") \
+			or (node.has_method(&"is_lit") and node.has_method(&"warmth_at")):
+		found.append(node)
+	for child in node.get_children():
+		_capable_of(child, found)
+
+
+## Is this building talking about the walker THIS node dresses?
+##
+## `interior.entered` carries no subject -- it is a fact about a building, not a
+## message about a character -- so the building is asked who its occupant is and
+## the answer compared against the body above this node. Without it, the bear in
+## Wave 4 would thaw every time the player stepped indoors.
+##
+## Unanswerable means yes, which is the same useful default `claim_radius_m`
+## documents: a node with nothing above it in the tree, or a payload with no
+## reveal in it, still gets warm. An effect that silently does nothing when a
+## lookup fails is the failure mode this project has been bitten by most.
+func _is_mine(reveal) -> bool:
+	if _subject == null or not is_instance_valid(_subject):
+		return true
+	if reveal == null or not is_instance_valid(reveal) or not reveal.has_method(&"occupant"):
+		return true
+	var inhabitant = reveal.call(&"occupant")
+	return inhabitant == null or inhabitant == _subject
+
+
 ## All four handlers take one untyped argument, because EventBus always calls
 ## back with exactly one whatever the payload is, and a payload this cannot use
 ## must be ignored rather than crash the publisher.
-func _on_interior_entered(_payload) -> void:
-	_indoors = true
+func _on_interior_entered(payload) -> void:
+	if _is_mine(_reveal_in(payload)):
+		_indoors = true
 
 
-func _on_interior_exited(_payload) -> void:
-	_indoors = false
+func _on_interior_exited(payload) -> void:
+	if _is_mine(_reveal_in(payload)):
+		_indoors = false
+
+
+static func _reveal_in(payload):
+	return null if not (payload is Dictionary) else (payload as Dictionary).get("reveal", null)
 
 
 func _on_fire_lit(payload) -> void:
@@ -1043,7 +1149,7 @@ func _claims(spot: Vector3) -> bool:
 	_resolve()
 	if _subject == null or not is_instance_valid(_subject):
 		return true
-	var here := _subject.global_position
+	var here := _origin_of(_subject)
 	return Vector2(spot.x - here.x, spot.z - here.z).length() <= claim_radius_m
 
 
@@ -1171,13 +1277,16 @@ func _place(spot: Vector3) -> void:
 
 func _process(delta: float) -> void:
 	_resolve()
+	# After _resolve(), so the subject is known before any building is asked whose
+	# occupant it holds. Once, and only ever from inside a tree.
+	_ask_what_is_already_true()
 	if _subject != null and is_instance_valid(_subject):
 		_dress(_subject)
 	_advance_settled(delta)
 	_charge_for_the_load()
 	var feet := 0.0
 	if _subject != null and is_instance_valid(_subject):
-		feet = _subject.global_position.y
+		feet = _origin_of(_subject).y
 	var fill: Color = ambient_fill()
 	var line := wade_fraction()
 	for crust in _crusts:

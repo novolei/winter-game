@@ -186,6 +186,32 @@ uniform float figure_height = 1.88;
 // with a crust that stopped at his ankle, exactly like a man who had crossed a
 // shallow one. The node holds it between `boot_line` and the measured knee at
 // 0.257, so it can never climb past the leg it is on.
+//
+// ---------------------------------------------------------------------------
+// RULED: THE CRUST MAY NOT OVERSTATE THE LINE. THE SNOW IS WHAT IS SHORT.
+// ---------------------------------------------------------------------------
+// This lands on the BOOT, and that is correct rather than a shortfall. Measured
+// off the frame: he is 1.88 m, `PlayerController` sinks him through 75% of the
+// depth, and the field holds 0.42 .. 0.60 m -- so the snow line on the DRAWN
+// figure runs 32 .. 45 cm, against a knee at 48 cm. In 60 cm of snow a man this
+// tall standing three quarters of the way into it has the surface at the top of
+// his boots. "It should reach 34-43 cm" and "the white is only on the boot" are
+// the same sentence on this character.
+//
+// It was tempting to draw the crust higher than the snow he walked through so it
+// would read further up the leg. THAT IS FORBIDDEN, by ruling, and the reason is
+// worth keeping: the entire value of this band is that it RECORDS something
+// true. A crust that flatters the number looks fine on today's terrain and
+// breaks visibly the moment the terrain gets deeper, and by then nobody
+// remembers it was a fudge.
+//
+// The field is the thing that is wrong, and it is not this file's to fix. Two
+// features found that independently: this one, and the footprint work, which
+// measured the same field as 35% bare, 41% past the wading gate, and with no
+// 12 m square anywhere holding a mean depth between 0.02 and 0.32 m -- too
+// shallow AND missing its whole middle range, which is why every depth-dependent
+// behaviour in the game reads closer to binary than it should. Leave this honest
+// and it climbs his leg for free the day the drifts get deeper.
 uniform float boot_line = 0.10;
 uniform float wade_line = 0.21;
 
