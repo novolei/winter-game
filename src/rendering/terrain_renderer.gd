@@ -93,10 +93,33 @@ const SHADER_PATH := "res://assets/shaders/snow_ground.gdshader"
 @export var ground_normal_epsilon := 0.8
 @export var track_normal_epsilon := 0.06
 
+## How much of the accumulation reaches the BAKED layer. The road and the
+## ploughed field fill in with the same weather that whitens the roofs, but not
+## as completely: Art Bible rule 11 says every line in the picture comes from
+## the marks in the snow, and a road that vanished on day 4 would take the
+## strongest line the frame has with it.
+##
+## The shader raises the baked value to 1 + this * cover * (power - 1), so at
+## 0.75 a whiteout leaves a worn strip at three quarters of its cut depth while
+## the verge beside it is gone. Zero here switches the burial off entirely and
+## is what the frame looked like before this landed.
+@export var static_burial_share := 0.75
+
+## The exponent at full burial. See the shader, which carries the arithmetic.
+@export var static_burial_power := 2.7
+
+## How much more tone the baked layer carries than a footprint does. A road is
+## compacted snow rather than a dent, and -- more to the point -- it is a WIDE
+## mark, so the shading has no gradient to draw the middle of it with and the
+## colour has to. Applied to the baked layer alone: no footprint in the game
+## changes. See the shader.
+@export var static_tint_boost := 1.35
+
 var _material: ShaderMaterial
 var _snow: Node
 var _tracks: Node
 var _lighting: Node
+var _accumulation: Node
 
 
 ## The two-band contract's world side, pushed in from the lighting. The preset
@@ -138,6 +161,12 @@ func _ready() -> void:
 	_material.set_shader_parameter("grain_scale", grain_scale)
 	# The fallback light, until a preset says otherwise on the first frame.
 	apply_world_shading(band_threshold, band_softness, Color.WHITE)
+	# ...and the fallback weather. A scene with no accumulation node in it draws
+	# the road exactly as it was cut, which is what this one drew before the snow
+	# started arriving.
+	_material.set_shader_parameter("static_burial", 0.0)
+	_material.set_shader_parameter("static_burial_power", static_burial_power)
+	_material.set_shader_parameter("static_tint_boost", static_tint_boost)
 	_material.set_shader_parameter("field_extent", SnowField.EXTENT_M)
 	_material.set_shader_parameter("track_extent", TrackMask.EXTENT_M)
 	_material.set_shader_parameter("static_extent", TrackMask.STATIC_EXTENT_M)
@@ -150,8 +179,30 @@ func _ready() -> void:
 	cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 
 
+## The world's snow, from bare to as covered as this weather gets, on both the
+## ground's baked layer and every solid standing on it.
+##
+## THIS IS WHERE THE ONE SCALAR FANS OUT, and it is here rather than inside
+## SnowAccumulation for the same reason the lighting's band is: the systems
+## under src/systems/ own facts and nothing about how the facts are drawn, and
+## this node is already the one place in the world holding a per-frame tick, a
+## handle on the ground material and a licence to reach for the paint shop.
+## Deleting the whole rendering layer must leave the accumulation compiling.
+##
+## Pushed every frame rather than on change. The cover moves continuously for
+## the whole run by design; there is no event to subscribe to and there must not
+## be one, because an event is a step and a step is what this feature exists to
+## make impossible.
+func apply_snow_cover(cover: float) -> void:
+	var settled := clampf(cover, 0.0, 1.0)
+	if _material != null:
+		_material.set_shader_parameter("static_burial", settled * static_burial_share)
+		_material.set_shader_parameter("static_burial_power", static_burial_power)
+	CelPainter.set_snow_cover(settled)
+
+
 func _resolve() -> void:
-	if _snow != null and _tracks != null and _lighting != null:
+	if _snow != null and _tracks != null and _lighting != null and _accumulation != null:
 		return
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry == null:
@@ -165,6 +216,11 @@ func _resolve() -> void:
 	# what makes the pair above a fallback rather than a duplicate.
 	if _lighting == null:
 		_lighting = registry.get_service(&"lighting") as Node
+	# Absent, the world stays at whatever cover it was last given, which on a
+	# scene with no accumulation node in it is zero -- a bare world, which is
+	# what this scene drew before the feature landed.
+	if _accumulation == null:
+		_accumulation = registry.get_service(&"snow_accumulation") as Node
 
 
 func _process(_delta: float) -> void:
@@ -177,6 +233,8 @@ func _process(_delta: float) -> void:
 			_lighting.cel_band_softness(),
 			_lighting.world_light_tint()
 		)
+	if _accumulation != null and _accumulation.has_method("cover"):
+		apply_snow_cover(_accumulation.cover())
 	if _snow == null or _tracks == null or _material == null:
 		return
 	var registry := get_node_or_null("/root/ServiceRegistry")

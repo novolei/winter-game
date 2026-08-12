@@ -63,6 +63,43 @@ uniform sampler2D static_mask : hint_default_black, filter_linear, repeat_disabl
 uniform vec2 static_origin = vec2(-60.0, -60.0);
 uniform float static_extent = 120.0;
 
+// HOW FAR THE BAKED LAYER HAS BEEN SNOWED OVER, 0..1, from
+// src/systems/snow_accumulation.gd through TerrainRenderer. The same scalar the
+// solids read, because it is the same weather: the snow settling on the roof is
+// the snow filling the road in.
+//
+// The road and the furrows are the only two things in this window, and the
+// owner asked for exactly this -- 道路会被积雪覆盖一部分. Not erased: the wind
+// never touches this layer (Art Bible section 3) and rule 11 needs its lines,
+// so what accumulation does is BURY it, and a road buried is a road that
+// narrows to the strips traffic actually wore.
+//
+// pow(), and the exponent is the whole reason it is not the obvious
+// max(v - fill, 0). A subtraction leaves the mark's new outline arriving at
+// zero with a finite slope, and a slope discontinuity in this height field is a
+// crease in the reconstructed normal -- which is the shard defect the footprint
+// work already paid for once. v^p is smooth on the whole of 0..1 and its
+// derivative at v = 0 is zero, so the buried edge has no crease anywhere. It
+// also does the right thing by weight for free: at p = 2.7 a 0.15 verge falls
+// to 0.006 and is gone, a 0.45 carriageway to 0.11, and a 0.88 worn strip only
+// to 0.71. The edges fill in, the ruts survive, and the road narrows.
+uniform float static_burial = 0.0;
+uniform float static_burial_power = 2.7;
+
+// HOW MUCH MORE TONE THE BAKED LAYER CARRIES THAN A FOOTPRINT DOES.
+//
+// `track_tint` above is deliberately low, because a print is drawn by the
+// normal and leaning on colour as well made prints read as stickers. A road is
+// not a print. It is snow that has been driven over for weeks -- compacted,
+// greyer, genuinely a different tone rather than merely a different shape --
+// and it is a WIDE mark, which is the part that matters here: the shading
+// carries a mark by its gradient, so a 3.4 m carriageway at constant depth has
+// no gradient anywhere except at its two edges and disappears however deep it
+// is cut. The colour is the only thing that can hold the middle of it.
+//
+// Applied to the baked layer alone, so not one footprint in the game changes.
+uniform float static_tint_boost = 1.35;
+
 // A print is 29 cm long. The ground mesh has 44 cm quads, so the mesh cannot
 // represent one -- pushing the vertices down was what produced the radiating
 // shards around every footprint. So a print is not geometry: it is a dent in
@@ -208,10 +245,31 @@ float layer_at(sampler2D layer, vec2 w, vec2 layer_origin, float layer_extent) {
 	return textureLod(layer, uv, 0.0).r;
 }
 
+// The baked layer, with however much snow has settled since it was cut. See
+// static_burial above for why this is a power and not a subtraction.
+//
+// The DYNAMIC layer is deliberately not buried here. Snow filling a footprint
+// in is already TrackMask's own mechanic, on its own snowfall hook, applied to
+// the texels themselves -- burying it a second time in the shader would charge
+// the same weather twice.
+float baked_at(vec2 w) {
+	float v = layer_at(static_mask, w, static_origin, static_extent);
+	return pow(v, mix(1.0, static_burial_power, clamp(static_burial, 0.0, 1.0)));
+}
+
+// What the SHAPE of the ground is asked for: the deeper of the two layers.
 float track_at(vec2 w) {
-	return max(
-		layer_at(track_mask, w, track_origin, track_extent),
-		layer_at(static_mask, w, static_origin, static_extent)
+	return max(layer_at(track_mask, w, track_origin, track_extent), baked_at(w));
+}
+
+// ...and what its COLOUR is asked for, which is not the same question. Only the
+// baked layer is boosted, and only here -- the height field above is untouched,
+// so the road is not cut any deeper into the snow, it is merely the tone that
+// weeks of traffic actually make it. See static_tint_boost.
+float track_tone_at(vec2 w) {
+	return clamp(
+		max(layer_at(track_mask, w, track_origin, track_extent), baked_at(w) * static_tint_boost),
+		0.0, 1.0
 	);
 }
 
@@ -341,7 +399,7 @@ void light() {
 	// and the colour is only there to keep it readable at a distance where the
 	// shading detail is a pixel wide. At full strength it went back to being a
 	// sticker on the snow.
-	float t = track_at(v_world.xz) * track_tint;
+	float t = track_tone_at(v_world.xz) * track_tint;
 	vec3 lit = mix(snow_surface, track_lit.rgb, t);
 	vec3 shade = mix(snow_shade.rgb, track_shade.rgb, t);
 	// LIGHT_COLOR is deliberately not a factor: the band picks a palette

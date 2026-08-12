@@ -190,15 +190,61 @@ const BAKE_CENTRE := Vector3(6.0, 0.0, -22.0)
 @export var stubble_strength := 0.9
 @export var stubble_seed := 41077
 
-## The farm road, running along the near edge of the field and off both sides of
-## the frame. The bend near the middle is the junction the spur leaves from.
+## ---------------------------------------------------------------------------
+## THE ROAD
+## ---------------------------------------------------------------------------
+## Art Bible rule 11 is why this is the most important thing in this file. The
+## snow has almost no texture, so every scrap of detail in the picture comes
+## from lines -- tyre tracks, footprint chains, plough furrows, wires across the
+## frame -- and a road is the longest, straightest, most legible line the scene
+## can have. It is composed as one: it enters at the top right, bends where the
+## spur leaves it, and goes off the left edge. It never stops in open snow.
+##
+## FIVE ELEMENTS, OUTSIDE IN, and they are the whole of what makes a road read
+## as a road rather than as two pencil lines:
+##
+##   verge         2.55 m either side, very faint. The snow that has drifted in
+##                 over the shoulder. First thing to go as the snow arrives.
+##   carriageway   1.70 m either side, moderate. The swept bed.
+##   worn strips   two, at the truck's own track gauge, strong. Where the wheels
+##                 actually ran -- 道路会被积雪覆盖一部分 means this survives and
+##                 the rest fills in.
+##   ruts          two, thin and deep, down the middle of the strips: the cut
+##                 the tyre itself makes.
+##
+## and the fifth is not a stroke at all: the WEAR ALONG THE LENGTH. A road under
+## weather is not evenly clear. Drifts lie across it, and between them it is
+## worn to the packed snow. So the carriageway and the strips are baked in short
+## sub-segments whose strength is a smooth seeded function of distance along the
+## road, dipping to road_wear_min where a drift has crossed. Without it the road
+## is a ruled line and reads as drawn rather than as used.
+##
+## The mask composites with max(), so nothing here can erase; "partly covered"
+## has to be built by not drawing rather than by taking away. That is what the
+## wear function does, and it is why it modulates a strength rather than
+## painting snow back over the top.
+##
+## All of it goes in the STATIC layer. Art Bible section 3: the wind erases
+## footprints and must never touch the road or the ploughed field, or the first
+## gust flattens the only texture an otherwise empty white field has. What the
+## weather DOES do to it is bury it -- see `static_burial` in
+## assets/shaders/snow_ground.gdshader, which is the same accumulation scalar
+## that whitens the roofs, and which narrows the road to its worn strips instead
+## of erasing it.
+
+## The road runs off both edges of the frame. The two outer points were added
+## when the road became the composition's main line: a road that stopped just
+## outside the establishing shot still ended somewhere, and the eye finds the
+## end of a line even when it is only a few pixels past the corner.
 const ROAD := [
+	Vector3(45.0, 0.0, -59.0),
 	Vector3(30.0, 0.0, -46.0),
 	Vector3(20.0, 0.0, -37.0),
 	Vector3(11.0, 0.0, -29.5),
 	Vector3(2.7, 0.0, -25.6),
 	Vector3(-9.0, 0.0, -28.5),
 	Vector3(-24.0, 0.0, -34.0),
+	Vector3(-41.0, 0.0, -40.0),
 ]
 
 ## Where the spur leaves the road, and the one bend it makes on the way in. Its
@@ -207,14 +253,59 @@ const ROAD := [
 const SPUR_JUNCTION := Vector3(2.7, 0.0, -25.6)
 const SPUR_BEND := Vector3(4.6, 0.0, -22.2)
 
-## Half the track width of the truck, so the two ruts land where its wheels are.
+## Half the track width of the truck, so the worn strips and the ruts land where
+## its wheels are -- and so the spur's ruts line up with the road's at the
+## junction rather than crossing it.
 @export var rut_gauge := 0.78
 @export var rut_radius := 0.13
-@export var rut_strength := 0.62
-## The swept band between and around the ruts: packed snow, much fainter, and
-## what stops a road reading as two isolated pencil lines.
-@export var road_bed_radius := 1.25
-@export var road_bed_strength := 0.26
+@export var rut_strength := 0.97
+
+## The strip of snow the wheels wore down, centred on each rut. This is the part
+## of the road that survives being snowed on, and it is what the road narrows to
+## as the week goes by.
+##
+## NARROW AND SHARP-SHOULDERED, and the first capture is why. What makes a mark
+## read at this camera is the gradient of the height field, which is its value
+## divided by its width -- a broad soft strip has a gentle normal everywhere and
+## disappears, however deep it is cut. At 0.46 m with a core at half the radius
+## the strips were a pale smear beside the ploughed field's crisp 0.11 m
+## furrows; at 0.34 with the shoulder starting at 0.38 they carry the same
+## gradient the furrows do, which is the weight the reference draws a tyre line
+## at.
+@export var worn_radius := 0.34
+@export var worn_strength := 0.92
+@export var worn_core := 0.38
+
+## The swept bed between and around the strips.
+@export var road_bed_radius := 1.7
+@export var road_bed_strength := 0.50
+
+## The drifted-in shoulder. Faint and ragged, and the first thing the
+## accumulation takes away -- see `static_burial`, which raises the whole baked
+## layer to a power, so the weak edges go while the deep ruts stay.
+@export var road_verge_radius := 2.55
+@export var road_verge_strength := 0.20
+
+## THE WEAR ALONG THE LENGTH. `road_wear_min` is how much of the road is left
+## where a drift lies across it, and the wavelength is how far apart those
+## drifts are -- 13 m over the road's 97 gives half a dozen of them, which is
+## the difference between a road that has weather on it and a ruled line.
+##
+## 0.38 rather than the 0.22 this shipped with for one capture: at 0.22 the road
+## went out completely for stretches ten metres long, and a line that is
+## interrupted that hard stops being one line and becomes several short ones.
+## Partly covered is not the same as intermittent.
+@export var road_wear_min := 0.38
+@export var road_wear_wavelength := 13.0
+@export var road_wear_seed := 90731
+
+## How finely the wear-modulated elements are cut up. Short enough that the
+## strength changes by a few percent between neighbours -- so the max() of two
+## overlapping capsules has no step in it -- and long enough that the bake stays
+## a fraction of a second. The strips are finer than the bed because they are
+## four times narrower and a coarse cut would show its joints.
+@export var road_bed_step := 3.0
+@export var road_worn_step := 1.2
 
 ## The cleared patch the truck is parked on -- the reference has one, and it is
 ## the thing that says somebody drives in and out of here rather than that a
@@ -530,8 +621,11 @@ func _draw_the_lines() -> void:
 	# max() the order does not change the result, but it is the order the world
 	# happened in.
 	tracks.bake_path(YARD, yard_radius, yard_strength, 0.15, 0.3, 71.0)
-	_bake_wheeled(tracks, ROAD)
-	_bake_wheeled(tracks, _spur())
+	_bake_road(tracks, ROAD, 1.0)
+	# The spur is a driveway, not a road: one vehicle, occasionally. Three
+	# quarters of the width and none of the verge -- a shoulder is something a
+	# road has because it is graded, and nobody graded the way to the truck.
+	_bake_road(tracks, _spur(), 0.62)
 
 	_stamp_trail(tracks, TRAIL_TO_THE_EAST, 0.0)
 	_stamp_trail(tracks, TRAIL_TO_THE_WELL, 17.0)
@@ -584,27 +678,139 @@ func _spur() -> Array:
 	return [SPUR_JUNCTION, SPUR_BEND, arrival + last_leg * 1.4]
 
 
-## A vehicle track: a broad shallow bed with two ruts in it. The bed is what
-## makes it read as a road rather than as two pencil lines, and the ruts are
-## what make it read as a *vehicle*.
-func _bake_wheeled(tracks: Node, path: Array) -> void:
+## A road: verge, carriageway, two worn strips, two ruts, and weather along the
+## whole length. See the ROAD block above for what each element is for.
+##
+## `weight` shrinks the whole profile for a lesser way -- the spur to the truck
+## is the same road built narrower and without a shoulder.
+func _bake_road(tracks: Node, path: Array, weight: float) -> void:
 	if path.size() < 2:
 		return
-	tracks.bake_path(path, road_bed_radius, road_bed_strength, 0.25, 0.35, 5.0)
+	var wear := _wear_noise()
+
+	# The verge is NOT cut into sub-segments and NOT modulated. It is drifted
+	# snow rather than worn road, so it has no wear to vary, and at 2.55 m it is
+	# by far the most expensive thing here to rasterise -- one stroke per
+	# polyline leg instead of one per metre is most of this bake's budget.
+	if weight >= 0.99:
+		tracks.bake_path(
+			path, road_verge_radius * weight, road_verge_strength, 0.08, 0.55, 13.0
+		)
+
+	# The carriageway, in sub-segments so the drifts can lie across it.
+	_bake_worn_run(
+		tracks, _resample(path, road_bed_step), wear, 0.0,
+		road_bed_radius * weight, road_bed_strength, 0.28, 0.40, 5.0
+	)
+
+	# The two strips the wheels wore, and the rut down the middle of each. Both
+	# ride the same offset polyline, so the rut is always inside its strip
+	# however the road bends.
 	for side in [-1.0, 1.0]:
-		var rut: Array = []
-		for index in range(path.size()):
-			# Offset perpendicular to the local direction of travel, so the pair
-			# stays a fixed gauge apart around the bends instead of crossing on
-			# the inside of one.
-			var ahead: Vector3 = path[mini(index + 1, path.size() - 1)]
-			var behind: Vector3 = path[maxi(index - 1, 0)]
-			var run := Vector2(ahead.x - behind.x, ahead.z - behind.z)
-			if run.length_squared() < 0.0001:
-				continue
-			var across: Vector2 = run.normalized().orthogonal() * (rut_gauge * side)
-			rut.append(path[index] + Vector3(across.x, 0.0, across.y))
-		tracks.bake_path(rut, rut_radius, rut_strength, 0.4, 0.3, 40.0 * side)
+		var wheel := _resample(_offset(path, rut_gauge * side * weight), road_worn_step)
+		_bake_worn_run(
+			tracks, wheel, wear, 0.0,
+			worn_radius * weight, worn_strength, worn_core, 0.22, 40.0 * side
+		)
+		# The rut is offset in the wear function as well as in space: a tyre cut
+		# survives a drift the swept strip around it does not, so its dips fall
+		# in slightly different places and the road never goes uniformly faint
+		# across its whole width at once.
+		_bake_worn_run(
+			tracks, wheel, wear, 5.5,
+			rut_radius * weight, rut_strength, 0.35, 0.15, 91.0 * side
+		)
+
+
+## One element of a road, along an already-resampled polyline, with its strength
+## modulated by how worn the road is at that distance along it.
+func _bake_worn_run(
+	tracks: Node,
+	points: Array,
+	wear: FastNoiseLite,
+	wear_offset: float,
+	radius_m: float,
+	strength: float,
+	core: float,
+	irregularity: float,
+	edge_seed: float
+) -> void:
+	if points.size() < 2 or radius_m <= 0.0:
+		return
+	var travelled := 0.0
+	for index in range(points.size() - 1):
+		var from: Vector3 = points[index]
+		var to: Vector3 = points[index + 1]
+		var run := from.distance_to(to)
+		if run < 0.0001:
+			continue
+		# Sampled at the middle of the sub-segment rather than at its start, so
+		# the two ends of one stroke are equally wrong about it and the joint
+		# with the next is half a step rather than a whole one.
+		var worn := _wear_at(wear, travelled + run * 0.5 + wear_offset)
+		tracks.bake_stroke(
+			from, to, radius_m, strength * worn, core, irregularity,
+			edge_seed + float(index) * 2.9
+		)
+		travelled += run
+
+
+## How much road is left at `distance` metres along it. 1 where the wheels keep
+## it clear, road_wear_min where a drift lies across it, and smooth in between
+## -- smooth because a step here is a step in the picture, and the whole of this
+## task is that nothing steps.
+func _wear_at(wear: FastNoiseLite, distance: float) -> float:
+	var raw := wear.get_noise_1d(distance)
+	return road_wear_min + (1.0 - road_wear_min) * smoothstep(-0.62, -0.05, raw)
+
+
+## Deterministic, and it has to be: the static layer is baked once at startup
+## and a road that reshuffled its drifts on every load is a road nobody could
+## compose the shot against.
+func _wear_noise() -> FastNoiseLite:
+	var noise := FastNoiseLite.new()
+	noise.seed = road_wear_seed
+	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	noise.fractal_octaves = 2
+	noise.frequency = 1.0 / maxf(road_wear_wavelength, 0.001)
+	return noise
+
+
+## A polyline cut into pieces no longer than `step`. The bends are kept as
+## vertices rather than resampled through, so the road's shape is exactly the
+## shape ROAD describes and only the straights are subdivided.
+func _resample(path: Array, step: float) -> Array:
+	var points: Array = []
+	if path.size() < 2 or step <= 0.0:
+		return path.duplicate()
+	points.append(path[0])
+	for index in range(path.size() - 1):
+		var from: Vector3 = path[index]
+		var to: Vector3 = path[index + 1]
+		var run := from.distance_to(to)
+		var pieces := maxi(int(ceilf(run / step)), 1)
+		for piece in range(1, pieces + 1):
+			points.append(from.lerp(to, float(piece) / float(pieces)))
+	return points
+
+
+## The same polyline, shifted `gauge` metres to one side.
+##
+## The perpendicular is taken from the run through each point rather than from
+## one leg, so the pair stays a fixed gauge apart around a bend instead of
+## crossing on the inside of it -- which is what the version this replaces did,
+## and the one part of it worth keeping.
+func _offset(path: Array, gauge: float) -> Array:
+	var shifted: Array = []
+	for index in range(path.size()):
+		var ahead: Vector3 = path[mini(index + 1, path.size() - 1)]
+		var behind: Vector3 = path[maxi(index - 1, 0)]
+		var run := Vector2(ahead.x - behind.x, ahead.z - behind.z)
+		if run.length_squared() < 0.0001:
+			continue
+		var across: Vector2 = run.normalized().orthogonal() * gauge
+		shifted.append(path[index] + Vector3(across.x, 0.0, across.y))
+	return shifted
 
 
 ## A chain of prints along a route, left and right alternating about the centre

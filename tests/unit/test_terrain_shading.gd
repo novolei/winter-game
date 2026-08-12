@@ -144,6 +144,110 @@ func test_the_grain_is_patches_rather_than_speckle() -> void:
 	)
 
 
+# --- the snow arriving on top of the baked layer ----------------------------
+#
+# 道路会被积雪覆盖一部分. The road and the ploughed furrows are baked once into a
+# window the wind must never touch (Art Bible section 3), so what the weather
+# does to them is not erase but BURY -- and the same scalar that whitens the
+# roofs is what does it, because it is the same snow.
+
+
+## The formula in assets/shaders/snow_ground.gdshader, mirrored, so the shape of
+## the burial can be asserted without a frame. `burial` is what the terrain
+## pushes: cover * static_burial_share.
+func _buried(value: float, burial: float, power: float) -> float:
+	return pow(value, lerpf(1.0, power, clampf(burial, 0.0, 1.0)))
+
+
+## The scalar has to arrive on the ground, or the road goes on being cut once at
+## startup and never touched again.
+func test_the_ground_takes_the_snow_that_has_settled_on_it() -> void:
+	_renderer.apply_snow_cover(0.8)
+	var material := _material()
+	assert_not_null(material)
+	if material == null:
+		return
+	assert_almost_eq(
+		float(material.get_shader_parameter("static_burial")),
+		0.8 * _renderer.static_burial_share, 0.0001,
+		"the accumulation did not reach the baked layer"
+	)
+
+
+## Nothing is buried before anything has settled, so a scene with no
+## accumulation node in it draws the road exactly as it was cut.
+func test_the_ground_starts_with_the_road_exactly_as_it_was_cut() -> void:
+	var material := _material()
+	if material == null:
+		return
+	assert_almost_eq(
+		float(material.get_shader_parameter("static_burial")), 0.0, 0.0001,
+		"the road arrives already snowed over, so there is no bare state to bury from"
+	)
+
+
+## THE POINT OF THE PROFILE, and the reason the road is baked graded rather than
+## flat. A power buries by weight: the faint drifted verge goes, the packed bed
+## fades, and the strips the wheels wore stay. The road NARROWS. Buried by a
+## flat multiply instead, the whole width would fade together and the result is
+## a smudge rather than a road under snow.
+func test_the_snow_fills_the_road_in_from_its_edges() -> void:
+	var burial: float = _renderer.static_burial_share
+	var power: float = _renderer.static_burial_power
+	var verge := _buried(0.16, burial, power)
+	var bed := _buried(0.44, burial, power)
+	var worn := _buried(0.88, burial, power)
+	assert_true(
+		verge < 0.10,
+		"the drifted verge is still at %.3f under a full winter, so the road never narrows"
+			% verge
+	)
+	assert_true(
+		worn > 0.55,
+		"the worn strips are down to %.3f, so the road the traffic actually wore has gone "
+			% worn
+			+ "under with everything else"
+	)
+	assert_true(
+		worn / maxf(verge, 0.0001) > 0.88 / 0.16,
+		"the burial did not open the gap between the worn strips and the verge, so the road "
+		+ "is fading evenly rather than filling in from its edges"
+	)
+	assert_true(bed < 0.88 and bed > verge, "the carriageway must sit between the two")
+
+
+## Rule 11 is the constraint on how far this may go: the marks in the snow are
+## the ONLY texture the picture has, and a winter that took the ploughed field
+## away would take the frame's detail with it.
+func test_the_snow_never_takes_the_ploughed_field_away() -> void:
+	var deepest := _buried(0.85, 1.0, _renderer.static_burial_power)
+	assert_true(
+		deepest > 0.4,
+		"at full burial a furrow cut at 0.85 is left at %.3f -- Art Bible rule 11 says these "
+			% deepest
+			+ "lines are the only detail an otherwise empty white field has"
+	)
+
+
+## Continuous in the burial as well as in space, which is the same requirement
+## the whole task carries: the accumulation walks, so the road must fill in as it
+## walks rather than at some threshold along the way.
+func test_the_road_fills_in_continuously_as_the_snow_arrives() -> void:
+	var power: float = _renderer.static_burial_power
+	var worst := 0.0
+	var previous := _buried(0.44, 0.0, power)
+	var burial := 0.005
+	while burial <= 1.0:
+		var now := _buried(0.44, burial, power)
+		worst = maxf(worst, absf(now - previous))
+		previous = now
+		burial += 0.005
+	assert_true(
+		worst < 0.01,
+		"the road's bed moves %.4f for half a percent of burial, which is a step" % worst
+	)
+
+
 ## The composition rule from the brief, as a gate: the preset sets where the band
 ## sits and the noise jitters it around that. If the terrain wrote its own
 ## threshold over the preset's, wiring the presets up would have achieved

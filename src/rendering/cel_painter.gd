@@ -60,9 +60,78 @@ const CEL_SHADER_PATH := "res://assets/shaders/cel_flat.gdshader"
 ## behind.
 const SOLID_BAND_OFFSET := 0.18
 
+## ---------------------------------------------------------------------------
+## THE SNOW THAT SETTLES ON EVERY SOLID
+## ---------------------------------------------------------------------------
+## src/systems/snow_accumulation.gd owns one scalar for the whole world and
+## TerrainRenderer pushes it here every frame, the same way it pushes the
+## lighting's band. The shape of the snow -- where the line sits at bare and at
+## full, how ragged its edge is -- is authored HERE rather than left to the
+## shader's uniform defaults, so that the two invariants below have an authority
+## a test can read.
+##
+## Both are in assets/shaders/cel_flat.gdshader's own words, and both are
+## asserted by tests/unit/test_snow_accumulation.gd:
+##
+##   SNOW_BARE_THRESHOLD - SNOW_EDGE_SOFTNESS > 1 + SNOW_NOISE_STRENGTH
+##       at cover 0 nothing anywhere is covered, whatever its normal
+##   SNOW_FULL_THRESHOLD - SNOW_EDGE_SOFTNESS > SNOW_NOISE_STRENGTH
+##       a vertical wall is never covered, at any cover
+##
+## The margin on each is 0.15 and 0.10 of normal.y respectively. They are not
+## style knobs: break the first and the world ships with a fleck of snow it can
+## never take off, break the second and snow crawls down the walls in a storm.
+##
+## THE NOISE IS BELL-SHAPED, WHICH IS WHY THESE ARE NOT THE FIRST NUMBERS. Value
+## noise is an interpolation between hashes, so its values crowd around the
+## middle and the tails are rare -- the *effective* spread across a surface is
+## perhaps half the nominal strength, not all of it. The first capture was
+## authored against the nominal figure and the farmhouse roof went from a few
+## flecks to completely white between cover 0.36 and 0.65, which is a third of
+## the week rather than the whole of it, and which loses the ridge line that
+## Art Bible rule 10 and tools/blender/build_farmhouse.py both go out of their
+## way to keep. Widening the strength and moving the full threshold up to pay
+## for it spreads the same transition over 0.67 of cover instead of 0.45.
+const SNOW_BARE_THRESHOLD := 1.50
+const SNOW_FULL_THRESHOLD := 0.45
+const SNOW_EDGE_SOFTNESS := 0.05
+const SNOW_NOISE_SCALE := 0.75
+const SNOW_NOISE_STRENGTH := 0.30
+
+## ---------------------------------------------------------------------------
+## HOW READILY EACH OF THE TWELVE TAKES SNOW, and why it is a palette rule
+## ---------------------------------------------------------------------------
+## Style document section 18 asks for a snow_amount per object -- roof 0.75,
+## car 0.25, pole 0.10, branches 0.35 -- and the brief for this task asks for
+## one shader applied broadly with no per-object authoring. Those look opposed
+## and are not, because what section 18 is actually protecting is Art Bible rule
+## 12: the frame has three warm entries in it and they are the whole of its
+## warmth, so snow must not be allowed to take them.
+##
+## That is a fact about the PALETTE, not about the objects, and the painter
+## already keys one material per palette colour. So:
+##
+##   snow and structure   1.00   the world, and it goes under
+##   warm paint           0.45   the truck's #6E2F2E, the scarf's #A05A35. Snow
+##                               on the bonnet with the doors still red is what
+##                               the reference shows; a white truck is the
+##                               second visual centre gone.
+##   warm light           0.00   #FFB257 is rule 12's lit windows, fire and
+##                               beacons. A light with snow drawn over it is a
+##                               light that has gone out.
+##
+## Three numbers, no per-object state, and every object in the game gets the
+## right one for free because it was already painted from the twelve. A window
+## pane is vertical and the normal test would spare it anyway; the zero is for
+## the day something warm is modelled facing the sky -- a brazier, a lamp on a
+## post, GDD section 6's beacon.
+const WARM_LIGHT_INDEX := 2
+const WARM_PAINT_RECEPTIVITY := 0.45
+
 static var _band_threshold := 0.30
 static var _band_softness := 0.07
 static var _light_tint := Vector3(1.0, 1.0, 1.0)
+static var _snow_cover := 0.0
 static var _register: Array[WeakRef] = []
 
 var _bible: ColorBible
@@ -91,6 +160,37 @@ static func set_world_shading(ground_threshold: float, softness: float, tint: Co
 	_register = living
 
 
+## How much snow has settled on everything facing the sky, 0..1.
+##
+## A SEPARATE BROADCAST from set_world_shading() and deliberately so: the two
+## change on completely different clocks. The light moves twice a day, in an
+## eight-second crossfade; the snow moves continuously, every frame, for the
+## whole run. Folding the cover into the lighting's call would make every
+## caller of that one supply a snow depth it has no opinion about, and would
+## have put the accumulation on the lighting's schedule -- which is the one
+## thing src/systems/snow_accumulation.gd exists to keep it off.
+##
+## Pushed by TerrainRenderer, which already pulls the lighting's band from the
+## ServiceRegistry every frame and is the one node in the world holding both a
+## per-frame tick and a licence to reach for the paint shop.
+static func set_snow_cover(cover: float) -> void:
+	_snow_cover = clampf(cover, 0.0, 1.0)
+	var living: Array[WeakRef] = []
+	for handle in _register:
+		var material := handle.get_ref() as ShaderMaterial
+		if material == null:
+			continue
+		material.set_shader_parameter("snow_cover", _snow_cover)
+		living.append(handle)
+	_register = living
+
+
+## What the last broadcast carried. For a test, and for a tuner reading the
+## world's state without a frame in front of them.
+static func snow_cover() -> float:
+	return _snow_cover
+
+
 ## How many materials the broadcast would currently reach. Exists so a test can
 ## prove the register drops what it no longer holds.
 static func live_material_count() -> int:
@@ -105,6 +205,7 @@ static func _stamp(material: ShaderMaterial) -> void:
 	material.set_shader_parameter("band_threshold", _band_threshold)
 	material.set_shader_parameter("band_softness", _band_softness)
 	material.set_shader_parameter("light_tint", _light_tint)
+	material.set_shader_parameter("snow_cover", _snow_cover)
 
 
 ## How far down the palette the shadow band sits, per family.
@@ -160,13 +261,42 @@ func material_for(lit: Color) -> ShaderMaterial:
 	material.shader = _shader
 	material.set_shader_parameter("lit_color", lit)
 	material.set_shader_parameter("shade_color", shade_for(lit))
-	# Stamped with whatever the light currently is, then registered so the next
-	# preset change finds it. Both halves matter: a building placed at midnight
-	# must not arrive lit for noon, and it must not stay lit for midnight either.
+	_stamp_snow_profile(material, lit)
+	# Stamped with whatever the light and the weather currently are, then
+	# registered so the next change of either finds it. Both halves matter: a
+	# building placed at midnight in a blizzard must not arrive lit for noon and
+	# bare, and it must not stay that way either.
 	_stamp(material)
 	_register.append(weakref(material))
 	_materials[key] = material
 	return material
+
+
+## The shape of the snow, and which of the twelve refuses it. Written once at
+## creation rather than on every broadcast: none of it moves, and the one thing
+## that does -- the cover -- goes through _stamp().
+func _stamp_snow_profile(material: ShaderMaterial, lit: Color) -> void:
+	if _bible != null and _bible.snow_tones.size() > 3:
+		material.set_shader_parameter("snow_lit", _bible.snow_tones[0])
+		material.set_shader_parameter("snow_shade", _bible.snow_tones[3])
+	material.set_shader_parameter("snow_receptivity", receptivity_for(lit))
+	material.set_shader_parameter("snow_bare_threshold", SNOW_BARE_THRESHOLD)
+	material.set_shader_parameter("snow_full_threshold", SNOW_FULL_THRESHOLD)
+	material.set_shader_parameter("snow_edge_softness", SNOW_EDGE_SOFTNESS)
+	material.set_shader_parameter("snow_noise_scale", SNOW_NOISE_SCALE)
+	material.set_shader_parameter("snow_noise_strength", SNOW_NOISE_STRENGTH)
+
+
+## How readily snow lies on a surface painted this colour. See the block above
+## WARM_LIGHT_INDEX for the whole of the reasoning.
+func receptivity_for(lit: Color) -> float:
+	if _bible == null or _bible.warm_tones.size() <= WARM_LIGHT_INDEX:
+		return 1.0
+	for index in range(_bible.warm_tones.size()):
+		if not _same(_bible.warm_tones[index], lit):
+			continue
+		return 0.0 if index == WARM_LIGHT_INDEX else WARM_PAINT_RECEPTIVITY
+	return 1.0
 
 
 ## The shaded band for a lit palette colour: the same family, a fixed number of
