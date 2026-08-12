@@ -3,10 +3,17 @@ extends CharacterBody3D
 
 ## Walks, runs, and writes the lines in the snow.
 ##
-## Speed is not a key. It is read off the snow: bare ground lets you run, a
-## drift drops you to a trudge, and a path you have already flattened lets you
-## run again. That last one is the point of SnowField having a packed layer at
-## all -- the shortcut you beat into the snow is a real one.
+## Speed is not a key. It is read off the ground -- how deep the snow is and how
+## steeply it runs under the direction he is walking -- and the run is something
+## he earns by keeping going rather than something he holds a button for. A drift
+## drops him to a trudge, a bank slows him whether he is climbing it or dropping
+## down it, and a path he has already flattened lets him run again. That last one
+## is the point of SnowField having a packed layer at all -- the shortcut you beat
+## into the snow is a real one.
+##
+## The whole speed model is the block headed HOW FAST A MAN CROSSES A SNOWFIELD
+## below, and tests/unit/test_locomotion.gd checks it against the real world
+## rather than against itself.
 ##
 ## Footprints go out as an EventBus event rather than as calls into TrackMask
 ## and SnowField. The player does not need to know either of them exists, and
@@ -69,23 +76,253 @@ const CHARACTER_LAYER := 1 << 1
 const BREATH_BONE := &"Head"
 const BREATH_MOUTH_OFFSET := Vector3(0.0, 0.16, 0.17)
 
-@export var run_speed := 5.4
-@export var wade_speed := 1.5
+## ---------------------------------------------------------------------------
+## HOW FAST A MAN CROSSES A SNOWFIELD
+## ---------------------------------------------------------------------------
+## The owner's ruling is the whole specification:
+##
+##   整体的速度需要受到地形的坡度和雪的厚度影响 ... 不管是行走还是奔跑只受到雪深
+##   度和地形坡度的影响，但是整体的速度设计需要符合现实世界的理解和定义
+##
+## Two terrain inputs -- snow depth and the grade underfoot -- acting on the walk
+## and the run alike, and a scale that answers to the real world. So:
+##
+##     speed = lerp(walk_speed, run_speed, gait) * terrain_factor(wade, grade)
+##     terrain_factor = lerp(1, snow_factor * slope_factor, terrain_severity)
+##
+## and nothing else about the terrain multiplies it. `gait` is the auto-run
+## promotion, eased, in 0..1. See top_speed_at(), and see terrain_severity for
+## why the product is compressed rather than used raw.
+##
+## THE SCALE, in metres per second so it can be read against the model without
+## converting anything:
+##
+##     stroll                1.1
+##     ordinary walking      1.3 - 1.4
+##     brisk walking         1.6
+##     jogging               2.5 - 3.0
+##     a fit person's run    3.5 - 4.5
+##     a brief sprint        6   - 8
+##
+## The run shipped at 5.4 m/s. That is a 3:05/km pace -- inside elite marathon
+## speed -- for a cold, burdened man in winter clothing crossing a snowfield, and
+## it was the single reason clear ground felt wrong.
+##
+## It was also breaking the animation, invisibly. The run take covers 4.6 m/s of
+## ground at rate 1 (anim_run_speed, measured off the clip), so at 5.4 the legs
+## were played 17% faster than they carried him and the feet skated. Any run
+## speed inside [anim_walk_speed, anim_run_speed] plants them -- see
+## _drive_animation(), where `reference` collapses to the speed itself and the
+## pace scale is exactly 1 across that whole band.
+##
+## 3.3 m/s is a 5:03/km jog: 2.4 times the walk, well inside what the run clip
+## covers, and a pace a man in a heavy coat can hold across a field. He should
+## never look like an athlete.
+@export var run_speed := 3.3
+
+## How fast he reaches whatever the terrain lets him do, in m/s^2.
+##
+## FLAT, AND DELIBERATELY NOT SCALED BY THE TERRAIN. A body that is slow but
+## answers the key instantly feels fine; a body that is slow AND sluggish to
+## start, stop and turn feels like wading through treacle, and only the first was
+## ever asked for. They are different qualities and the terrain owns exactly one
+## of them -- how fast he can go, never how quickly he agrees to go it.
+##
+## At 12 m/s^2 he reaches a 0.4 m/s trudge in two physics ticks and stops from it
+## in two more, so pressing a direction in the deepest snow still produces
+## immediate movement. Multiplying this by terrain_factor() would be the obvious
+## next "realism" edit and it is the one to refuse.
 @export var acceleration := 12.0
 
-## What is left when the body cannot run any more.
-##
-## GDD section 5's 疲劳归零后果 is 无法奔跑 -- cannot RUN -- and the survival
-## model says so by putting `locomotion:run_speed` to zero. A body that read that
-## as its top speed would be pinned at a standstill by an empty fatigue bar,
-## which is a soft lock with no message rather than a penalty. So the run is
-## taken away and this is the floor it falls to.
+## The walk, and the one number in this file that was already right.
 ##
 ## 1.35 m/s is not a chosen number: it is `anim_walk_speed`, the ground speed at
-## which the walk cycle plays at rate 1. An exhausted man therefore walks at
-## exactly the pace his own animation covers ground at, and his feet plant
-## instead of skating -- the same rule the run is tuned by.
+## which the walk cycle plays at rate 1, so his feet plant instead of skating.
+##
+## THAT IT AGREES WITH TOBLER IS THE CORROBORATION, NOT THE CAUSE. Tobler's
+## hiking function on the level gives 5.04 km/h = 1.40 m/s (see TOBLER_DECAY
+## below), and this was derived from an animation clip with no reference to it.
+## Two independent derivations landing within 4% of each other is the strongest
+## evidence available that the scale of this whole model is right, and it is why
+## the rest of it could be hung off Tobler with any confidence.
+##
+## It is also what is left when the body cannot run any more. GDD section 5's
+## 疲劳归零后果 is 无法奔跑 -- cannot RUN -- and the survival model says so by
+## putting `locomotion:run_speed` to zero. A body that read that as its top speed
+## would be pinned at a standstill by an empty fatigue bar, which is a soft lock
+## with no message rather than a penalty. So the run is taken away as a
+## capability and this is the gait he falls back to.
 @export var walk_speed := 1.35
+
+## ---------------------------------------------------------------------------
+## SNOW
+## ---------------------------------------------------------------------------
+## What is left of his pace in snow deep enough to wade -- SnowField.deep_depth_m,
+## 0.42 m, which is knee-deep on this character.
+##
+## A FACTOR AND NOT A SPEED, and that is the one structural change to the model.
+## It used to be an absolute `wade_speed = 1.5` with the top speed lerped from the
+## run down to it. That works while the only gait is the run and the run is fast.
+## It INVERTS the moment there is a walk: a walk of 1.35 lerped toward 1.5 speeds
+## UP as the snow deepens, and a man who sprints into drifts to escape is a bug
+## nobody would think to look for. The old minf() guard in top_speed_at() was
+## exactly that inversion, caught for the exhausted case only.
+##
+## As a factor it cannot invert, and it composes with the slope term by
+## MULTIPLICATION -- which is what makes a climb through a drift worse than either
+## alone, as the owner asked. Adding the two penalties, or taking the worse of
+## them, would not.
+##
+## 0.30 puts the walk at 0.41 m/s -- 1.5 km/h -- in 0.42 m of unpacked snow.
+## Published figures for postholing knee-deep put it at 1-2 km/h. It also barely
+## moves the feel that shipped: 1.5 against the old 5.4 was 0.28.
+@export var deep_snow_factor := 0.30
+
+## How deep the snow may be before the run is taken away, as a wade factor.
+##
+## A CAPABILITY GATE, not a speed scaler, and it turns on the same distinction as
+## the exhaustion rule: past wading depth you cannot lift your feet clear of the
+## snow, you drag them -- which is precisely why the furrow further down this file
+## exists. There is no run to be had, so there is nothing to slow down. GDD
+## section 5's control table says it in one line: 奔跑（仅浅雪与道路上可用）.
+##
+## 0.6 of the wade factor is 0.25 m of snow. Above that he walks, and
+## advance_gait() eases the demotion rather than cutting it, so entering a drift
+## at a run reads as wading into it.
+##
+## THIS IS WHAT MAKES THE PACKED LAYER LOAD-BEARING. A path beaten flat drops the
+## depth back under the gate, and running it again is the reward.
+@export var run_snow_limit := 0.6
+
+## ---------------------------------------------------------------------------
+## SLOPE -- Tobler's hiking function
+## ---------------------------------------------------------------------------
+##     W = 6 exp(-3.5 |S + 0.05|)   km/h,   S = rise / run
+##
+## Used rather than invented, for two reasons. It is the accepted empirical model
+## of walking speed against grade, so 符合现实世界的理解 becomes a citation rather
+## than an opinion. And it corroborates walk_speed above, which was derived from
+## an animation clip and knows nothing about it.
+##
+## Its shape is correct gameplay for free. The peak is at a 5% DESCENT rather than
+## on the level, and it falls away in both directions -- so a steep descent slows
+## him as much as a climb does. A player reads that as careful footing and it
+## needs no explanation. A model that only punished climbing would let him fall
+## down every bank at full speed.
+##
+## slope_factor() is this curve divided by its own value at S = 0, so level ground
+## multiplies by exactly 1 and the speeds authored above are the speeds on the
+## level.
+const TOBLER_DECAY := 3.5
+const TOBLER_PEAK_GRADE := 0.05
+
+## The floor under the slope term.
+##
+## Tobler goes to zero, and quickly: at 45 degrees it says 0.05 m/s, which on
+## screen is a man stuck to a bank with nothing telling him why. That is the same
+## failure as the exhaustion soft lock, and it gets the same answer -- a floor
+## rather than a special case.
+##
+## MEASURED against the ground this game actually serves, rather than guessed at.
+## Over an 80 m square of the shipped field sampled every half metre, the steepest
+## grade underfoot is 0.049 at the median (2.8 deg), 0.269 at the 90th percentile
+## (15.1 deg), 0.461 at the 99th (24.7 deg) and 0.639 at its very worst (32.6 deg,
+## one bank in 6,400 square metres). At 0.25 the floor binds only above a 0.40
+## climb or a 0.50 descent -- about the top 1% of the terrain -- so Tobler's curve
+## is intact everywhere the player normally walks, and the worst the ground can
+## do to a walk is 0.34 m/s rather than a standstill.
+##
+## A const rather than an @export because slope_factor() is static: it is
+## arithmetic with a right answer, the way SnowField.drift_relief() is, and a
+## curve whose shape depended on which instance you asked would not be.
+const SLOPE_FLOOR := 0.25
+
+## ---------------------------------------------------------------------------
+## HOW HARD THE TERRAIN IS ALLOWED TO BITE
+## ---------------------------------------------------------------------------
+##     terrain_factor = lerp(1, snow_factor * slope_factor, terrain_severity)
+##
+## DO NOT "FIX" THIS BACK TO RAW TOBLER. It is not a fudge covering a modelling
+## error -- the model above is correct and stays correct -- it is a deliberate
+## amplitude compression, and here is the reason, because the next person to read
+## this file will otherwise remove it.
+##
+## **Tobler describes a hiker crossing terrain over hours.** Our player crosses
+## the valley in a minute. The same curve, experienced continuously and without
+## the compensating sense of a long journey being made, reads as oppression
+## rather than as effort -- which is the well-known gap between realistic movement
+## penalties and how they feel under time compression. The owner played it and
+## said so exactly: 我感觉整个 debuff 太严重了 ... 只要能体现出速度减缓的趋势就好了.
+## Feel the trend, not the struggle.
+##
+## A lerp toward 1 is the compression that costs nothing structural. It is
+## MONOTONE in the raw product, so every relationship the model builds survives
+## untouched: deeper snow is still slower than shallow, uphill is still slower
+## than flat, the peak is still at a 5% descent, and a climb through a drift is
+## still worse than either alone. Only the SPREAD shrinks. The model still
+## describes the world truthfully in relative terms -- which is the part a player
+## can actually perceive -- while costing less in absolute terms.
+##
+## 0.55 rather than a rounder number because the target was the worst case in the
+## game, not the knob. The floor of the raw product is deep_snow_factor x
+## SLOPE_FLOOR = 0.30 x 0.25 = 0.075, an eighth of the clear-ground walk and a
+## crawl; 1 - 0.55 x (1 - 0.075) = 0.49, which is half the clear-ground walk. He
+## should feel slowed, never stuck.
+##
+## Raise it toward 1 to get raw Tobler back; drop it to 0 to switch the terrain
+## off entirely. tools/measure_locomotion.gd prints both the raw and the shipped
+## figures side by side so the realism claim stays checkable at any setting.
+@export var terrain_severity := 0.55
+
+## ---------------------------------------------------------------------------
+## AUTO-RUN
+## ---------------------------------------------------------------------------
+## How long he has to keep going before the walk becomes a run, in seconds.
+##
+## The owner asked for the threshold to be a user setting and for a sensible
+## default to be picked now. 1.2 s is about two paces at walking speed: long
+## enough that crossing a room, stepping round a doorway or nudging into place
+## never promotes him, short enough that setting off across the field does.
+##
+## THIS IS A DEFAULT, NOT THE VALUE. register_settings() publishes it as
+## AUTO_RUN_SETTING and reads whatever the player has chosen back over it, so a
+## settings screen binds a slider to a name that already exists with a range on
+## it. 0 promotes him as soon as he is moving.
+@export var auto_run_delay := 1.2
+
+## How far off his own heading counts as a change of direction rather than a
+## curve, in degrees.
+##
+## Measured against a SMOOTHED heading (auto_run_heading_smoothing below) rather
+## than against the last frame, because at 60 Hz a single frame of even a violent
+## turn is a couple of degrees and nothing would ever trigger. The smoothed
+## heading lags the input by roughly (turn rate) x (1 / smoothing), so at 70
+## degrees a corner taken at 180 deg/s survives -- it lags about 45 -- and a flick
+## or an about-face does not.
+@export var auto_run_turn_degrees := 70.0
+@export var auto_run_heading_smoothing := 4.0
+
+## How fast the promotion and the demotion ease, as a closed fraction per second
+## -- the same form as turn_speed and vertical_smoothing.
+##
+## Eased rather than stepped, and that is not a polish item: a body that snaps
+## from walk to run at a threshold is worse than no auto-run at all, because the
+## threshold becomes something the player can see. 3.0 puts full run about a
+## second after the promotion; 6.0 takes it off in half of that, because slowing
+## down is a decision and speeding up is a commitment.
+##
+## The animation follows for free -- _drive_animation() blends on the ground speed
+## this produces, so the legs cross over on exactly the same ramp.
+@export var auto_run_rise := 3.0
+@export var auto_run_fall := 6.0
+
+## Where the auto-run threshold lives for a settings screen to find it.
+##
+## Registered at runtime rather than written into project.godot, for the same
+## reason _register_actions() registers the movement keys there: this is the whole
+## control surface of the slice and it belongs in one readable place. Nothing
+## calls ProjectSettings.save(), so a run never writes to project.godot.
+const AUTO_RUN_SETTING := "winter_time/controls/auto_run_delay_seconds"
 
 ## Metres of travel between prints, and how far each sits off the centre line.
 @export var stride_length := 0.72
@@ -370,6 +607,11 @@ var _furrow_noise: FastNoiseLite
 var _furrow_anchor := Vector3.ZERO
 var _has_furrow_anchor := false
 var _furrow_travel := 0.0
+## The auto-run: how long he has kept going, which way he has been going, and how
+## far the walk has been promoted toward the run. See advance_gait().
+var _run_hold := 0.0
+var _run_heading := Vector3.ZERO
+var _run_blend := 0.0
 
 
 func _ready() -> void:
@@ -381,6 +623,7 @@ func _ready() -> void:
 	_build_body()
 	_build_audio()
 	_register_actions()
+	register_settings()
 	# Subscribed to its own event rather than called from _place_print(): the
 	# print and the sound are the same fact, so they should not be able to fall
 	# out of step by someone editing one call site. Anything else that starts
@@ -684,23 +927,54 @@ func _build_animation() -> void:
 	_animation.active = true
 
 
+## How much of him the walk carries, against the idle. 0 standing, 1 walking.
+##
+## THE TWO BOUNDS ARE STATED FOR BARE, LEVEL GROUND AND SCALED BY WHAT THE GROUND
+## ALLOWS, and that scaling is not decoration -- without it the slower speed model
+## introduces a regression that looks like an animation bug. They were absolute
+## metres per second, and they were right while the slowest a man could move was
+## 1.5. A trudge at 0.41 m/s sits a third of the way through a crossfade tuned to
+## finish at 0.85, so the character would slide across a drift half standing
+## still.
+##
+## Scaling keeps every approved number: on bare level ground these are still
+## exactly anim_idle_speed and anim_moving_speed, and everywhere else they are the
+## same FRACTION of the pace the ground allows. The stopping debounce the lower
+## bound exists for scales with them, so it stays the same couple of physics
+## ticks at any depth.
+##
+## Deliberately scaled by the terrain only, not by the survival channels. The
+## walk's own share of `locomotion:speed` is 0.72 at its very worst, which leaves
+## a walking man well clear of the upper bound; folding it in would make how
+## awake he looks depend on how tired he is.
+func motion_blend(speed: float, wade: float, grade: float) -> float:
+	var reach := maxf(terrain_factor(wade, grade), 0.02)
+	return clampf(
+		inverse_lerp(anim_idle_speed * reach, anim_moving_speed * reach, speed), 0.0, 1.0
+	)
+
+
 ## Blend by speed, and play at the rate that actually covers the ground, so the
 ## feet plant instead of skating.
 ##
-## One number drives all three parameters, and it is the ground speed the snow
-## decides: SnowField.wade_factor() has already pulled the top speed down from
-## run_speed toward wade_speed by the time this reads velocity. So a player
-## crossing a drift does not merely move slower -- he drops out of the run into
-## the walk and shortens his stride, because the same metre per second that the
-## snow took away is the one this reads.
-func _drive_animation() -> void:
+## One number drives the gait and the pace, and it is the ground speed the terrain
+## decided: snow_factor() and slope_factor() have already pulled the top speed
+## down by the time this reads velocity, and the auto-run's eased blend is in
+## there too. So a player crossing a drift does not merely move slower -- he drops
+## out of the run into the walk and shortens his stride, because the same metre
+## per second the snow took away is the one this reads. The auto-run needs no
+## separate animation wiring for the same reason.
+##
+## `reference` is the ground the blended clip covers at that blend, so the pace
+## scale is exactly 1 anywhere in [anim_walk_speed, anim_run_speed] -- which is
+## why keeping run_speed inside that band is what plants the feet.
+func _drive_animation(wade: float, grade: float) -> void:
 	if _animation == null:
 		return
 	var speed := Vector2(velocity.x, velocity.z).length()
-	var motion := clampf(inverse_lerp(anim_idle_speed, anim_moving_speed, speed), 0.0, 1.0)
 	var gait := clampf(inverse_lerp(anim_walk_speed, anim_run_speed, speed), 0.0, 1.0)
 	var reference := lerpf(anim_walk_speed, anim_run_speed, gait)
-	_animation.set(&"parameters/motion/blend_amount", motion)
+	_animation.set(&"parameters/motion/blend_amount", motion_blend(speed, wade, grade))
 	_animation.set(&"parameters/gait/blend_amount", gait)
 	_animation.set(&"parameters/pace/scale", clampf(speed / reference, 0.0, anim_max_pace))
 	_animation.set(&"parameters/chill/blend_amount", clampf(chill, 0.0, 1.0))
@@ -760,32 +1034,194 @@ func body_chill() -> float:
 	return IDLE_CHILL_FLOOR + cold * (1.0 - IDLE_CHILL_FLOOR)
 
 
-## The top ground speed the body can manage in snow of this wade factor, after
-## everything GDD section 5 has to say about it.
+## ---------------------------------------------------------------------------
+## THE SPEED MODEL
+## ---------------------------------------------------------------------------
+## Tobler's hiking function, normalised so level ground is exactly 1.
 ##
-## Public and pure so the model can be exercised without a scene tree, and so
-## that the three locomotion channels have somewhere to be tested at all.
+##     W(S) = 6 exp(-3.5 |S + 0.05|)          km/h
+##     slope_factor(S) = W(S) / W(0) = exp(-3.5 (|S + 0.05| - 0.05))
 ##
-## The channels MULTIPLY INTO the snow-depth model that was here first; they do
-## not replace it. Three of them, in the order they apply:
+## Static and contextless on purpose, the way SnowField.drift_relief() and
+## sample_bilinear() are: it is the one piece of this model that is arithmetic
+## with a right answer, and tests/unit/test_locomotion.gd computes the paper's own
+## curve independently and compares.
 ##
-##   locomotion:snow_cost  scales the wade factor, so deep snow costs a tired man
-##                         more than it costs a fresh one -- GDD 5's 雪深惩罚加剧
-##                         -- while bare ground (wade 0) still costs nothing.
-##   locomotion:run_speed  scales the clear-ground pace, and goes to ZERO when
-##                         fatigue is empty. maxf() against walk_speed is what
-##                         turns that into 无法奔跑 rather than a soft lock.
-##   locomotion:speed      scales the result: the flat penalty from fatigue and
-##                         from ruined feet.
+## S is signed: positive climbing, negative descending. The peak sits at -0.05,
+## so the fastest ground in the game is a gentle downhill and both a climb and a
+## steep drop cost.
+static func slope_factor(grade: float) -> float:
+	var raw := exp(-TOBLER_DECAY * (absf(grade + TOBLER_PEAK_GRADE) - TOBLER_PEAK_GRADE))
+	return maxf(raw, SLOPE_FLOOR)
+
+
+## The grade a walker actually faces: the terrain's gradient resolved along his
+## own heading, in rise over run.
 ##
-## minf() on the deep-snow end is not decoration either. Exhaustion pulls the
-## clear-ground pace below wade_speed, and a lerp between them would then run
-## UPHILL -- a man who sprints into drifts to escape. Deeper snow is never faster.
-func top_speed_at(wade: float) -> float:
+## NOT the terrain's steepest slope, and the difference is the whole point.
+## SnowField.surface_gradient_at() points uphill and its length is tan(slope), so
+## a man traversing a bank along the contour reads 0 -- level ground underfoot,
+## which is what it is -- while the same bank taken straight up reads its full
+## steepness. Using the raw magnitude would slow a player who is not climbing
+## anything.
+static func grade_along(gradient: Vector2, heading: Vector3) -> float:
+	var flat := Vector2(heading.x, heading.z)
+	if flat.length_squared() < 0.000001:
+		return 0.0
+	return gradient.dot(flat.normalized())
+
+
+## What the snow leaves him, 1 on bare ground down to deep_snow_factor at wading
+## depth.
+##
+## `locomotion:snow_cost` scales the wade factor on the way in, which is GDD
+## section 5's 雪深惩罚加剧: deep snow costs a tired man more than a fresh one,
+## while bare ground (wade 0) still costs nothing at all.
+func snow_factor(wade: float) -> float:
 	var cost := clampf(_channel(&"locomotion:snow_cost", clampf(wade, 0.0, 1.0)), 0.0, 1.0)
-	var clear := maxf(walk_speed, _channel(&"locomotion:run_speed", run_speed))
-	var deep := minf(wade_speed, clear)
-	return maxf(_channel(&"locomotion:speed", lerpf(clear, deep, cost)), 0.0)
+	return lerpf(1.0, deep_snow_factor, cost)
+
+
+## Everything the ground does to him, as one multiplier, compressed.
+##
+## The two raw terms are the honest physical model and stay available separately
+## -- snow_factor() and slope_factor() are what a realism claim is checked
+## against. This is what actually reaches the velocity, and terrain_severity is
+## the one knob between them. See its comment for why the gap exists and why it
+## must not be closed.
+func terrain_factor(wade: float, grade: float) -> float:
+	var raw := snow_factor(wade) * slope_factor(grade)
+	return lerpf(1.0, raw, clampf(terrain_severity, 0.0, 1.0))
+
+
+## The pace the run would reach if he were running, before the terrain touches it.
+##
+## `locomotion:run_speed` goes to ZERO when fatigue is empty, and maxf() against
+## the walk is what turns that into 无法奔跑 rather than a standstill. A partial
+## multiply -- nothing authored uses one today -- scales the run down but can
+## never take it under the walk.
+func run_ceiling() -> float:
+	return maxf(walk_speed, _channel(&"locomotion:run_speed", run_speed))
+
+
+## Whether there is a run to be had here at all. Two gates, neither of them a
+## speed: snow past run_snow_limit, and an empty fatigue bar.
+func can_run(wade: float) -> bool:
+	if clampf(wade, 0.0, 1.0) > run_snow_limit:
+		return false
+	return run_ceiling() > walk_speed + 0.0001
+
+
+## The top ground speed the body can manage: in snow of this wade factor, on this
+## grade, with the walk promoted this far toward the run.
+##
+## Public and pure so the model can be exercised without a scene tree, a snow
+## field or a bus -- which is what lets test_locomotion.gd check it against the
+## real world rather than against a screenshot.
+##
+## `gait` is NOT gated here. The gates live in advance_gait(), which eases the
+## blend toward zero when they shut, because cutting the speed the moment the
+## snow deepened would be exactly the step change the auto-run is supposed to
+## avoid. This function stays a pure function of its three arguments, so it is
+## monotone in wade for any fixed gait and there is no way to get a faster answer
+## out of deeper snow.
+##
+## ---------------------------------------------------------------------------
+## WHAT ELSE TOUCHES THE NUMBER, AND WHY IT IS NOT A CONTRADICTION
+## ---------------------------------------------------------------------------
+## The owner's rule is that only snow depth and slope scale the speed. That is
+## the TERRAIN model and it is exactly what the product above is. `locomotion:
+## speed` is the other axis -- the body rather than the ground -- and GDD section
+## 5 requires it in as many words: 疲劳高 -> 移速下降 and 足部冻伤 -> 移速永久下降.
+## It is applied last, it is authored entirely in res://data/stats/*.tres, and
+## with a healthy man it is exactly 1, so the terrain model is what he feels.
+##
+## This tension is flagged in the task report rather than resolved here. Deleting
+## the channel would silently drop two GDD requirements and three shipped tests.
+func top_speed_at(wade: float, grade := 0.0, gait := 0.0) -> float:
+	var pace := lerpf(walk_speed, run_ceiling(), clampf(gait, 0.0, 1.0))
+	return maxf(_channel(&"locomotion:speed", pace * terrain_factor(wade, grade)), 0.0)
+
+
+## How far the walk has been promoted toward the run, 0 .. 1.
+func run_blend() -> float:
+	return _run_blend
+
+
+## Advances the auto-run by one tick and returns the new blend.
+##
+## `direction` is what he is being ASKED to do -- the horizontal input, zero when
+## he is standing -- rather than the velocity he ended up with. Reading velocity
+## would make the promotion depend on the snow he is already in, and a man wading
+## out of a drift would have to earn the run twice.
+##
+## Three things end a run, and they are the three the owner named plus the one
+## GDD section 5 already had:
+##
+##   stopping           -- the hold resets outright, so setting off again costs
+##                         the full threshold. Stopping is a decision.
+##   a sharp turn       -- more than auto_run_turn_degrees off his own smoothed
+##                         heading. A curve is not a turn; see the constant.
+##   snow / exhaustion  -- can_run(), a capability rather than a speed.
+##
+## The blend eases toward its target rather than being assigned, which is what
+## keeps every one of those from being a step change in velocity.
+func advance_gait(delta: float, direction: Vector3, wade: float, forced := false) -> float:
+	var flat := Vector3(direction.x, 0.0, direction.z)
+	var moving := flat.length_squared() > 0.0001
+	if not moving:
+		_run_hold = 0.0
+		_run_heading = Vector3.ZERO
+	else:
+		var heading := flat.normalized()
+		if _run_heading.length_squared() < 0.0001:
+			_run_heading = heading
+		elif rad_to_deg(_run_heading.angle_to(heading)) > auto_run_turn_degrees:
+			# A flick or an about-face. He has to commit again.
+			_run_hold = 0.0
+			_run_heading = heading
+		else:
+			var turn := 1.0 - exp(-auto_run_heading_smoothing * maxf(delta, 0.0))
+			_run_heading = _run_heading.lerp(heading, turn).normalized()
+		# Capped so a long walk does not bank credit a stumble cannot spend.
+		_run_hold = minf(_run_hold + delta, auto_run_delay + 1.0)
+
+	var wants := moving and can_run(wade) and (forced or _run_hold >= auto_run_delay)
+	var target := 1.0 if wants else 0.0
+	var rate := auto_run_rise if target > _run_blend else auto_run_fall
+	_run_blend = lerpf(_run_blend, target, 1.0 - exp(-rate * maxf(delta, 0.0)))
+	# An exponential ease never arrives. Left alone the blend sits a thousandth
+	# short of the target for ever, which is harmless but shows up in any test
+	# that asks whether he is running.
+	if absf(_run_blend - target) < 0.001:
+		_run_blend = target
+	return _run_blend
+
+
+## Publishes the auto-run threshold as a setting and reads the player's choice
+## back over the authored default.
+##
+## Idempotent, and safe to call from a test: it adds one key, never calls
+## ProjectSettings.save(), and a value already present wins. The property info is
+## what a settings screen needs to build the slider in UI design section 4.2's
+## 操作 group without hardcoding a range.
+##
+## Read at _ready(), so a settings screen that writes the setting mid-run should
+## call this again -- that is the whole of "apply", and it is why the function is
+## public and idempotent rather than a private one-shot.
+func register_settings() -> void:
+	if not ProjectSettings.has_setting(AUTO_RUN_SETTING):
+		ProjectSettings.set_setting(AUTO_RUN_SETTING, auto_run_delay)
+	ProjectSettings.set_initial_value(AUTO_RUN_SETTING, auto_run_delay)
+	ProjectSettings.add_property_info({
+		"name": AUTO_RUN_SETTING,
+		"type": TYPE_FLOAT,
+		"hint": PROPERTY_HINT_RANGE,
+		"hint_string": "0.0,5.0,0.1",
+	})
+	ProjectSettings.set_as_basic(AUTO_RUN_SETTING, true)
+	var chosen := float(ProjectSettings.get_setting(AUTO_RUN_SETTING, auto_run_delay))
+	auto_run_delay = maxf(chosen, 0.0)
 
 
 ## What the body is telling the readouts, driven every physics frame.
@@ -854,15 +1290,21 @@ func _play_step(depth_ratio: float) -> void:
 	_steps.play()
 
 
-## Registered here rather than in project.godot because these four actions are
+## Registered here rather than in project.godot because these five actions are
 ## the whole input surface of the slice and this keeps them in one readable
 ## place. `has_action` first, so a real input map added later wins.
+##
+## `move_run` is GDD section 5's control table -- Shift | 奔跑 -- and it does not
+## replace the auto-run, it short-circuits its wait. Holding it promotes him now;
+## letting it go hands him back to the timer rather than dropping him to a walk,
+## because a player who has been sprinting for ten seconds has plainly committed.
 func _register_actions() -> void:
 	var bindings := {
 		&"move_forward": [KEY_W, KEY_UP],
 		&"move_back": [KEY_S, KEY_DOWN],
 		&"move_left": [KEY_A, KEY_LEFT],
 		&"move_right": [KEY_D, KEY_RIGHT],
+		&"move_run": [KEY_SHIFT],
 	}
 	for action in bindings:
 		if InputMap.has_action(action):
@@ -903,12 +1345,20 @@ func _physics_process(delta: float) -> void:
 	if direction.length_squared() > 1.0:
 		direction = direction.normalized()
 
+	# The two things the owner's ruling says decide his speed, read off the ground
+	# he is standing on: how deep the snow is, and how steeply it runs along the
+	# way he is going. The grade is resolved along `direction` rather than taken
+	# as the terrain's steepest slope -- see grade_along().
 	var wade := 0.0
+	var grade := 0.0
 	if _snow != null:
 		wade = _snow.wade_factor(global_position)
-	# The snow decides, and the body modulates what the snow decided. See
-	# top_speed_at() for the order the three locomotion channels apply in.
-	var top_speed := top_speed_at(wade)
+		grade = grade_along(_snow.surface_gradient_at(global_position), direction)
+
+	# Whether he is walking or running, eased, and gated on the snow he is in.
+	var forced := InputMap.has_action(&"move_run") and Input.is_action_pressed(&"move_run")
+	var gait := advance_gait(delta, direction, wade, forced)
+	var top_speed := top_speed_at(wade, grade, gait)
 
 	var wanted := direction * top_speed
 	velocity.x = move_toward(velocity.x, wanted.x, acceleration * delta)
@@ -953,7 +1403,7 @@ func _physics_process(delta: float) -> void:
 		_advance_stride(travelled)
 
 	_face_travel(delta)
-	_drive_animation()
+	_drive_animation(wade, grade)
 	drive_readouts(Vector2(velocity.x, velocity.z).length())
 
 

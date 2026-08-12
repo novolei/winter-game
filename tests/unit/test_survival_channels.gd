@@ -9,8 +9,8 @@ extends TestCase
 ## say so:
 ##
 ##   locomotion:speed      -> PlayerController.top_speed_at()
-##   locomotion:run_speed  -> PlayerController.top_speed_at()
-##   locomotion:snow_cost  -> PlayerController.top_speed_at()
+##   locomotion:run_speed  -> PlayerController.run_ceiling(), and so can_run()
+##   locomotion:snow_cost  -> PlayerController.snow_factor()
 ##   breath:rate           -> BreathFog, through PlayerController
 ##
 ## ignition:speed, aim:steadiness and vision:focus are still published and still
@@ -86,33 +86,44 @@ func _drop_to(stat_id: StringName, value: float) -> void:
 
 # --- locomotion -------------------------------------------------------------
 
-## The regression test. The snow-depth speed model was here first and the
-## channels MULTIPLY INTO IT; they do not replace it. A healthy man moves exactly
-## as he did before any of this existed.
+## The regression test. The terrain speed model was here first and the channels
+## MULTIPLY INTO IT; they do not replace it. A healthy man gets exactly the
+## terrain model and nothing else.
+##
+## Restated when the model was rebuilt around Tobler's hiking function -- the
+## shape it asserted (an absolute wade_speed, lerped to from the run) no longer
+## exists. What it is defending has not changed: with a healthy body the
+## channels must be invisible. tests/unit/test_locomotion.gd owns the terrain
+## model's own numbers.
 func test_a_healthy_body_moves_exactly_as_it_did_before() -> void:
 	var player := _build_player()
-	assert_almost_eq(
-		player.top_speed_at(0.0),
-		player.run_speed,
-		0.0001,
-		"clear ground is no longer the authored run speed"
-	)
-	assert_almost_eq(
-		player.top_speed_at(1.0),
-		player.wade_speed,
-		0.0001,
-		"a full drift is no longer the authored wade speed"
-	)
+	var bare := PlayerController.new()
+	for wade in [0.0, 0.5, 1.0]:
+		for gait in [0.0, 1.0]:
+			assert_almost_eq(
+				player.top_speed_at(wade, 0.0, gait),
+				bare.top_speed_at(wade, 0.0, gait),
+				0.0001,
+				"a healthy man at wade %.1f, gait %.0f moves at %f where a body with no "
+					% [wade, gait, player.top_speed_at(wade, 0.0, gait)]
+					+ "survival model at all moves at %f" % bare.top_speed_at(wade, 0.0, gait)
+			)
+	bare.free()
 	var half: float = player.top_speed_at(0.5)
 	assert_true(
-		half < player.run_speed and half > player.wade_speed,
+		half < player.top_speed_at(0.0) and half > player.top_speed_at(1.0),
 		"half a drift reads %f, outside the two speeds it should sit between" % half
 	)
 
 func test_a_body_with_no_survival_model_at_all_still_walks() -> void:
 	var player := _build_player(false)
-	assert_almost_eq(player.top_speed_at(0.0), player.run_speed, 0.0001)
-	assert_almost_eq(player.top_speed_at(1.0), player.wade_speed, 0.0001)
+	assert_almost_eq(player.top_speed_at(0.0), player.walk_speed, 0.0001)
+	assert_almost_eq(player.top_speed_at(0.0, 0.0, 1.0), player.run_speed, 0.0001)
+	assert_almost_eq(
+		player.top_speed_at(1.0),
+		player.walk_speed * player.terrain_factor(1.0, 0.0),
+		0.0001
+	)
 
 ## GDD section 5: 疲劳高 -> 移速下降. locomotion:speed is 0.85 below a third of
 ## the bar.
