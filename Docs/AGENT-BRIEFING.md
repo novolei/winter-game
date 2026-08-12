@@ -295,3 +295,17 @@ ev.device = -1                      # <-- without this line the action never mat
 Nothing warns you. The only symptom is a feature that does nothing, which reads as "my logic is wrong" and sends you looking in the wrong file.
 
 The agent that found this did so by printing the serialised event with the engine's own `var_to_str()` and reading what actually came out, rather than writing the expected serialisation from memory. That habit is the whole lesson: **when you generate a config or a resource in code, print what the engine produced and read it.** It costs one line and it is the difference between finding this in a minute and losing an afternoon.
+
+### Trap 10 — Three "screen size" APIs disagree, and only one is the picture
+
+This project sets `window/stretch/mode="canvas_items"`. Under that mode the engine keeps several different notions of screen size, they return different numbers, and none of them announces which one you wanted. Measured on a 1280×800 window:
+
+| Call | Returns | What it is |
+|---|---|---|
+| `get_viewport().get_visible_rect().size` | 1152 × 720 | 2D canvas space, after the stretch divisor |
+| `get_viewport().get_texture().get_size()` | 1423 × 889 | the internal render target |
+| `DisplayServer.window_get_size()` / `Window.size` | **1280 × 800** | the pixels that get saved to the PNG |
+
+If you are reasoning in **pixels a human will see** — a minimum legible size, a screen-space particle radius, a UI hit area measured against a screenshot — **`Window.size` is the one that matches the rendered frame.** The other two are internally correct for their own purposes and will silently give you a value 10–25% off from what your screenshot shows.
+
+The failure is quiet. A legibility floor fed the canvas rect simply engages at the wrong moment; nothing errors, and the symptom is a system that behaves slightly differently from what its own test asserts. Found by comparing all three against the actual saved PNG, which is the only way to settle it — **when a number is supposed to describe the picture, check it against the picture.**
