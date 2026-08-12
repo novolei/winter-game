@@ -101,17 +101,29 @@ GDD 第三支柱是**「沉默即叙事——没有 HUD、没有旁白，世界�
 
 ### 2.2 字体
 
-三族，全部 SIL OFL 授权，可随游戏发行。
+三族，全部 **SIL OFL 1.1**，可随游戏发行且无需游戏内署名。文件已在 `assets/fonts/`，安装与 Godot 接线见 [assets/fonts/README.md](../../../assets/fonts/README.md)。
 
 | 族 | 中文 | 拉丁 | 用途 |
 |---|---|---|---|
-| **展示 Display** | 思源宋体 ExtraLight | Cormorant Garamond Light | 标题、结局、日次 |
-| **界面 Interface** | 思源黑体 Light | Inter Light | 菜单、提示、物品名 |
-| **仪表 Instrument** | —（数字不需要 CJK） | IBM Plex Mono Light · **表格数字** | Tab 读数、时间、燃料秒数 |
+| **展示 Display** | Noto Serif SC `wght 200` | Cormorant Garamond `wght 300` | 标题、结局、日次 |
+| **界面 Interface** | Noto Sans SC `wght 300` | Inter `wght 300` · `opsz` = 实际字号 | 菜单、提示、物品名 |
+| **仪表 Instrument** | —（只排数字） | IBM Plex Mono Light · `tnum 1` | Tab 读数、时间、燃料秒数 |
 
-**为什么展示字是宋体/衬线。** 空灵来自笔画粗细的对比与横竖之间的呼吸。黑体是均匀的，它安静但不空灵。思源宋体 ExtraLight 的横画细到接近消失，正是"呵在玻璃上"的质感。
+「思源宋体 / 思源黑体」与「Noto Serif SC / Noto Sans SC」是同一套设计的两个发行名。取 Noto 版，因为它在 Google Fonts 与 `notofonts/noto-cjk` 上有稳定的可变字体版本。
 
-**为什么仪表字是等宽且必须是表格数字。** Tab 读数每帧都在变。比例数字会让 `68%` 变成 `71%` 时整行左右抖动，这在一个讲究安静的界面里是致命的噪音。`IBM Plex Mono` 的 `tnum` 是硬要求，不是偏好。
+**为什么展示字是宋体/衬线。** 空灵来自笔画粗细的对比与横竖之间的呼吸。黑体是均匀的，它安静但不空灵。Noto Serif SC 200 的横画细到接近消失，正是"呵在玻璃上"的质感。
+
+**为什么拉丁展示字是 Cormorant，判据是笔画对比而不是气质。** 四个候选做过并排字样（[type-specimen.jpg](../../prototypes/type-specimen.jpg)）：Spectral 200 对比低、粗细均匀，紧挨着 CJK 会读成另一个声音；Italiana 太脆，全大写副标题会碎掉，且只有一个字重；Marcellus 太厚太暖，与 CJK 的发丝线不在一个体系。**Cormorant Garamond 300 的高对比与极细发丝线，是唯一在结构上呼应 Noto Serif SC 200 的一个**——两者的纤细是同一种纤细。
+
+**为什么仪表字是等宽且必须是表格数字。** Tab 读数每帧都在变。比例数字会让 `68%` 变成 `71%` 时整行左右抖动，这在一个讲究安静的界面里是致命的噪音。`tnum` 是硬要求，不是偏好。
+
+> **两条从字体文件本身查出来的事实，写在这里以免有人再查一次。**
+>
+> **一、`NotoSerifSC-VF` 的字重轴下限是 200，不是 100。** ExtraLight 已经是它能到的最细一档。设计要的正是这一档，但想再细是调不动的。
+>
+> **二、Godot 里拉丁必须是主字体，中文必须是回退字体，顺序反了不会报错。** Noto Serif SC 与 Noto Sans SC **自带一套拉丁字形**。Godot 逐字形解析主字体、再落回退，所以把 Noto 放主位，它自己的拉丁永远命中，**Cormorant 与 Inter 一次都不会被用到**——字照样显示，只是显示的不是选定的那一套。README 里有正确写法。
+>
+> **排版补偿**：Cormorant 是 Garamond 血统，x-height 明显偏小。分行出现时不必补偿；与中文**同行混排**时，拉丁字号取 **1.15×** 才视觉等大。
 
 #### 字号阶梯（1920×1080 参考分辨率）
 
@@ -775,4 +787,6 @@ UI 是纯消费方，不改任何系统代码。但它依赖的事件分布在�
 - 美术圣经：[2026-08-11-winter-survival-art-bible.md](2026-08-11-winter-survival-art-bible.md)
 - 系统地图与建造顺序：[2026-08-11-winter-survival-system-map.md](2026-08-11-winter-survival-system-map.md)
 - 交互原型：`Docs/prototypes/ui-prototype.html`
+- 字样比对：`Docs/prototypes/type-specimen.jpg`
+- 字体与 Godot 接线：`assets/fonts/README.md`
 - 图标资产：`assets/ui/icons/`
