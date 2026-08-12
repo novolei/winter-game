@@ -405,3 +405,15 @@ Two working rules that follow:
 
 - **Keep edits to `scenes/main.tscn` minimal and late.** Instance what you must, place it, and stop. It is the single most contested file in this repository — several agents and a human's editor all write to it.
 - **If you find comments have vanished around your change, say so and leave them.** Do not restore them blindly: you cannot tell your loss from another agent's in-flight work, and re-adding text the editor will eat again is not a fix.
+
+### Trap 13 — Godot integrates `VELOCITY` for you, and doing it again reads as tuning
+
+In a particle process shader on 4.7.1, the engine integrates `VELOCITY` into `TRANSFORM` itself. **The documentation does not say so.** A shader that also advances the position by `VELOCITY * DELTA` therefore moves everything twice.
+
+Measured on this project's chimney smoke: a column that should climb **2.00 m** climbed **4.08 m**.
+
+The reason it is expensive is not the bug, it is the shape of the bug. Nothing errors, nothing warns, and the result is not obviously wrong — it is a plume that rises *a bit too fast*, which is exactly the kind of thing an author tunes rather than fixes. You reduce the emission speed until it looks right, ship it, and the system now has a compensating error baked into a constant. The next person to change the timestep, the lifetime or the buoyancy curve finds nothing behaves as the numbers say it should.
+
+**So: set `VELOCITY` and let the engine move the particle.** If you find yourself writing `TRANSFORM[3].xyz += VELOCITY * DELTA`, stop.
+
+The general rule this belongs to: **when a system's output is off by a clean factor — twice, half, exactly squared — suspect a duplicated operation before you reach for a constant.** Engine trap 7 in this same file is the same shape from the other direction: a colour written into both `ALBEDO` and the light pass reaches the screen squared, and it too looks like art direction that is simply a bit dark.
