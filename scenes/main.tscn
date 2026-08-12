@@ -2,7 +2,6 @@
 
 [ext_resource type="Script" uid="uid://d8scujyrpx2r" path="res://src/systems/snow_field.gd" id="1_snowfield"]
 [ext_resource type="Script" uid="uid://dolh47pay46wg" path="res://src/systems/track_mask.gd" id="2_trackmask"]
-[ext_resource type="Script" path="res://src/systems/snow_accumulation.gd" id="29_accumulation"]
 [ext_resource type="Script" uid="uid://0rtkhf86030p" path="res://src/entities/player/player_controller.gd" id="3_player"]
 [ext_resource type="Script" uid="uid://ca6uudhqakvxx" path="res://src/rendering/terrain_renderer.gd" id="4_terrain"]
 [ext_resource type="Script" uid="uid://bybxprc27pxai" path="res://src/rendering/camera_rig.gd" id="5_camera"]
@@ -22,42 +21,25 @@
 [ext_resource type="PackedScene" uid="uid://bh0jlvu5vmc8l" path="res://assets/models/vegetation/tree_bare_d.glb" id="20_tree_d"]
 [ext_resource type="PackedScene" uid="uid://8f6s67vpwpy8" path="res://assets/models/vegetation/tree_bare_e.glb" id="21_tree_e"]
 [ext_resource type="PackedScene" uid="uid://om3b6intvn5p" path="res://assets/models/props/flatbed_truck.glb" id="22_flatbed"]
-[ext_resource type="Script" path="res://src/entities/interior/interior_reveal.gd" id="23_reveal"]
+[ext_resource type="Script" uid="uid://e7mudcc4vwc3" path="res://src/entities/interior/interior_reveal.gd" id="23_reveal"]
 [ext_resource type="PackedScene" uid="uid://dalphxjcfaohp" path="res://scenes/entities/stove/stove.tscn" id="24_stove"]
-[ext_resource type="Script" path="res://src/entities/interior/door.gd" id="25_door"]
-[ext_resource type="Script" path="res://src/entities/interior/interior_warmth.gd" id="26_warmth"]
+[ext_resource type="Script" uid="uid://216pnar7cvau" path="res://src/entities/interior/door.gd" id="25_door"]
+[ext_resource type="Script" uid="uid://ds7x4sutqevhk" path="res://src/entities/interior/interior_warmth.gd" id="26_warmth"]
 [ext_resource type="PackedScene" path="res://scenes/effects/snowfall.tscn" id="27_snowfall"]
 [ext_resource type="PackedScene" path="res://scenes/effects/snow_lens.tscn" id="28_snow_lens"]
+[ext_resource type="Script" uid="uid://dsyig1euo30vt" path="res://src/systems/snow_accumulation.gd" id="29_accumulation"]
 [ext_resource type="PackedScene" path="res://scenes/effects/snow_load.tscn" id="30_snow_load"]
 [ext_resource type="Script" path="res://src/entities/wildlife/perch_points.gd" id="33_perches"]
 [ext_resource type="Script" path="res://src/entities/wildlife/crow_flock.gd" id="34_crows"]
 [ext_resource type="PackedScene" path="res://scenes/effects/wind.tscn" id="31_wind"]
+[ext_resource type="PackedScene" path="res://scenes/effects/chimney_smoke.tscn" id="35_smoke"]
 
-; The two rooms of the farmhouse ground floor, in the model's own coordinates.
-; The boundary of these boxes IS the threshold -- the front face of MainRoom
-; sits in the doorway at z = -0.16, which is the inside face of the front wall,
-; so the reveal fires as the player steps through the door and not while they
-; are still on the porch.
-;
-; Two shapes on one Area3D rather than one box, because the ground floor is an
-; L: a single box big enough to hold the wing would also stick out through the
-; front wall and put half the porch inside the house. Area3D reports entering
-; once for the whole area however many shapes it is made of, so walking from
-; the main room into the wing is not a crossing -- which it must not be, or the
-; roof would slam back on every time the player went to the workbench.
-;
-; Wing overlaps MainRoom by 0.44 m through the divider doorway. Abutting exactly
-; would leave one frame, at some frame rate, where the capsule is inside neither.
 [sub_resource type="BoxShape3D" id="BoxShape3D_room_main"]
 size = Vector3(6.88, 3.2, 5.68)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_room_wing"]
 size = Vector3(3.28, 3.2, 4.04)
 
-; Where the player can reach the front door: the porch in front of it, plus the
-; doorway itself. The door leaf spans x 1.30 .. 2.30 at z 0 and the steps come
-; up at x 1.35 .. 2.25, so this covers the whole approach a player who walked
-; up the steps is standing on.
 [sub_resource type="BoxShape3D" id="BoxShape3D_doorstep"]
 size = Vector3(2.4, 3.2, 2.6)
 
@@ -69,31 +51,13 @@ script = ExtResource("1_snowfield")
 [node name="TrackMask" type="Node" parent="." unique_id=967854499]
 script = ExtResource("2_trackmask")
 
-; How much snow has settled on everything facing the sky. One scalar for the
-; whole world -- roofs, branches, crossarms, the truck's bonnet, and the road
-; filling in under it. It reads the weather off Snowfall and the day off the
-; clock's events, and it INTEGRATES rather than being told a depth, which is
-; what makes 切记突变 a property of the design rather than of the tuning.
-;
-; A plain Node with no transform: it is a fact about the world, not a place in
-; it. Placed here beside the other two rasters and above everything that reads
-; it, though nothing depends on the order -- TerrainRenderer finds it through
-; the ServiceRegistry and it settles itself on the first frame precisely so that
-; scene order cannot matter.
 [node name="SnowAccumulation" type="Node" parent="." unique_id=967854500]
 script = ExtResource("29_accumulation")
 
 [node name="Player" type="CharacterBody3D" parent="." unique_id=1145769148]
 script = ExtResource("3_player")
 
-; The snow he is carrying -- out of a drift on his boots, out of the sky on his
-; shoulders -- and knocks off again. A CHILD OF HIM, and that placement is the
-; wiring: the node finds its subject by looking up, so the walker it dresses is
-; the walker it hangs under. It still takes its footfalls off the EventBus and
-; ignores the ones that landed too far away to be his, which is what lets the
-; bear in Wave 4 get snow on it by hanging the same scene under the bear -- one
-; node, no code.
-[node name="SnowLoad" parent="Player" instance=ExtResource("30_snow_load")]
+[node name="SnowLoad" parent="Player" unique_id=2075956125 instance=ExtResource("30_snow_load")]
 
 [node name="Terrain" type="MeshInstance3D" parent="." unique_id=2024731026]
 script = ExtResource("4_terrain")
@@ -102,6 +66,8 @@ script = ExtResource("4_terrain")
 script = ExtResource("5_camera")
 
 [node name="Camera3D" type="Camera3D" parent="CameraRig" unique_id=649272828]
+
+[node name="SnowLens" parent="CameraRig/Camera3D" unique_id=1386426997 instance=ExtResource("28_snow_lens")]
 
 [node name="Lighting" type="WorldEnvironment" parent="." unique_id=213945019]
 script = ExtResource("6_lighting")
@@ -112,12 +78,13 @@ script = ExtResource("6_lighting")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 0, -12)
 script = ExtResource("8_farmhouse")
 
-[node name="Model" parent="Farmhouse" instance=ExtResource("9_farmhouse_model") unique_id=1902244518]
+[node name="Model" parent="Farmhouse" unique_id=1902244518 instance=ExtResource("9_farmhouse_model")]
 
 [node name="InteriorReveal" type="Area3D" parent="Farmhouse" unique_id=1902244519]
 script = ExtResource("23_reveal")
 fade_parts = Array[StringName]([&"FH_Fade_Roof", &"FH_Fade_Front", &"FH_Fade_Porch", &"FH_Fade_SideLeft", &"FH_Fade_Divider", &"FH_Door"])
 entry_gate_path = NodePath("../Door")
+floor_height = nan
 
 [node name="MainRoom" type="CollisionShape3D" parent="Farmhouse/InteriorReveal" unique_id=1902244520]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, -3)
@@ -141,76 +108,78 @@ warm_parts = Array[StringName]([&"FH_Room", &"FH_Shell"])
 furnishing_parts = Array[StringName]([&"FH_Furniture"])
 fire_path = NodePath("../Stove")
 
-[node name="Stove" parent="Farmhouse" instance=ExtResource("24_stove") unique_id=1902244522]
+[node name="Stove" parent="Farmhouse" unique_id=1902244522 instance=ExtResource("24_stove")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.45, -5.35)
 starting_fuel_seconds = 600.0
 start_lit = true
-light_cull_mask = 6
 light_offset = Vector3(0, 1.05, 0.5)
 light_attenuation = 0.45
 light_shadows = true
+light_cull_mask = 6
+
+[node name="ChimneySmoke" parent="Farmhouse" instance=ExtResource("35_smoke")]
 
 [node name="Farmstead" type="Node3D" parent="." unique_id=1902244600]
 script = ExtResource("10_farmstead")
 
-[node name="Truck" parent="Farmstead" instance=ExtResource("11_truck") unique_id=1902244601]
+[node name="Truck" parent="Farmstead" unique_id=1902244601 instance=ExtResource("11_truck")]
 transform = Transform3D(0.9781476, 0, -0.20791169, 0, 1, 0, 0.20791169, 0, 0.9781476, 4.85, 0, -18.16)
 
-[node name="ToolShed" parent="Farmstead" instance=ExtResource("12_tool_shed") unique_id=1902244602]
+[node name="ToolShed" parent="Farmstead" unique_id=1902244602 instance=ExtResource("12_tool_shed")]
 transform = Transform3D(0.9702957, 0, 0.24192189, 0, 1, 0, -0.24192189, 0, 0.9702957, -7.19, 0, -19.37)
 
-[node name="WellHouse" parent="Farmstead" instance=ExtResource("13_well_house") unique_id=1902244603]
-transform = Transform3D(0.88294759, 0, -0.46947156, 0, 1, 0, 0.46947156, 0, 0.88294759, 4.95, 0, 0.755)
+[node name="WellHouse" parent="Farmstead" unique_id=1902244603 instance=ExtResource("13_well_house")]
+transform = Transform3D(0.88294756, 0, -0.46947157, 0, 1, 0, 0.46947157, 0, 0.88294756, 4.95, 0, 0.755)
 
-[node name="PowerPole" parent="Farmstead" instance=ExtResource("14_power_pole") unique_id=1902244604]
-transform = Transform3D(0.92718385, 0, 0.37460659, 0, 1, 0, -0.37460659, 0, 0.92718385, 6.8, 0, 13.055)
+[node name="PowerPole" parent="Farmstead" unique_id=1902244604 instance=ExtResource("14_power_pole")]
+transform = Transform3D(0.92718387, 0, 0.37460658, 0, 1, 0, -0.37460658, 0, 0.92718387, 6.8, 0, 13.055)
 
-; Where a crow may sit on this pole, in the pole's own metres, so that settling
-; it onto the snow and yawing it carry the perches with it. Four along the
-; crossarm at y = 7.95, clear of the insulators at x = -0.86, 0 and +0.86, and
-; one on the head. See src/entities/wildlife/perch_points.gd.
 [node name="Perches" type="Node3D" parent="Farmstead/PowerPole"]
 script = ExtResource("33_perches")
 points = Array[Vector3]([Vector3(-0.62, 7.95, 0), Vector3(-0.28, 7.95, 0), Vector3(0.28, 7.95, 0), Vector3(0.62, 7.95, 0), Vector3(0, 8.5, 0)])
 
-[node name="TreeA" parent="Farmstead" instance=ExtResource("17_tree_a") unique_id=1902244605]
-transform = Transform3D(0.96592583, 0, 0.25881905, 0, 1, 0, -0.25881905, 0, 0.96592583, 28.35, 0, -16.725)
+[node name="TreeA" parent="Farmstead" unique_id=1902244605 instance=ExtResource("17_tree_a")]
+transform = Transform3D(0.9659258, 0, 0.25881904, 0, 1, 0, -0.25881904, 0, 0.9659258, 28.35, 0, -16.725)
 
-[node name="TireSwing" parent="Farmstead/TreeA" instance=ExtResource("16_tire_swing") unique_id=1902244606]
+[node name="TireSwing" parent="Farmstead/TreeA" unique_id=1902244606 instance=ExtResource("16_tire_swing")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.07, 3.56, -0.12)
 
-[node name="TreeB" parent="Farmstead" instance=ExtResource("18_tree_b") unique_id=1902244607]
-transform = Transform3D(0.76604444, 0, -0.64278761, 0, 1, 0, 0.64278761, 0, 0.76604444, -12.49, 0, -15.475)
+[node name="TreeB" parent="Farmstead" unique_id=1902244607 instance=ExtResource("18_tree_b")]
+transform = Transform3D(0.76604444, 0, -0.64278764, 0, 1, 0, 0.64278764, 0, 0.76604444, -12.49, 0, -15.475)
 
-[node name="TreeC" parent="Farmstead" instance=ExtResource("19_tree_c") unique_id=1902244608]
-transform = Transform3D(0.42261826, 0, 0.90630779, 0, 1, 0, -0.90630779, 0, 0.42261826, 33.27, 0, 11.465)
+[node name="TreeC" parent="Farmstead" unique_id=1902244608 instance=ExtResource("19_tree_c")]
+transform = Transform3D(0.42261827, 0, 0.9063078, 0, 1, 0, -0.9063078, 0, 0.42261827, 33.27, 0, 11.465)
 
-[node name="TreeD" parent="Farmstead" instance=ExtResource("19_tree_c") unique_id=1902244609]
-transform = Transform3D(-0.90630779, 0, -0.42261826, 0, 1, 0, 0.42261826, 0, -0.90630779, -6.39, 0, -26.025)
+[node name="TreeD" parent="Farmstead" unique_id=1902244609 instance=ExtResource("19_tree_c")]
+transform = Transform3D(-0.9063078, 0, -0.42261827, 0, 1, 0, 0.42261827, 0, -0.9063078, -6.39, 0, -26.025)
 
-[node name="FlatbedTruck" parent="Farmstead" instance=ExtResource("22_flatbed") unique_id=1902244620]
-transform = Transform3D(-0.17364818, 0, -0.98480775, 0, 1, 0, 0.98480775, 0, -0.17364818, 24.5, 0, -31)
-[node name="TreeE" parent="Farmstead" instance=ExtResource("20_tree_d") unique_id=1902244621]
-transform = Transform3D(0.92718385, 0, -0.37460659, 0, 1, 0, 0.37460659, 0, 0.92718385, -22, 0, -24)
-[node name="TreeF" parent="Farmstead" instance=ExtResource("21_tree_e") unique_id=1902244622]
-transform = Transform3D(-0.90630779, 0, 0.42261826, 0, 1, 0, -0.42261826, 0, -0.90630779, -17.4, 0, -21.6)
-[node name="TreeG" parent="Farmstead" instance=ExtResource("18_tree_b") unique_id=1902244623]
-transform = Transform3D(-0.61566148, 0, -0.78801075, 0, 1, 0, 0.78801075, 0, -0.61566148, -2.4, 0, -31.6)
-[node name="TreeH" parent="Farmstead" instance=ExtResource("20_tree_d") unique_id=1902244624]
-transform = Transform3D(-0.30901699, 0, 0.95105652, 0, 1, 0, -0.95105652, 0, -0.30901699, 31, 0, 3.4)
-[node name="TreeI" parent="Farmstead" instance=ExtResource("21_tree_e") unique_id=1902244625]
-transform = Transform3D(0.4539905, 0, -0.89100652, 0, 1, 0, 0.89100652, 0, 0.4539905, 23.6, 0, -1.2)
-[node name="TreeJ" parent="Farmstead" instance=ExtResource("19_tree_c") unique_id=1902244626]
-transform = Transform3D(0.65605903, 0, 0.75470958, 0, 1, 0, -0.75470958, 0, 0.65605903, -25, 0, -1.5)
+[node name="FlatbedTruck" parent="Farmstead" unique_id=1902244620 instance=ExtResource("22_flatbed")]
+transform = Transform3D(-0.17364818, 0, -0.9848077, 0, 1, 0, 0.9848077, 0, -0.17364818, 24.5, 0, -31)
+
+[node name="TreeE" parent="Farmstead" unique_id=1902244621 instance=ExtResource("20_tree_d")]
+transform = Transform3D(0.92718387, 0, -0.37460658, 0, 1, 0, 0.37460658, 0, 0.92718387, -22, 0, -24)
+
+[node name="TreeF" parent="Farmstead" unique_id=1902244622 instance=ExtResource("21_tree_e")]
+transform = Transform3D(-0.9063078, 0, 0.42261827, 0, 1, 0, -0.42261827, 0, -0.9063078, -17.4, 0, -21.6)
+
+[node name="TreeG" parent="Farmstead" unique_id=1902244623 instance=ExtResource("18_tree_b")]
+transform = Transform3D(-0.6156615, 0, -0.7880108, 0, 1, 0, 0.7880108, 0, -0.6156615, -2.4, 0, -31.6)
+
+[node name="TreeH" parent="Farmstead" unique_id=1902244624 instance=ExtResource("20_tree_d")]
+transform = Transform3D(-0.309017, 0, 0.95105654, 0, 1, 0, -0.95105654, 0, -0.309017, 31, 0, 3.4)
+
+[node name="TreeI" parent="Farmstead" unique_id=1902244625 instance=ExtResource("21_tree_e")]
+transform = Transform3D(0.4539905, 0, -0.8910065, 0, 1, 0, 0.8910065, 0, 0.4539905, 23.6, 0, -1.2)
+
+[node name="TreeJ" parent="Farmstead" unique_id=1902244626 instance=ExtResource("19_tree_c")]
+transform = Transform3D(0.656059, 0, 0.7547096, 0, 1, 0, -0.7547096, 0, 0.656059, -25, 0, -1.5)
+
 [node name="Fence" type="Node3D" parent="Farmstead" unique_id=1902244630]
 
 [node name="Wires" type="Node3D" parent="Farmstead" unique_id=1902244610]
 
-[node name="WireArriving" parent="Farmstead/Wires" instance=ExtResource("15_power_wire") unique_id=1902244611]
+[node name="WireArriving" parent="Farmstead/Wires" unique_id=1902244611 instance=ExtResource("15_power_wire")]
 
-; The span that arrives at the farm. Farmstead._string_wires() places it at its
-; FAR end and aims it at the eave, so the fractions near 1 are the part of it
-; that is in the picture; the rest climbs off the top of the frame.
 [node name="Perches" type="Node3D" parent="Farmstead/Wires/WireArriving"]
 script = ExtResource("33_perches")
 kind = 1
@@ -218,10 +187,8 @@ spacing_m = 3.0
 from_fraction = 0.74
 to_fraction = 0.97
 
-[node name="WireDrop" parent="Farmstead/Wires" instance=ExtResource("15_power_wire") unique_id=1902244612]
+[node name="WireDrop" parent="Farmstead/Wires" unique_id=1902244612 instance=ExtResource("15_power_wire")]
 
-; The service drop, house eave to pole. The whole of it is in shot, so the birds
-; spread across the middle three quarters.
 [node name="Perches" type="Node3D" parent="Farmstead/Wires/WireDrop"]
 script = ExtResource("33_perches")
 kind = 1
@@ -229,10 +196,8 @@ spacing_m = 2.2
 from_fraction = 0.12
 to_fraction = 0.88
 
-[node name="WireLeaving" parent="Farmstead/Wires" instance=ExtResource("15_power_wire") unique_id=1902244613]
+[node name="WireLeaving" parent="Farmstead/Wires" unique_id=1902244613 instance=ExtResource("15_power_wire")]
 
-; The span that leaves, placed at the pole and aimed off the bottom left, so the
-; low fractions are the near end. Only the first third of it is in shot.
 [node name="Perches" type="Node3D" parent="Farmstead/Wires/WireLeaving"]
 script = ExtResource("33_perches")
 kind = 1
@@ -240,41 +205,9 @@ spacing_m = 2.4
 from_fraction = 0.03
 to_fraction = 0.32
 
-; --------------------------------------------------------------------------
-; The snow in the air. Style document sections 21-23.
-;
-; TWO INSTANCES AND NOT ONE, and the split is the point rather than an
-; oversight. scenes/effects/snowfall.tscn holds the director and the two layers
-; that fall in WORLD space; it can sit anywhere, because the director places
-; both of them over whatever the camera is looking at, every frame.
-;
-; SnowLens is the third layer and belongs to the CAMERA -- it is the flake that
-; crosses the picture, and style document section 23 is explicit that it does
-; not need to be in world space. It finds the director on its own, through the
-; group SnowfallLayer publishes itself in, so nothing here wires the two
-; together and neither node holds a reference to the other.
-; --------------------------------------------------------------------------
-
-; The crows. Daylight only, on whatever the props in the `perches` group are
-; offering, and away in a burst when the player comes near -- see
-; src/entities/wildlife/crow_flock.gd. It holds no positions of its own: the
-; pole is settled onto procedural snow and the wires are stretched between
-; whatever the pole and the house settled at, so there is nothing to write down
-; here that would still be true on the first frame.
 [node name="Crows" type="Node3D" parent="."]
 script = ExtResource("34_crows")
 
-[node name="Snowfall" parent="." instance=ExtResource("27_snowfall")]
-
-; --------------------------------------------------------------------------
-; THE WIND. The source every wind hook in this project was built to be driven
-; by and none of them had -- plus the two cues that make it visible, which are
-; children of it inside scenes/effects/wind.tscn.
-;
-; Placed here, last, and carrying no transform: it finds its consumers by the
-; hooks they publish rather than by path, so where it sits does not matter.
-; --------------------------------------------------------------------------
+[node name="Snowfall" parent="." unique_id=130002654 instance=ExtResource("27_snowfall")]
 
 [node name="Wind" parent="." unique_id=130002655 instance=ExtResource("31_wind")]
-
-[node name="SnowLens" parent="CameraRig/Camera3D" instance=ExtResource("28_snow_lens")]
