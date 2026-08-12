@@ -69,10 +69,10 @@ func test_every_shipped_cue_is_present() -> void:
 			&"ui.ripple", &"ui.threshold", &"ui.critical", &"ui.nightfall"]:
 		assert_not_null(_map.cue(id), "section 8 requires a %s cue" % id)
 
-## The same relationship ui.back has with ui.confirm: one file, and the pitch is
-## the only thing telling the player which state they are in. Asserted as a
-## number because "sounds worse" is not a specification.
-func test_the_critical_heartbeat_is_the_ordinary_one_pitched_down() -> void:
+## Section 8: 阈值濒危 is 心跳 + 极高频耳鸣. It is the SAME heartbeat -- one body,
+## one heart -- and the tinnitus is what is added. So the difference between the
+## two states is the LAYER, not the pitch.
+func test_the_critical_threshold_is_the_same_heartbeat_plus_the_tinnitus() -> void:
 	assert_not_null(_map)
 	if _map == null:
 		return
@@ -83,10 +83,56 @@ func test_the_critical_heartbeat_is_the_ordinary_one_pitched_down() -> void:
 	if ordinary == null or critical == null:
 		return
 	assert_eq(critical.stream_path, ordinary.stream_path, "one heartbeat, two states")
-	assert_true(critical.pitch_scale < ordinary.pitch_scale,
-		"the critical heartbeat must be the lower one")
+	assert_almost_eq(critical.pitch_scale, ordinary.pitch_scale, 0.0001,
+		"same heart; what makes this one worse is the layer, not the pitch")
+	assert_eq(critical.layer_cue_id, &"ui.tinnitus", "the critical threshold must layer the tinnitus")
+	assert_eq(ordinary.layer_cue_id, &"", "the ordinary threshold must NOT -- that is the whole distinction")
 	assert_true(critical.gain_db > ordinary.gain_db,
-		"and the louder one -- it is the last warning the player gets")
+		"and it is the louder one -- it is the last warning the player gets")
+
+## Section 8 names -34 dB outright. The tinnitus is meant to sit at the edge of
+## hearing: the player should notice the silence around it before the tone.
+func test_the_tinnitus_is_the_quietest_thing_in_the_map() -> void:
+	assert_not_null(_map)
+	if _map == null:
+		return
+	var tinnitus := _map.cue(&"ui.tinnitus")
+	assert_not_null(tinnitus)
+	if tinnitus == null:
+		return
+	assert_almost_eq(tinnitus.gain_db, -34.0, 0.01)
+	for cue in _map.cues:
+		if cue.cue_id == &"ui.tinnitus":
+			continue
+		assert_true(cue.gain_db > tinnitus.gain_db,
+			"%s is at or below the tinnitus's %.1f dB" % [cue.cue_id, tinnitus.gain_db])
+
+## A layer that layered something else could ring for ever. One level deep makes
+## that unrepresentable rather than merely unlikely, so the shipped data has to
+## honour it too.
+func test_no_layer_carries_a_layer_of_its_own() -> void:
+	assert_not_null(_map)
+	if _map == null:
+		return
+	for cue in _map.cues:
+		if cue.layer_cue_id == &"":
+			continue
+		var layer := _map.cue(cue.layer_cue_id)
+		assert_not_null(layer, "%s layers %s, which does not exist" % [cue.cue_id, cue.layer_cue_id])
+		if layer == null:
+			continue
+		assert_eq(layer.layer_cue_id, &"",
+			"%s layers %s, which layers %s in turn" % [cue.cue_id, layer.cue_id, layer.layer_cue_id])
+
+## Playing a layered cue must actually put TWO voices to work, or the layer is
+## configuration nobody hears.
+func test_a_layered_cue_sounds_on_two_voices() -> void:
+	_audio.play(&"ui.threshold")
+	var single := _audio.last_player()
+	_audio.play(&"ui.critical")
+	var after := _audio.last_player()
+	assert_true(single != after, "the layered cue used the same single voice")
+	assert_true(after.is_playing(), "the layer is not actually playing")
 
 ## GDD section 3 makes NIGHTFALL = GO HOME a literal deadline, and section 5.4
 ## calls it the most important single piece of information in the game. If it is

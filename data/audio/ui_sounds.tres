@@ -54,10 +54,17 @@ script = ExtResource("1_ufs2m")
 cue_id = &"ui.critical"
 stream_path = "res://assets/audio/ui/heartbeat.mp3"
 gain_db = -11.0
-pitch_scale = 0.7936
-notes = "阈值濒危。Substitute: section 8 wants heartbeat + tinnitus and there is no tinnitus asset."
+layer_cue_id = &"ui.tinnitus"
+notes = "阈值濒危。Section 8's 心跳 + 极高频耳鸣, as one cue layering another."
 
 [sub_resource type="Resource" id="Resource_k4xba"]
+script = ExtResource("1_ufs2m")
+cue_id = &"ui.tinnitus"
+stream_path = "res://assets/audio/ui/tinnitus.wav"
+gain_db = -34.0
+notes = "极高频耳鸣。Layered by ui.critical; a STATE sound, not an event. 7.56 s."
+
+[sub_resource type="Resource" id="Resource_o3cqw"]
 script = ExtResource("1_ufs2m")
 cue_id = &"ui.nightfall"
 stream_path = "res://assets/audio/ui/nightfall_thump.mp3"
@@ -66,4 +73,4 @@ notes = "入夜。GDD section 3 makes NIGHTFALL = GO HOME a literal deadline; th
 
 [resource]
 script = ExtResource("2_yforq")
-cues = Array[ExtResource("1_ufs2m")]([SubResource("Resource_gdgnf"), SubResource("Resource_fdb7j"), SubResource("Resource_h82j8"), SubResource("Resource_d3plj"), SubResource("Resource_nxxih"), SubResource("Resource_6io21"), SubResource("Resource_o2qyu"), SubResource("Resource_k4xba")])
+cues = Array[ExtResource("1_ufs2m")]([SubResource("Resource_gdgnf"), SubResource("Resource_fdb7j"), SubResource("Resource_h82j8"), SubResource("Resource_d3plj"), SubResource("Resource_nxxih"), SubResource("Resource_6io21"), SubResource("Resource_o2qyu"), SubResource("Resource_k4xba"), SubResource("Resource_o3cqw")])

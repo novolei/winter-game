@@ -36,12 +36,21 @@ extends SceneTree
 ## whose every appearance chirps is the thing rule 6 was never asking for.
 ##
 ## ---------------------------------------------------------------------------
-## STILL MISSING: THE TINNITUS
+## THE CRITICAL THRESHOLD IS TWO SOUNDS, WHICH IS WHAT SECTION 8 ASKED FOR
 ## ---------------------------------------------------------------------------
-## Section 8 gives the critical threshold "心跳 + 极高频耳鸣, 耳鸣 -34 dB". There
-## is no tinnitus asset, so ui.critical is the heartbeat pitched down instead --
-## the same trick ui.back plays on ui.confirm. Lower reads as heavier, which is
-## the right direction, but it is a substitute and not the specified sound.
+## "心跳 + 极高频耳鸣, 耳鸣 -34 dB". The heartbeat is the SAME heartbeat as the
+## ordinary threshold -- it is one body -- and the tinnitus is what is added.
+##
+## An earlier pass had no tinnitus asset and substituted a heartbeat pitched four
+## semitones down. That worked, but it invented a distinction the design never
+## asked for. With the real sound in hand the pitch trick is gone: the heartbeat
+## is at unity again and ui.critical simply LAYERS ui.tinnitus. One less
+## invented thing.
+##
+## The tinnitus is 7.56 s and its energy runs the whole length, which suits what
+## it represents. 濒危 is not an event, it is a STATE -- the stat sits below 0.15
+## and stays there -- so a sound that outlasts the 2.4 s surfacing is correct
+## rather than long. Whoever wires section 5.2 may want it looping.
 
 const OUT_DIR := "res://data/audio"
 const OUT_PATH := "res://data/audio/ui_sounds.tres"
@@ -52,13 +61,12 @@ const BREATH_STREAM := "res://assets/audio/ui/breath.wav"
 const RIPPLE_STREAM := "res://assets/audio/ui/ripple.wav"
 const HEARTBEAT_STREAM := "res://assets/audio/ui/heartbeat.mp3"
 const NIGHTFALL_STREAM := "res://assets/audio/ui/nightfall_thump.mp3"
+const TINNITUS_STREAM := "res://assets/audio/ui/tinnitus.wav"
 
 ## Three semitones down, as a ratio. Section 8 gives the interval; this is what
 ## it is worth.
 const THREE_SEMITONES_DOWN := 0.8408964
 
-## Four semitones, for the critical heartbeat against the ordinary one.
-const FOUR_SEMITONES_DOWN := 0.7936
 
 func _initialize() -> void:
 	var CueScript := load("res://src/definitions/ui_sound_cue.gd")
@@ -127,12 +135,23 @@ func _initialize() -> void:
 	critical.cue_id = &"ui.critical"
 	critical.stream_path = HEARTBEAT_STREAM
 	critical.gain_db = -11.0
-	# Four semitones down. Same file as ui.threshold, and the pitch is the only
-	# thing separating "worse" from "nearly over" -- the same relationship
-	# ui.back has with ui.confirm.
-	critical.pitch_scale = FOUR_SEMITONES_DOWN
+	# Unity, same as ui.threshold: it is the same body and the same heart. What
+	# makes this one worse is the layer, not the pitch.
+	critical.pitch_scale = 1.0
 	critical.pitch_spread = 0.0
-	critical.notes = "阈值濒危。Substitute: section 8 wants heartbeat + tinnitus and there is no tinnitus asset."
+	critical.layer_cue_id = &"ui.tinnitus"
+	critical.notes = "阈值濒危。Section 8's 心跳 + 极高频耳鸣, as one cue layering another."
+
+	var tinnitus = CueScript.new()
+	tinnitus.cue_id = &"ui.tinnitus"
+	tinnitus.stream_path = TINNITUS_STREAM
+	# Section 8 names this number outright. It is meant to be at the edge of
+	# hearing -- the player should notice the silence around it before they
+	# notice the tone.
+	tinnitus.gain_db = -34.0
+	tinnitus.pitch_scale = 1.0
+	tinnitus.pitch_spread = 0.0
+	tinnitus.notes = "极高频耳鸣。Layered by ui.critical; a STATE sound, not an event. 7.56 s."
 
 	var nightfall = CueScript.new()
 	nightfall.cue_id = &"ui.nightfall"
@@ -150,7 +169,8 @@ func _initialize() -> void:
 	# Variant holding an untyped Array, the typed setter rejects it, and the VM
 	# breaks out of this function without a word (briefing trap 4). The generator
 	# would then save an EMPTY map and print success.
-	var cues: Array[UISoundCue] = [move, confirm, back, bloom, ripple, threshold, critical, nightfall]
+	var cues: Array[UISoundCue] = [move, confirm, back, bloom, ripple,
+		threshold, critical, tinnitus, nightfall]
 	map.cues = cues
 
 	var missing: Array[String] = []

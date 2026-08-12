@@ -74,6 +74,11 @@ func set_map(map: UISoundMap) -> void:
 ## Plays a cue. False when there is no such cue, so a typo is distinguishable
 ## from a sound that played -- silence alone is not.
 func play(cue_id: StringName) -> bool:
+	return _play(cue_id, true)
+
+## `allow_layer` is false for the layer itself, which is what keeps a cycle from
+## being expressible at all rather than merely unlikely.
+func _play(cue_id: StringName, allow_layer: bool) -> bool:
 	if _map == null or cue_id == &"":
 		return false
 	# An AudioStreamPlayer cannot play outside the tree -- the engine refuses it
@@ -108,6 +113,11 @@ func play(cue_id: StringName) -> bool:
 	player.bus = bus
 	player.play()
 	_last = player
+	# The companion sounds on the same frame, deliberately: rule 6 is about the
+	# visual and the audio being born together, and a layer that arrived a frame
+	# later would be a second event rather than part of this one.
+	if allow_layer and cue.layer_cue_id != &"":
+		_play(cue.layer_cue_id, false)
 	return true
 
 func cue_count() -> int:

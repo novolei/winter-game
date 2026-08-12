@@ -31,4 +31,19 @@ extends Resource
 ## avoids sounding like a metronome.
 @export var pitch_spread := 0.0
 
+## Another cue that sounds AT THE SAME TIME as this one.
+##
+## Section 8 asks for the critical threshold to be "心跳 + 极高频耳鸣" -- one
+## event with two sounds, not two events. Written here it stays data: adding a
+## layer is a row in tools/generate_ui_sounds.gd and no call site learns
+## anything (briefing constraint 4). Written at the call site instead, every
+## place that reports a critical threshold would have to remember to play two
+## cues, and the day one of them forgot, the game would simply be missing a
+## sound with nothing to point at.
+##
+## Only ONE level deep -- a layer's own layer is ignored. That makes a cycle
+## unrepresentable rather than merely discouraged, and nothing in section 8
+## wants a third simultaneous sound.
+@export var layer_cue_id: StringName = &""
+
 @export_multiline var notes := ""
