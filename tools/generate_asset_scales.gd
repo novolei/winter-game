@@ -61,6 +61,26 @@ const BANDS: Array = [
 		"pigeon", "res://assets/models/characters/pigeon/pigeon.fbx", 0.55, 0.90,
 		"A rock dove's wingspan is 0.62 m to 0.72 m and its body 0.30 m to 0.35 m. Wings-spread bind pose, so the wingspan is the longest side.",
 	],
+	# The three dogs. One band each rather than one for the folder, because the
+	# whole point of them is that they are three different sizes -- a band wide
+	# enough for a chihuahua AND a great dane would be wider than the class band
+	# it sits inside and would catch nothing at all.
+	#
+	# The pack shipped them at TWO different import scales (1.0 for the
+	# chihuahua, 100.0 for the other two) and the Unity re-export normalised all
+	# three. These bands are what says so on every run.
+	[
+		"dog_chihuahua", "res://assets/models/characters/dogs/chihuahua.glb", 0.20, 0.50,
+		"A chihuahua stands 0.15 m to 0.23 m at the shoulder and measures about 0.30 m to 0.40 m nose to tail base. The bind pose is standing with the tail out, so the longest side is its length.",
+	],
+	[
+		"dog_golden_retriever", "res://assets/models/characters/dogs/golden_retriever.glb", 0.85, 1.45,
+		"A golden retriever stands 0.55 m to 0.61 m at the withers and measures 0.90 m to 1.15 m nose to tail base, with a 0.30 m tail behind that.",
+	],
+	[
+		"dog_great_dane", "res://assets/models/characters/dogs/great_dane.glb", 1.00, 1.90,
+		"A great dane stands 0.71 m to 0.86 m at the withers and measures 1.20 m to 1.60 m nose to tail. The pack's is at the short end of that and the floor allows for it.",
+	],
 	[
 		"bear", "res://assets/models/characters/bear/bear.glb", 1.80, 3.20,
 		"A grizzly measures 2.0 m to 2.8 m nose to tail. The bone hull is a little inside the mesh, so the floor allows for that.",

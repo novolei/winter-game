@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="AssetScale" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/asset_scale.gd" id="1_srwbs"]
+
+[resource]
+script = ExtResource("1_srwbs")
+covers = "res://assets/models/characters/dogs/golden_retriever.glb"
+reason = "A golden retriever stands 0.55 m to 0.61 m at the withers and measures 0.90 m to 1.15 m nose to tail base, with a 0.30 m tail behind that."
+smallest_m = 0.85
+largest_m = 1.45

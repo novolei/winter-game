@@ -626,20 +626,25 @@ def verify_export(path, take, expected_span, where=0.5, tolerance=0.10):
     return got
 
 
-def export_character_glb(path):
+def export_character_glb(path, materials="EXPORT"):
     """The one export every character gets.
 
     `export_optimize_animation_size=False` because the takes are already sampled
     per frame and a cycle's first and last poses are the same one; trimming to
     "actually moved" clips the loop point off the end.
+
+    `materials` is "EXPORT" by default because the Art Bible's exception box lets
+    a character keep its own maps, and the man, the scavenger, the zombie and the
+    bear all do. It is a parameter because that is a permission, not an
+    obligation: `build_dog.py` passes "NONE" because a dog painted from
+    `data/palette/color_bible.tres` at runtime samples no map, and a map shipped
+    in the `.glb` that nothing reads is bytes plus a surface no gate judges.
     """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     bpy.ops.export_scene.gltf(
         filepath=path,
         export_format="GLB",
-        # The character exception box. Every other exporter in this project
-        # writes "NONE" here.
-        export_materials="EXPORT",
+        export_materials=materials,
         export_cameras=False,
         export_lights=False,
         export_yup=True,

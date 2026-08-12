@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="AssetScale" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/asset_scale.gd" id="1_tpem1"]
+
+[resource]
+script = ExtResource("1_tpem1")
+covers = "res://assets/models/characters/dogs/great_dane.glb"
+reason = "A great dane stands 0.71 m to 0.86 m at the withers and measures 1.20 m to 1.60 m nose to tail. The pack's is at the short end of that and the floor allows for it."
+smallest_m = 1.0
+largest_m = 1.9
