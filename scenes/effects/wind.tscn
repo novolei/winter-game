@@ -1,0 +1,31 @@
+[gd_scene load_steps=4 format=3]
+
+; THE WIND. The source every wind hook in this project was built to be driven by
+; and none of them had -- plus the two things that make it VISIBLE, because a
+; wind you cannot see is a wind that is not there.
+;
+; Instance this anywhere in the world. Nothing here cares where it sits:
+;
+;   * WindSystem finds its consumers by the hooks they publish, sweeping the
+;     tree on a timer, so it needs no paths and no ordering.
+;   * Spindrift places itself on the ground under whatever the camera is looking
+;     at, every frame, the same way the snowfall layers do.
+;   * WireSway drives whatever has joined the `wind_sway` group, wherever that
+;     is. Farmstead._span() is the only joiner today.
+;
+; The two cues are CHILDREN of the system rather than siblings only because they
+; belong together in the inspector. WindSystem's sweep does not treat them
+; specially and would find them anywhere in the tree.
+
+[ext_resource type="Script" path="res://src/systems/wind_system.gd" id="1_wind"]
+[ext_resource type="Script" path="res://src/rendering/spindrift.gd" id="2_spindrift"]
+[ext_resource type="Script" path="res://src/rendering/wind_sway.gd" id="3_sway"]
+
+[node name="Wind" type="Node"]
+script = ExtResource("1_wind")
+
+[node name="Spindrift" type="GPUParticles3D" parent="."]
+script = ExtResource("2_spindrift")
+
+[node name="WireSway" type="Node" parent="."]
+script = ExtResource("3_sway")

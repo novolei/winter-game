@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="WindProfile" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/wind_profile.gd" id="1_r87bm"]
+
+[resource]
+script = ExtResource("1_r87bm")
+id = &"wind_gale"
+display_name = "Gale"
+wander_degrees = 38.0
+wander_seconds = 31.0
+gust_veer_degrees = 22.0
+base_strength = 0.28
+gust_depth = 0.4
+gust_seconds = 3.4
+gust_sharpness = 1.4
+squall_gain = 0.32
+squall_seconds = 9.0
+squall_attack = 0.14
+squall_release = 0.38
+squall_interval_seconds = 19.0
+squall_interval_jitter = 0.45
+gust_threshold = 0.7
+lull_threshold = 0.32

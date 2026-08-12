@@ -593,6 +593,13 @@ func _span(wire: Node3D, from: Vector3, to: Vector3) -> void:
 	# long the span is.
 	wire.look_at(to, Vector3.UP)
 	wire.scale = Vector3(1.0, 1.0, length)
+	# Rule 11 again: this line is part of the picture's whole detail budget, so
+	# it should move when the wind does. Joining a group rather than being wired
+	# to anything -- src/rendering/wind_sway.gd drives whatever is in it, and
+	# neither file knows the other exists. The literal is spelled out rather than
+	# read off that script for the same reason MusicDirector spells out its event
+	# names: deleting the wind has to leave the farmstead compiling.
+	wire.add_to_group(&"wind_sway")
 
 
 ## ---------------------------------------------------------------------------

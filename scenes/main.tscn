@@ -29,6 +29,7 @@
 [ext_resource type="PackedScene" path="res://scenes/effects/snowfall.tscn" id="27_snowfall"]
 [ext_resource type="PackedScene" path="res://scenes/effects/snow_lens.tscn" id="28_snow_lens"]
 [ext_resource type="PackedScene" path="res://scenes/effects/snow_load.tscn" id="30_snow_load"]
+[ext_resource type="PackedScene" path="res://scenes/effects/wind.tscn" id="31_wind"]
 
 ; The two rooms of the farmhouse ground floor, in the model's own coordinates.
 ; The boundary of these boxes IS the threshold -- the front face of MainRoom
@@ -217,5 +218,16 @@ transform = Transform3D(0.65605903, 0, 0.75470958, 0, 1, 0, -0.75470958, 0, 0.65
 ; --------------------------------------------------------------------------
 
 [node name="Snowfall" parent="." instance=ExtResource("27_snowfall")]
+
+; --------------------------------------------------------------------------
+; THE WIND. The source every wind hook in this project was built to be driven
+; by and none of them had -- plus the two cues that make it visible, which are
+; children of it inside scenes/effects/wind.tscn.
+;
+; Placed here, last, and carrying no transform: it finds its consumers by the
+; hooks they publish rather than by path, so where it sits does not matter.
+; --------------------------------------------------------------------------
+
+[node name="Wind" parent="." unique_id=130002655 instance=ExtResource("31_wind")]
 
 [node name="SnowLens" parent="CameraRig/Camera3D" instance=ExtResource("28_snow_lens")]
