@@ -58,7 +58,10 @@ const BEHAVIOUR_CHANNELS := {
 	"aim": ["steadiness"],      # weapon steadiness
 	"vision": ["focus"],        # GDD section 5's 画面轻微失焦
 	"breath": ["rate"],         # GDD section 9's 呼吸变浅变快
-	"stand": ["composure"],     # how much of his bearing his hands let him keep
+	"stand": [
+		"composure",  # how much of his bearing his hands let him keep
+		"carriage",   # how much of his upright carriage hunger lets him hold
+	],
 }
 
 var _system = null

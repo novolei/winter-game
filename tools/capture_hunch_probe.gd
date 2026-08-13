@@ -18,10 +18,10 @@ extends Node
 ## authoring or retargeting one, the question "how much bigger is that, in the
 ## pixels a player actually gets" should have a number rather than an opinion.
 ##
-## So this stands the RPG-Character rig -- which is sitting untracked in the
-## project root as Unarmed.glb, and which measurement says holds a 34.9 degree
-## lean for the whole of `UnarmedIdleInjured` -- in the real scene, at the real
-## camera, and measures its two idles against each other with the identical
+## So this stands the RPG-Character rig -- which lives at
+## assets/rigs/rpg_character/Unarmed.glb, and which measurement says holds a 34.9
+## degree lean for the whole of `UnarmedIdleInjured` -- in the real scene, at the
+## real camera, and measures its two idles against each other with the identical
 ## plate-difference apparatus the hands ladder used. Same camera, same shot, same
 ## metric: the two numbers are comparable, which is the entire point of not
 ## writing a second measuring tool.
@@ -31,7 +31,8 @@ extends Node
 ## hunch and a stand worth materially more than the difference between two
 ## versions of hands-at-the-chest -- and then stops.
 
-## Defaults are the RPG-Character pack sitting untracked in the project root.
+## Defaults are the RPG-Character pack, now under assets/rigs/ and tracked. It was
+## loose in the project root when this probe was written.
 ##
 ## KNOWN LIMIT, AND ONE ATTEMPT AT REMOVING IT THAT DID NOT WORK
 ## ------------------------------------------------------------
@@ -65,7 +66,7 @@ extends Node
 ## Left documented rather than deleted because it is the cheap mistake to make
 ## twice: the flags are still here, they still run, and the output still looks
 ## like a measurement.
-const MODEL := "res://Unarmed.glb"
+const MODEL := "res://assets/rigs/rpg_character/Unarmed.glb"
 const NEUTRAL := "UnarmedIdle"
 const HUNCHED := "UnarmedIdleInjured"
 

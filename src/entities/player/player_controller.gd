@@ -45,6 +45,7 @@ const IDLE_COLD_CLIP := WandererAnimations.IDLE_COLD
 const WALK_CLIP := WandererAnimations.WALK
 const RUN_CLIP := WandererAnimations.RUN
 const WALK_GUARDED_CLIP := WandererAnimations.WALK_GUARDED
+const IDLE_HUNCHED_CLIP := WandererAnimations.IDLE_HUNCHED
 
 ## The visual layer the character's own surfaces are put on, so a light can be
 ## aimed at him and at nothing else. Bit 0 stays set: the sun still lights him
@@ -735,6 +736,16 @@ const AUTO_RUN_SETTING := "winter_time/controls/auto_run_delay_seconds"
 @export var footing_rise := 1.2
 @export var footing_fall := 0.8
 
+## How fast the hunger stand fades in and out, same form again.
+##
+## SLOWER THAN THE FEET IN BOTH DIRECTIONS, and deliberately asymmetric the other
+## way round from them. Ruined feet are damage: they arrive suddenly and leave
+## only at a fire. Hunger is a tide -- it comes on over minutes and a man
+## straightens up within seconds of eating -- so this rises slowly and falls
+## quickly, which is the opposite asymmetry and is what makes a meal legible.
+@export var hunch_rise := 0.5
+@export var hunch_fall := 1.5
+
 ## Where standing still ends and locomotion begins, in ground speed.
 ##
 ## Below the first the figure is idling outright; above the second the walk
@@ -841,6 +852,8 @@ var _cycle_period := 0.6667
 ## One cycle of the guarded walk, not the whole take. See _build_animation().
 var _guarded_period := 1.1889
 var _footing := 0.0
+## How much of the hunger stand is in the body right now. See advance_hunch().
+var _hunch := 0.0
 ## The auto-run: how long he has kept going, which way he has been going, and how
 ## far the walk has been promoted toward the run. See advance_gait().
 var _run_hold := 0.0
@@ -1163,6 +1176,9 @@ func _first_of_type(node: Node, type: StringName) -> Node:
 ##   gait    two gait cycles. THE straddle. Non-negotiable.
 ##   chill   two idles, and it is the shiver readout. `chill` reaches 1.0 whenever
 ##           no survival model is running, which froze the neutral idle outright.
+##   hunch   the hunger stand, and it sits at 0 for most of most runs -- so
+##           unsynced it would be frozen at frame one every time it faded in, and
+##           the first thing a starving man did would be to snap into a pose.
 ##   motion  the idle branch used to freeze solid for as long as he was moving,
 ##           then resume stale the moment he stopped -- a pop at the end of every
 ##           journey. The locomotion branch is still frozen at a standstill, but
@@ -1171,6 +1187,61 @@ func _first_of_type(node: Node, type: StringName) -> Node:
 static func _synced_blend() -> AnimationNodeBlend2:
 	var blend := AnimationNodeBlend2.new()
 	blend.sync = true
+	return blend
+
+
+## The spine, neck and head, as the track paths an AnimationNode filter matches.
+##
+## NOT the hips and NOT the arms, and both exclusions are the point -- see
+## _hunch_blend(). The hips stay out so the root and the legs are untouched and
+## his feet cannot slide; the arms stay out so the cold huddle survives
+## underneath the hunger stand.
+## The clavicles were tried in here and measured WORSE, which is why they are
+## named in this comment rather than left to be re-tried: rolling the shoulders
+## forward carries the hugged arms inward and closes the silhouette, taking the
+## hunger reading from 1092 px to 972. The shoulders belong to the arms.
+const HUNCH_BONES: Array[String] = ["Spine02", "Spine01", "Spine", "neck", "Head"]
+
+
+## ---------------------------------------------------------------------------
+## THE ONE FILTERED BLEND IN THIS TREE, AND THE MEASUREMENT THAT DEMANDED IT
+## ---------------------------------------------------------------------------
+## Unfiltered, this blend was measured erasing the cold readout OUTRIGHT. At the
+## game's own camera, through the real survival model, plate-differenced
+## silhouettes (tools/capture_hunch_ladder.gd --mode postures):
+##
+##     a                b                xor px    of a
+##     fed              cold                896   10.4%
+##     fed              hungry             4707   54.7%
+##     hungry           cold+hungry           5    0.1%   <-- the whole problem
+##
+## FIVE PIXELS. A freezing, starving man was pixel-identical to a merely starving
+## one, because the hunger stand sat downstream at weight 1.0 and left the chill
+## blend contributing nothing. 体温 is the game's main clock -- the one that
+## kills you -- and the second-most-important readout was switching it off.
+##
+## A filter fixes it because the two postures are in DIFFERENT PARTS OF THE BODY.
+## The cold huddle is arms: hugged high across the chest, 21 cm apart against the
+## neutral idle's 79. The hunger stand is a torso: the spine rounds and the head
+## goes down and forward. Filtering the hunch onto the spine chain lets each say
+## its own thing, and a man who is both reads as both -- bent over AND hugging
+## himself -- which is also what a man who is both actually does.
+##
+## The arms still travel with the hunch, because they hang off a spine that is
+## now bent: bone tracks are LOCAL rotations, so a filtered spine carries every
+## child with it in world space. What the filter costs is the source take's own
+## shoulder and elbow angles, not the arms' position.
+##
+## Godot's filter semantics were MEASURED rather than read: on 4.7.1,
+## AnimationNodeBlend2 passes input 0 through FILTER_BLEND and input 1 through
+## FILTER_PASS, which means the filtered paths blend between the two inputs while
+## the unfiltered ones come from input 0 alone. Input 0 here is `chill`, so the
+## arms and legs are the cold readout's, whole, at every hunger value.
+static func _hunch_blend() -> AnimationNodeBlend2:
+	var blend := _synced_blend()
+	blend.filter_enabled = true
+	for bone in HUNCH_BONES:
+		blend.set_filter_path(NodePath("%s:%s" % [WandererAnimations.SKELETON_PATH, bone]), true)
 	return blend
 
 
@@ -1192,11 +1263,33 @@ static func _synced_blend() -> AnimationNodeBlend2:
 ##
 ##     walk ---------.
 ##                    >-- gait --.
-##     run ----------'            >-- footing --> pace ---.
-##     walk_guarded -------------'                         >-- motion --> output
-##     idle -----.                                        /
-##                >-- chill -----------------------------'
-##     idle_cold '
+##     run ----------'            >-- footing --> pace -----------.
+##     walk_guarded -------------'                                 >-- motion --> output
+##     idle -----.                                                /
+##                >-- chill --.                                  /
+##     idle_cold '             >-- hunch --------------------- -'
+##     idle_hunched -----------'
+##
+## ---------------------------------------------------------------------------
+## WHERE THE HUNGER HUNCH SITS, AND WHY IT IS ON THE IDLE BRANCH ONLY
+## ---------------------------------------------------------------------------
+## `hunch` is the LAST thing on the standing branch, downstream of `chill`, and
+## it is not on the locomotion branch at all. Two reasons, and both were
+## measured rather than chosen:
+##
+##   * The take is a STAND. `UnarmedWalkInjured` -- the same pack's hunched walk
+##     -- holds its lean for only 0.267 s at 17.5 degrees, so there is nothing
+##     there to read while he is moving. What hunger says while he walks is the
+##     rhythm it already took away (see rhythm_ceiling()).
+##   * Downstream of `chill` rather than upstream, because the hunch is the
+##     coarser reading of the two and has to survive the finer one. Upstream, a
+##     freezing man's `chill` weight would blend the hunch back out again just
+##     when a starving man most needs to be legible.
+##
+## The cost of that order is the thing this graph has to be honest about: at
+## hunch 1.0 the cold huddle is gone, so a man who is both freezing and starving
+## reads as STARVING. See HUNGER_HUNCH_FLOOR for the measurement behind the
+## floor, and the wave report for the three-posture comparison.
 ##
 ## `footing` is INSIDE the locomotion branch, upstream of `pace`, and that is not
 ## a free choice. `pace` is what makes the feet plant instead of skate, and a
@@ -1221,11 +1314,15 @@ static func build_blend_tree() -> AnimationNodeBlendTree:
 	run.animation = RUN_CLIP
 	var guarded := AnimationNodeAnimation.new()
 	guarded.animation = WALK_GUARDED_CLIP
+	var hunched := AnimationNodeAnimation.new()
+	hunched.animation = IDLE_HUNCHED_CLIP
 
 	var graph := AnimationNodeBlendTree.new()
 	graph.add_node("idle", idle)
 	graph.add_node("idle_cold", idle_cold)
+	graph.add_node("idle_hunched", hunched)
 	graph.add_node("chill", _synced_blend())
+	graph.add_node("hunch", _hunch_blend())
 	graph.add_node("walk", walk)
 	graph.add_node("run", run)
 	graph.add_node("walk_guarded", guarded)
@@ -1239,6 +1336,8 @@ static func build_blend_tree() -> AnimationNodeBlendTree:
 	graph.add_node("motion", _synced_blend())
 	graph.connect_node("chill", 0, "idle")
 	graph.connect_node("chill", 1, "idle_cold")
+	graph.connect_node("hunch", 0, "chill")
+	graph.connect_node("hunch", 1, "idle_hunched")
 	graph.connect_node("walk_rate", 0, "walk")
 	graph.connect_node("run_rate", 0, "run")
 	graph.connect_node("guarded_rate", 0, "walk_guarded")
@@ -1247,7 +1346,7 @@ static func build_blend_tree() -> AnimationNodeBlendTree:
 	graph.connect_node("footing", 0, "gait")
 	graph.connect_node("footing", 1, "guarded_rate")
 	graph.connect_node("pace", 0, "footing")
-	graph.connect_node("motion", 0, "chill")
+	graph.connect_node("motion", 0, "hunch")
 	graph.connect_node("motion", 1, "pace")
 	graph.connect_node("output", 0, "motion")
 	return graph
@@ -1367,7 +1466,9 @@ func _build_animation() -> void:
 	if player.has_animation_library(&""):
 		player.remove_animation_library(&"")
 	player.add_animation_library(&"", WandererAnimations.build())
-	for clip in [IDLE_CLIP, IDLE_COLD_CLIP, WALK_CLIP, RUN_CLIP, WALK_GUARDED_CLIP]:
+	for clip in [
+		IDLE_CLIP, IDLE_COLD_CLIP, WALK_CLIP, RUN_CLIP, WALK_GUARDED_CLIP, IDLE_HUNCHED_CLIP,
+	]:
 		if not player.has_animation(clip):
 			push_warning("player_controller: the merged library is missing %s" % clip)
 			return
@@ -1481,6 +1582,7 @@ func _drive_animation(wade: float, grade: float) -> void:
 	_animation.set(&"parameters/footing/blend_amount", _footing)
 	_animation.set(&"parameters/pace/scale", clampf(pace_for(speed, gait, _footing), 0.0, anim_max_pace))
 	_animation.set(&"parameters/chill/blend_amount", clampf(chill, 0.0, 1.0))
+	_animation.set(&"parameters/hunch/blend_amount", clampf(_hunch, 0.0, 1.0))
 
 
 ## The playback rate that makes the feet plant at this ground speed, for this
@@ -1875,6 +1977,88 @@ func advance_footing(delta: float) -> float:
 	return _footing
 
 
+## ---------------------------------------------------------------------------
+## 饥饿 -- the reading a single frame can carry
+## ---------------------------------------------------------------------------
+## How much of his upright carriage hunger still lets him hold. 1 whole, 0 bent.
+##
+## Hunger's other expression is `locomotion:rhythm`, and it is a good one, but it
+## is a PACE -- and two agents measured independently that a pace cannot be read
+## in this game. A posture is absolute: the frostbitten man is legible in one
+## frame with one man in it, because a viewer knows what a man's arms normally
+## do. A starving man is legible only against a reference, and the real game has
+## no second man. So hunger needed something the eye can settle on with nothing
+## to compare it to, and a change in the figure's HEIGHT is exactly that.
+func carriage_ceiling() -> float:
+	return clampf(_channel(&"stand:carriage", 1.0), 0.0, 1.0)
+
+
+## How much of the hunger stand is in the body right now, 0 .. 1. Eased.
+func hunch_blend() -> float:
+	return _hunch
+
+
+## ---------------------------------------------------------------------------
+## A FLOOR AGAIN -- BUT FOR A DIFFERENT REASON FROM THE OTHER TWO, AND SAY SO
+## ---------------------------------------------------------------------------
+## IDLE_CHILL_FLOOR and GUARDED_WALK_FLOOR exist because a blend between two
+## ARM positions is neither of them: a third posture nobody authored, which
+## reads as the wrong one plus noise. THAT ARGUMENT DOES NOT APPLY HERE, and
+## repeating it would be cargo-cult. `hunch` is filtered onto the spine, so what
+## the blend interpolates is how far a back is bent -- and every value of that is
+## a posture somebody could stand in. There is no ambiguous band to clear.
+##
+## The floor is here for a plainer reason: THE FIRST TIER HAS TO BE READABLE.
+## Hunger's authored tiers are 0.30 and 0.05 of the bar, which the model reaches
+## at 504 s and 684 s of a 720 s lifetime -- so the second tier is nearly death
+## and the first is the one a player still has time to act on. The whole readout
+## is worth 12.3% of his footprint, so spending half of it on a tier that only
+## fires when he is almost gone would waste most of the mechanism.
+##
+## Stepped at one instant, the man photographed from the game's own 10.5 m
+## camera, plate-differenced against the un-hunched stand
+## (tools/capture_hunch_ladder.gd --mode ladder):
+##
+##     blend   xor px   of footprint   lean
+##      0.00        0           0.0%    9.4    upright.
+##      0.15      242           2.8%   11.8    nothing has happened.
+##      0.30      453           5.2%   14.9    a little scarf showing.
+##      0.45      624           7.1%   18.2    the head has begun to tip.
+##      0.60      786           8.9%   21.6    head clearly angled down, the back
+##                                             rounding. IT READS AS STOOPED.
+##      0.80      962          10.8%   26.3    the neck has gone into the
+##                                             shoulders.
+##      1.00     1092          12.3%   31.1    fully bent.
+##
+## So the tiers land at 0.80 and 1.00 rather than at 0.50 and 1.00. `lean` is the
+## angle of the hips-to-head line, the same quantity that reads 1.9 degrees on
+## `idle` and 14.6 on `idle_cold`.
+const HUNGER_HUNCH_FLOOR := 0.60
+
+
+## What the blend is heading for, from the body. Zero while he is fed.
+func hunch_target() -> float:
+	var lost := 1.0 - carriage_ceiling()
+	if lost <= 0.0001:
+		return 0.0
+	return HUNGER_HUNCH_FLOOR + lost * (1.0 - HUNGER_HUNCH_FLOOR)
+
+
+## Eases the hunger stand in and out by one tick and returns the new blend.
+##
+## Same shape as advance_footing() and for the same reason: a body that snaps
+## between two postures at a threshold makes the threshold itself visible, and a
+## threshold is the one thing a game with no HUD must never show.
+func advance_hunch(delta: float) -> float:
+	var target := hunch_target()
+	var rate := hunch_rise if target > _hunch else hunch_fall
+	_hunch = lerpf(_hunch, target, 1.0 - exp(-maxf(rate, 0.0) * maxf(delta, 0.0)))
+	# An exponential ease never arrives; see advance_gait() for the same line.
+	if absf(_hunch - target) < 0.001:
+		_hunch = target
+	return _hunch
+
+
 ## Whether there is a run to be had here at all.
 ##
 ## THE ONLY PLACE THE BODY IS ALLOWED TO AFFECT MOVEMENT. Both gates are
@@ -2240,6 +2424,10 @@ func _physics_process(delta: float) -> void:
 	# rather than only while moving: feet that have gone are gone whether or not
 	# he is walking on them, and the ease must not stall when he stops.
 	advance_footing(delta)
+	# ...and how straight he is still standing. Same argument: hunger does not
+	# pause while he walks, and the ease has to keep running or the stand would
+	# arrive in a step the moment he stopped.
+	advance_hunch(delta)
 	var top_speed := top_speed_at(wade, grade, gait, momentum)
 
 	var wanted := direction * top_speed

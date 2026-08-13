@@ -98,6 +98,8 @@ const BELOW := 0  # ThresholdEffect.Comparison.BELOW
 ##                         0 puts him fully into the guarded walk
 ##   stand:composure       how much of his ordinary bearing his hands let him
 ##                         keep; 0 draws them right in
+##   stand:carriage        how much of his upright carriage he still holds; 0
+##                         bends him fully over
 ##   ignition:speed        how fast a fire can be lit
 ##   aim:steadiness        weapon steadiness
 ##   vision:focus          GDD 5's 画面轻微失焦
@@ -175,6 +177,21 @@ const STATS := [
 			# never below it. See PlayerController.rhythm_ceiling().
 			[0.30, &"locomotion:rhythm", MUL, 0.5],
 			[0.05, &"locomotion:rhythm", MUL, 0.0],
+			# ...and the half of hunger a player can see WITHOUT a second man to
+			# compare him with, which is the half the rhythm could never be.
+			#
+			# The rhythm is a PACE, and a pace is relative: two agents measured it
+			# on the game camera and both concluded that a starving man is legible
+			# only beside a fed one, which this game does not contain. A POSTURE is
+			# absolute -- it is read in one frame, off one figure -- and this one
+			# changes his HEIGHT, so there is nothing to compare it against.
+			#
+			# The stand is a retargeted authored take, not a pose anybody invented
+			# here; see WandererAnimations.IDLE_HUNCHED for where it came from and
+			# PlayerController.HUNGER_HUNCH_FLOOR for the silhouette ladder that
+			# decided the two tiers below land where they do.
+			[0.30, &"stand:carriage", MUL, 0.5],
+			[0.05, &"stand:carriage", MUL, 0.0],
 		],
 	},
 	{

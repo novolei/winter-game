@@ -11,7 +11,7 @@ extends RefCounted
 ## reading its filename -- and the renamings are recorded in TAKES so the
 ## cross-reference back to Meshy survives the next delivery.
 ##
-## ALL TWENTY NOW COME OUT OF ONE FILE, and that is a build-time decision rather
+## ALL TWENTY-ONE COME OUT OF ONE FILE, and that is a build-time decision rather
 ## than a convenience. The two later takes are merged into the character `.glb`
 ## by tools/decimate_character.py, through the same Blender round trip that
 ## produced the model. Reading them out of their own `.fbx` instead does not
@@ -24,7 +24,12 @@ extends RefCounted
 ## exactly this reason.
 ##
 ## What is left here is naming, loop flags, and one path fix, and no retargeting
-## at all -- one rig, one file, one space.
+## at all for those twenty-one -- one rig, one file, one space.
+##
+## THE TWENTY-SECOND IS THE EXCEPTION AND IT IS DELIBERATE. `idle_hunched` comes
+## out of a `.tres` baked by tools/retarget_hunch.gd from another pack's rig,
+## because the posture 饥饿 needed does not exist in this library and was
+## measured not to exist rather than assumed. See IDLE_HUNCHED below.
 
 const MODEL_PATH := "res://assets/models/characters/winter_wanderer.glb"
 
@@ -113,6 +118,50 @@ const WALK_GUARDED_CYCLES := 3
 ## value is a relationship and not a constant.
 const WALK_GUARDED_SPEED := 0.924
 
+## The sixth, and the only one that is not in the character file: what a starving
+## man's stand looks like.
+##
+## ---------------------------------------------------------------------------
+## IT IS NOT MESHY'S, AND IT WAS MEASURED BEFORE IT WAS WANTED
+## ---------------------------------------------------------------------------
+## 饥饿 had no single-frame reading at all. Its whole visible expression was a
+## pace -- and a pace is RELATIVE, legible only against a second man the game
+## does not contain, where a posture is ABSOLUTE and legible in one frame. Two
+## agents measured that and reached the same conclusion independently.
+##
+## The gesture the design wanted -- a hand to the stomach -- does not exist:
+## 85 takes across this rig and the RPG-Character rig were sampled off the
+## SKELETON, not read off names, and nothing holds a hand at the belly except
+## `idle_cold`, which the cold readout already owns.
+##
+## What does exist is `UnarmedIdleInjured` in the RPG-Character pack: a HELD
+## standing hunch, 34.9 degrees for the whole of a 1.7 s looping idle with 0.4
+## degrees of variation. It is on the wrong rig, so it is retargeted by
+## tools/retarget_hunch.gd and baked to the `.tres` below.
+##
+## ---------------------------------------------------------------------------
+## 26.8 DEGREES, NOT 34.9, AND THE DIFFERENCE IS NOT A LOSS
+## ---------------------------------------------------------------------------
+## The 34.9 is that rig's ABSOLUTE lean, and it includes the 8.1 degrees its own
+## neutral idle already slouches. What is authored -- and what is the only thing
+## a retarget can carry -- is the DIFFERENCE between its neutral stand and its
+## injured one, which is 26.8 degrees. Measured on the baked take: 26.5 to 26.9.
+##
+## For scale, on this rig and this metric: `idle` leans 1.9 degrees and
+## `idle_cold` 14.6. The hunch is roughly twice the cold huddle's lean and it
+## changes the figure's HEIGHT, which is what makes it readable with no
+## reference beside it.
+const IDLE_HUNCHED := &"idle_hunched"
+
+## Where that bake lands. Generated, never hand-authored (briefing constraint 7);
+## re-run tools/retarget_hunch.gd to rebuild it.
+##
+## It lives under data/ rather than beside the model because assets/models is the
+## art gates' root -- everything under it is scanned for a triangle budget, a
+## scale band and a collision policy, and this is an animation, not a thing that
+## appears in the world.
+const HUNCH_PATH := "res://data/animation/wanderer_hunch.tres"
+
 ## [source file, take name in that file, name in the library, loops].
 ##
 ## LOOPS is measured, not guessed: the take loops when its last pose returns to
@@ -180,7 +229,32 @@ static func build() -> AnimationLibrary:
 		_retarget(animation)
 		animation.loop_mode = Animation.LOOP_LINEAR if bool(row[3]) else Animation.LOOP_NONE
 		library.add_animation(StringName(row[2]), animation)
+	_add_hunch(library)
 	return library
+
+
+## The one take that comes out of a `.tres` instead of out of the model.
+##
+## Warns rather than fails when the bake is absent: every other take still
+## works, and a library that refuses to build would take the whole character
+## down over one readout. PlayerController checks for the clip by name and says
+## so if it is missing, which is the place that can actually do something about
+## it.
+static func _add_hunch(library: AnimationLibrary) -> void:
+	if not ResourceLoader.exists(HUNCH_PATH):
+		push_warning("wanderer_animations: %s is missing; the hunger hunch will not play"
+			% HUNCH_PATH)
+		return
+	var resource := ResourceLoader.load(HUNCH_PATH)
+	if not (resource is Animation):
+		push_warning("wanderer_animations: %s did not load as an Animation" % HUNCH_PATH)
+		return
+	# Trap 6 again: ResourceLoader hands every caller the same instance, so this
+	# is duplicated before its loop mode is touched -- otherwise the second
+	# library built in a run would be editing the first one's take.
+	var animation: Animation = (resource as Animation).duplicate(true)
+	animation.loop_mode = Animation.LOOP_LINEAR
+	library.add_animation(IDLE_HUNCHED, animation)
 
 
 ## Every animation in an imported scene, by the name its AnimationPlayer knows.

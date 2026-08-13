@@ -60,9 +60,24 @@ func test_every_take_is_in_the_library() -> void:
 			library.has_animation(StringName(row[2])),
 			"%s was merged from %s / %s and is not in the library" % [row[2], String(row[0]).get_file(), row[1]]
 		)
+	# TAKES plus the ONE take that does not come out of a model file: the hunger
+	# stand, retargeted off another pack and baked to a `.tres`. Named here rather
+	# than allowed for by a `+ 1`, so a second undeclared take still fails.
+	assert_true(
+		library.has_animation(Wanderer.IDLE_HUNCHED),
+		"%s is baked by tools/retarget_hunch.gd and is not in the library" % Wanderer.IDLE_HUNCHED
+	)
+	var declared: Array = [String(Wanderer.IDLE_HUNCHED)]
+	for row in Wanderer.TAKES:
+		declared.append(String(row[2]))
+	for name in library.get_animation_list():
+		assert_true(
+			declared.has(String(name)),
+			"the library holds %s, which is neither in TAKES nor the baked hunch" % name
+		)
 	assert_eq(
-		library.get_animation_list().size(), Wanderer.TAKES.size(),
-		"the library must hold exactly the takes in TAKES and nothing else"
+		library.get_animation_list().size(), declared.size(),
+		"the library must hold exactly the takes in TAKES plus the baked hunch"
 	)
 
 

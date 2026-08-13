@@ -9,7 +9,7 @@ extends Node
 ## THE FRAME IS BUILT FROM THE REST POSE, NOT ASSUMED
 ## ---------------------------------------------------------------------------
 ## The wanderer is a Y-up rig facing +Z with bones called Hips/LeftHand. The
-## RPG-Character pack sitting in the project root is a 53-bone rig calling them
+## RPG-Character pack under assets/rigs/ is a 53-bone rig calling them
 ## B_Pelvis/B_L_Hand, and nothing guarantees it faces the same way. A sweep that
 ## hard-codes either is measuring one pack and lying about the other.
 ##
