@@ -6,7 +6,9 @@ extends Node
 ##
 ##   Godot_console.exe --path <project> res://tools/capture_time_prompt.tscn \
 ##       --resolution 1600x1000 -- --out D:/somewhere/shot.png \
-##       [--night] [--progress 0.35] [--day 4] [--preset pale_day] [--seconds 4]
+##       [--night] [--progress 0.35] [--day 4] [--preset pale_day] [--seconds 4] [--verify]
+##
+## `--verify` makes unmet delivered-contrast or boundary gates return exit 1.
 ##
 ## ---------------------------------------------------------------------------
 ## IT IS SURFACED, NOT WAITED FOR

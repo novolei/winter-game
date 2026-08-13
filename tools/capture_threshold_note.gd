@@ -9,7 +9,7 @@ extends Node
 ##       --resolution 1600x1000 -- --out D:/somewhere/shot.png \
 ##       [--preset pale_day] [--stat core_temperature] [--threshold 0.5] \
 ##       [--fraction 0.5] [--depleted] [--night] [--seconds 2] \
-##       [--offset 8,0] [--ink-ground 0.0]
+##       [--offset 8,0] [--ink-ground 0.0] [--verify]
 ##
 ## It writes two files: the frame, and `<out>-element.png` -- the note alone at
 ## 3x with a margin of the ground round it.
@@ -18,6 +18,7 @@ extends Node
 ## change the ground under an element that keeps a fixed place on the screen.
 ## `--ink-ground` overrides what the lighting told the note, so the counterfactual
 ## can be photographed with the same instrument as the shipped thing.
+## `--verify` makes unmet delivered-contrast or boundary gates return exit 1.
 ##
 ## ---------------------------------------------------------------------------
 ## TWO FRAMES OF THE SAME SHOT, AND THAT IS THE WHOLE MEASUREMENT

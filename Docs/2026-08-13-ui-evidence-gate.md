@@ -25,6 +25,10 @@ Use the real D3D12 scene captures at 1600x1000:
 The same plate/difference path is also available in
 `tools/capture_time_prompt.tscn`.
 
+Append `--verify` to a capture command to turn those thresholds into its process
+exit code. The known deep-night and time-prompt text baselines below intentionally
+fail that strict mode until the P2 readability job changes the delivered image.
+
 ## Acceptance thresholds
 
 | Measure | Gate | Current role |
