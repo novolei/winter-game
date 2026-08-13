@@ -51,6 +51,46 @@ const BLOOM_EASE := Vector4(0.16, 1.0, 0.30, 1.0)
 const BLOOM_HEAVY_EASE := Vector4(0.16, 1.2, 0.30, 1.0)
 const DRIFT_EASE := Vector4(0.40, 0.0, 0.70, 0.20)
 
+## 散 · 向上飘 -- the LIFT's own curve, and it is deliberately not DRIFT_EASE.
+##
+## Section 1.2 hands ONE curve to all three of the exit's channels (opacity,
+## blur, translateY). Measured on that curve, an exit looks like this:
+##
+##   40% of the exit gone  ->  alpha 0.90, risen 0.78 px of 8
+##   75% gone              ->  alpha 0.53, risen 3.74 px
+##   the last 15%          ->  alpha 0.35 -> 0, and 5.19 -> 8.00 px of the rise
+##
+## So for the first four tenths of its departure the element has not visibly
+## departed, and then a third of its ink and three of its eight pixels leave
+## together in the final 135 ms. That is a stall followed by a snuff. It is what
+## "animates in beautifully and then simply stops existing" looks like once there
+## are numbers on it, and it is the opposite of section 1.1's own three words for
+## the 散 -- 慢的、边缘先化开的、向上飘的.
+##
+## Section 5.10 already made this exact split once, from the other side: the
+## bloom's elasticity belongs on SCALE and not on a clamped alpha, because one
+## curve serving two channels was wrong for one of them. This is that ruling
+## applied to the exit.
+##
+## The FADE keeps section 2.4's curve untouched -- letting go slowly is right,
+## and it is what keeps the words readable while they go. The LIFT takes an
+## ease-OUT, so it begins on the frame the hold ends and decelerates into
+## stillness:
+##
+##   25% of the exit gone  ->  alpha 0.97, risen 3.07 px of 8
+##   50% gone              ->  alpha 0.83, risen 5.89 px
+##   the last 25%          ->  0.45 px, which is the settle
+##
+## The element is therefore visibly LEAVING while it is still fully legible,
+## which is the whole difference between a thing that departs and a thing that is
+## switched off. Nothing overshoots and nothing bounces; the entire change is
+## which end of the exit the motion lives at.
+const DRIFT_LIFT_EASE := Vector4(0.39, 0.575, 0.565, 1.0)
+
+## 散 · 边缘先化开 -- the largest share of the exit that any one part of an
+## element may leave ahead of the element as a whole. See dispersal_at().
+const DISPERSAL_LEAD := 0.45
+
 ## Where the bloom's keyframes sit inside its own duration. Opacity and blur
 ## finish at this point and the overshoot peaks here; the remaining fraction is
 ## the settle back to 1.0.
@@ -95,6 +135,17 @@ var bloom_ease := BLOOM_EASE
 ## upward drift.
 var exit_offset := Vector2(0.0, DRIFT_RISE)
 var exit_spin := 0.0
+
+## Which curve carries the exit's MOTION -- never its opacity, which is always
+## section 2.4's 散.
+##
+## The default LIFTS (see DRIFT_LIFT_EASE). scatter() puts it back on DRIFT_EASE,
+## and that is not a compatibility shim: a glyph taken by the wind is being
+## CARRIED, and acceleration out of stillness is what makes that read, while an
+## element letting go of the screen is LIFTING, and deceleration into stillness
+## is what makes that one read. It also leaves section 5.9's approved montage
+## frames exactly where they were -- 被批准的是镜头.
+var motion_ease := DRIFT_LIFT_EASE
 
 ## Position in the line, used to give each glyph its own scatter without
 ## randomness -- a replay has to look the same twice.
@@ -151,6 +202,9 @@ func stretch(factor: float) -> void:
 ## block rather than a word coming apart -- but the same line replayed must look
 ## the same, or a montage would differ between two runs of the same scene.
 func scatter(wind: Vector2, distance: float, spin: float) -> void:
+	# See motion_ease. Carried, not lifted -- and this is also what keeps the
+	# montage's already-approved frames unchanged by the exit rework.
+	motion_ease = DRIFT_EASE
 	var direction := wind.normalized()
 	if direction == Vector2.ZERO:
 		direction = Vector2.RIGHT
@@ -212,10 +266,12 @@ func scale_at(t: float) -> float:
 
 ## Where it has moved to, in the caller's units. Zero everywhere but the exit --
 ## an element that crept during its own hold would read as unstable.
+##
+## On `motion_ease`, which is NOT the fade's curve. See DRIFT_LIFT_EASE.
 func offset_at(t: float) -> Vector2:
 	var phase := _phase(t)
 	if phase[0] == _PHASE_EXIT:
-		return exit_offset * ease_with(DRIFT_EASE, phase[1])
+		return exit_offset * ease_with(motion_ease, phase[1])
 	if phase[0] > _PHASE_EXIT:
 		return exit_offset
 	return Vector2.ZERO
@@ -223,10 +279,42 @@ func offset_at(t: float) -> Vector2:
 func rotation_at(t: float) -> float:
 	var phase := _phase(t)
 	if phase[0] == _PHASE_EXIT:
-		return exit_spin * ease_with(DRIFT_EASE, phase[1])
+		return exit_spin * ease_with(motion_ease, phase[1])
 	if phase[0] > _PHASE_EXIT:
 		return exit_spin
 	return 0.0
+
+## 散 · 边缘先化开, for one PART of an element.
+##
+## Section 1.1 gives the dispersal three qualities and the screen elements only
+## ever built two: they were slow and they drifted upward, and they left as one
+## rigid picture. Breath on cold glass does not leave that way -- the thinnest
+## ink goes first and the shape comes apart in an order. That order is the half
+## of this design language nobody had built.
+##
+## It is opacity over time and nothing else, so it needs no blur, no gradient, no
+## plate and no shader.
+##
+## `lead` is 0 for the part that leaves LAST -- which is the element's own
+## envelope, so a lead of 0 is always exactly 1.0 and costs nothing -- and 1 for
+## the part that leaves first. Multiply the result into whatever alpha the part
+## is already drawn at; the element's `modulate` carries the rest.
+func dispersal_at(t: float, lead: float) -> float:
+	var share := clampf(lead, 0.0, 1.0)
+	if share <= 0.0:
+		return 1.0
+	var phase := _phase(t)
+	if phase[0] < _PHASE_EXIT:
+		return 1.0
+	if phase[0] > _PHASE_EXIT:
+		return 0.0
+	# The same 散 curve, run in a shorter window, so a leading part disperses in
+	# the language the element as a whole is dispersing in rather than in a
+	# second one. At lead 1 a part is gone 55% of the way through the exit --
+	# while the element itself is still at alpha 0.79 -- and that gap is what
+	# makes the dispersal visible rather than merely earlier.
+	var span := maxf(1.0 - share * DISPERSAL_LEAD, 0.05)
+	return 1.0 - ease_with(DRIFT_EASE, minf(phase[1] / span, 1.0))
 
 ## Blur is part of the specification even though applying it needs a material:
 ## UILayer sets what a CanvasItem can carry directly and leaves this to whoever

@@ -461,12 +461,37 @@ static func upwind_of(listener: Vector3, heading: float, radius: float) -> Vecto
 	return listener - travel * radius
 
 
-## The ear. The active camera when there is one, because that is what Godot
-## actually mixes against; the player when there is not; this node when there is
-## neither.
+## The ear. Whatever Godot is ACTUALLY mixing against, asked in the engine's own
+## order of precedence; the player when there is neither; this node when there is
+## nothing at all.
+##
+## ---------------------------------------------------------------------------
+## THE 22 dB THIS LINE WAS WORTH
+## ---------------------------------------------------------------------------
+## This used to return the camera unconditionally, with the comment "because that
+## is what Godot actually mixes against". That was true and stopped being true
+## the moment `CameraRig._build_ear()` planted an `AudioListener3D`: **a current
+## listener outranks the camera**, so the bed went on placing its emitters 7 m
+## from a point 90.71 m from the ear.
+##
+## It was caught as an unexplained number rather than as a bug -- the bed
+## measured **21.92 dB quieter** after the listener landed, when the geometry said
+## it should get louder. `20 * log10(90.71 / 7.0)` is **22.25 dB**, and that
+## closed it: the bed was not quieter, it was ninety metres away.
+##
+## The general shape is why it is written up rather than just fixed: **this
+## function and `emitter_position()` are a two-line simulation of the engine's
+## own listener rule**, and a simulation of somebody else's rule silently goes
+## stale when the rule changes. Ask the viewport, in the viewport's order.
 func listener_position() -> Vector3:
 	if is_inside_tree():
-		var camera := get_viewport().get_camera_3d()
+		var viewport := get_viewport()
+		# A current AudioListener3D outranks the camera -- this is the engine's
+		# own precedence, not a preference of ours.
+		var ear := viewport.get_audio_listener_3d()
+		if ear != null and ear.is_inside_tree():
+			return ear.global_position
+		var camera := viewport.get_camera_3d()
 		if camera != null:
 			return camera.global_position
 	var registry := _registry()

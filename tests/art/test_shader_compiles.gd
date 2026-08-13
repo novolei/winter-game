@@ -87,7 +87,8 @@ const AssetScannerScript := preload("res://tests/framework/asset_scanner.gd")
 ## (gaea's cube preview, interaction_kit_3d's outline); they are somebody else's
 ## code, no change of ours makes them compile or fail, and a red suite naming a
 ## vendored file is a red suite nobody can act on -- the same reasoning
-## `tools/run_tests.sh` applies to beehave's debugger line.
+## The test wrapper rejects every engine error line; third-party addons are not
+## part of this shader gate's scope.
 ##
 ## Three roots rather than one because a shader is not required to live under
 ## `assets/shaders/`, and a gate that covers only the tidy case is blind to the

@@ -173,6 +173,19 @@ func advance(delta: float) -> void:
 		var amount := breath.scale_at(t)
 		control.scale = Vector2(amount, amount)
 		control.position = entry["home"] + breath.offset_at(t)
+		# 散 · 边缘先化开. This layer can only move an element as a WHOLE; the order
+		# its parts come apart in is the element's own business, so an element that
+		# has parts is handed its envelope and works its own dispersal out. See
+		# Breath.dispersal_at(), TimeArc._lead_for() and ThresholdNote's leads.
+		#
+		# PUSHED, not ticked. An element with a _process() of its own runs at one
+		# speed in the running game and another in every harness that drives this
+		# layer by hand -- VitalStroke's header spells that out and it is the shape
+		# of defect this project keeps paying for. And it is pushed only to elements
+		# this layer was HANDED, never to whatever a tree sweep found answering to
+		# the name (briefing trap 16).
+		if control.has_method("set_envelope"):
+			control.call("set_envelope", breath, t)
 	for entry in finished:
 		_live.erase(entry)
 		_release(entry["control"])

@@ -87,11 +87,18 @@ fi
 
 # Derived from this script's own location (tools/ sits at the project root) so
 # the wrapper keeps working if the checkout moves. Godot on Windows needs a
-# native path, not the /d/... form Git Bash reports.
+# native path, not the /d/... form Git Bash reports. The Codex desktop shell
+# invokes WSL's bash, whose executable paths are /mnt/<drive>/..., so normalize
+# both the project and engine paths there as well.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_dir="$(cd "${script_dir}/.." && pwd)"
 if command -v cygpath >/dev/null 2>&1; then
 	project_dir="$(cygpath -w "${project_dir}")"
+elif command -v wslpath >/dev/null 2>&1; then
+	project_dir="$(wslpath -w "${project_dir}")"
+	if [[ "${GODOT_BIN}" =~ ^[A-Za-z]:/ ]]; then
+		GODOT_BIN="$(wslpath -u "${GODOT_BIN}")"
+	fi
 fi
 
 # --- run -------------------------------------------------------------------
@@ -114,39 +121,7 @@ godot_status="${PIPESTATUS[0]}"
 # Godot writes CRLF here. Strip the CR so end-of-line anchors match.
 tr -d '\r' < "${raw_log}" > "${scan_log}.crlf"
 
-# --- the third-party allowlist ---------------------------------------------
-#
-# THE GATE STAYS ABSOLUTE FOR ANYTHING WE COULD HAVE CAUSED. This list exists
-# only for lines emitted by an installed third-party addon, which we have read,
-# understood, and can name -- and which no change of ours can make appear or
-# disappear.
-#
-# Adding a line here is a Director decision, not a way past a red run. The gate
-# has already caught FIVE separate false-PASS mechanisms in this project; every
-# entry below narrows it, so each one must earn its place and say why.
-#
-# Match is by fixed string on the whole line, deliberately: a pattern broad
-# enough to be convenient is broad enough to swallow one of ours.
-THIRD_PARTY_NOISE=(
-	# beehave registers its debugger capture from its EditorPlugin, which does
-	# not load under --headless. Its runtime then sends a message nothing is
-	# listening for. Benign, unreachable from our code, and unavoidable while
-	# the addon is enabled. Remove this line the day beehave is removed.
-	'ERROR: Capture not registered: '"'"'beehave'"'"'.'
-)
-
 cp "${scan_log}.crlf" "${scan_log}"
-suppressed=0
-for noise in "${THIRD_PARTY_NOISE[@]}"; do
-	hits="$(grep -cF -- "${noise}" "${scan_log}" || true)"
-	if [ "${hits:-0}" -gt 0 ]; then
-		suppressed=$((suppressed + hits))
-		grep -vF -- "${noise}" "${scan_log}" > "${scan_log}.tmp" && mv "${scan_log}.tmp" "${scan_log}"
-		# Announced, never silent: a suppression nobody sees is a place for our
-		# own errors to hide, which is the exact failure this gate exists for.
-		echo "run_tests.sh: allowed ${hits} third-party line(s): ${noise}" >&2
-	fi
-done
 rm -f "${scan_log}.crlf"
 
 # --- judge -----------------------------------------------------------------

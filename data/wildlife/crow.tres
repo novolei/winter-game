@@ -1,7 +1,7 @@
-[gd_resource type="Resource" script_class="BirdSpecies" format=3]
+[gd_resource type="Resource" script_class="BirdSpecies" format=3 uid="uid://cmagdg5ld84fq"]
 
-[ext_resource type="Script" path="res://src/definitions/bird_species.gd" id="1_13r0i"]
-[ext_resource type="Script" path="res://src/definitions/bird_take.gd" id="2_pvs18"]
+[ext_resource type="Script" uid="uid://qrqsfcxelggv" path="res://src/definitions/bird_species.gd" id="1_13r0i"]
+[ext_resource type="Script" uid="uid://bfqwptdtnb5kh" path="res://src/definitions/bird_take.gd" id="2_pvs18"]
 
 [sub_resource type="Resource" id="Resource_0y2cj"]
 script = ExtResource("2_pvs18")
@@ -10,7 +10,7 @@ source_path = "res://assets/models/characters/crow/crow_perch.fbx"
 first_frame = 123
 last_frame = 182
 loops = true
-seconds = 1.9666666666666666
+seconds = 1.9666666666666663
 
 [sub_resource type="Resource" id="Resource_rkccy"]
 script = ExtResource("2_pvs18")
@@ -37,7 +37,7 @@ source_path = "res://assets/models/characters/crow/crow_takeoff.fbx"
 first_frame = 1
 last_frame = 29
 in_place = true
-seconds = 0.9333333333333333
+seconds = 0.9333333333333332
 
 [sub_resource type="Resource" id="Resource_ais17"]
 script = ExtResource("2_pvs18")
@@ -57,7 +57,7 @@ first_frame = 163
 last_frame = 195
 loops = true
 in_place = true
-seconds = 1.0666666666666667
+seconds = 1.0666666666666669
 
 [sub_resource type="Resource" id="Resource_hw05p"]
 script = ExtResource("2_pvs18")

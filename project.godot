@@ -26,14 +26,16 @@ config/icon="res://icon.svg"
 EventBus="*res://src/core/event_bus.gd"
 ServiceRegistry="*res://src/core/service_registry.gd"
 WorldClock="*res://src/systems/world_clock.gd"
-_mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
 MusicDirector="*res://src/audio/music_director.gd"
 SurvivalSystem="*res://src/systems/survival_system.gd"
 FuelEconomy="*res://src/systems/fuel_economy.gd"
 RunBoot="*res://src/systems/run_boot.gd"
 NightExposure="*res://src/systems/night_exposure.gd"
 OccluderFader="*res://src/rendering/occluder_fader.gd"
+GlobalInteraction3D="*uid://bq0l4mbdwl00e"
+BeehaveGlobalMetrics="*uid://c3ktl6ontsdt7"
 BeehaveGlobalDebugger="*uid://bl3ma400hpvsh"
+_mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
 
 [display]
 
@@ -42,7 +44,7 @@ window/stretch/aspect="expand"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/GodotGAS/plugin.cfg", "res://addons/beehave/plugin.cfg", "res://addons/gaea/editor/plugin.cfg", "res://addons/gaea/plugin.cfg", "res://addons/gaea/runtime/plugin.cfg", "res://addons/godot_ai/plugin.cfg", "res://addons/ninetailsrabbit.interaction_kit_3d/plugin.cfg")
+enabled=PackedStringArray("res://addons/godot_ai/plugin.cfg", "res://addons/ninetailsrabbit.interaction_kit_3d/plugin.cfg")
 
 [input]
 

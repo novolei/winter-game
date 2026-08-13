@@ -10,10 +10,9 @@ extends Resource
 ## ---------------------------------------------------------------------------
 ## WHY THE TWO WORDS ARE DATA
 ## ---------------------------------------------------------------------------
-## 夜晚 and 白天 are the only display copy this element has, and section 5.2's
-## fifteen lines are already in data for the same reason: copy in a `.gd` file is
-## copy nobody reviews. The day number beside them is a numeral, so it takes the
-## instrument face -- section 5.4 makes the same split for 「第 四 日」.
+## 夜晚, 白天 and the word that labels the day number are the only display copy
+## this element has, and section 5.2's fifteen lines are already in data for the
+## same reason: copy in a `.gd` file is copy nobody reviews.
 ##
 ## ---------------------------------------------------------------------------
 ## EVERY DEFAULT BELOW IS DELIBERATELY EMPTY
@@ -43,6 +42,24 @@ extends Resource
 ## 白天 / 夜晚. What the prompt calls each phase of WorldClock.
 @export var day_label: String = ""
 @export var night_label: String = ""
+
+## The word that labels the day number: `Day 4` rather than a bare `4`.
+##
+## ---------------------------------------------------------------------------
+## WHY THERE IS A WORD HERE AT ALL, AND WHY IT HAS NO DENOMINATOR
+## ---------------------------------------------------------------------------
+## Shipped bare, the line read `夜晚 1`, and a reader cannot tell whether that 1
+## is the day or an index of the night. The label settles it, and it is the
+## owner's own ruling: 最好加上 Day 不需要说第几天.
+##
+## It is deliberately NOT `第 N 日`. That form was ruled out by name.
+##
+## And there is deliberately no total. `Day 3 / 7` would turn the prompt into a
+## countdown, and GDD section 4 builds to the seventh day as something endured
+## rather than counted down -- the player learns where he is, not how much is
+## left. Nothing here reserves room for a denominator, because a seam left for
+## one is an invitation to add it.
+@export var day_word: String = ""
 
 ## How often it appears, in hours of world time.
 @export var hours_between: float = 0.0

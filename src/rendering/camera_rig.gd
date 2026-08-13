@@ -191,6 +191,56 @@ func _ready() -> void:
 	_camera.far = 400.0
 	_camera.current = true
 	_build_vision_focus()
+	_build_ear()
+
+
+## WHERE THE GAME IS HEARD FROM, which until now was ninety metres away.
+##
+## ---------------------------------------------------------------------------
+## THE DEFECT THIS CLOSES
+## ---------------------------------------------------------------------------
+## With no `AudioListener3D` anywhere, Godot mixes 3D audio against the **current
+## Camera3D** -- and under this rig the camera is not near the player, it is at
+## the far end of `boom_length`. Measured on the shipped scene: **90.71 m**.
+##
+## Every positional emitter in the game declares how far it carries, and every
+## one of those numbers was authored as a distance from the PLAYER. Against a
+## listener 90.71 m away they all read as "too far":
+##
+##     crow caw 60 m · dog bark 60 · whimper 45 · whine 35 · growl 14 · hearth 24
+##
+## `max_distance` is a HARD cutoff, so every one of them mixed to **-200.00 dB**
+## -- digital silence -- while `playing` reported `true` and 1938 tests stayed
+## green. The only survivor was the ambience bed, because it is the one emitter
+## that declares no `max_distance` at all. The owner asked twice why he could not
+## hear the crows. Briefing trap 19 carries the measurements.
+##
+## ---------------------------------------------------------------------------
+## WHY THE RIG AND NOT THE CAMERA, AND NOT THE PLAYER
+## ---------------------------------------------------------------------------
+## The rig node IS the follow target -- it sits one metre above the player, which
+## is head height, and it eases toward him at `follow_speed`. So the ear arrives
+## with exactly the same lag as the frame, which is what stops a hard-cut sound
+## image during a fast walk. Hanging it on the Camera3D would reproduce the bug;
+## hanging it on the player would need an edit to `src/entities/player/`, and the
+## rig is already the node that owns "where this is seen and heard from".
+##
+## Built here rather than in `scenes/main.tscn` for the reason `_build_vision_focus`
+## gives directly above: the editor strips comments from a `.tscn` on every save,
+## so a node whose existence needs an argument belongs in a file that keeps it.
+##
+## NOTE FOR ANYONE MOVING THE BOOM: `boom_length` no longer has any effect on
+## what is audible, which is the point. It is a clipping-plane number again.
+func _build_ear() -> void:
+	if get_node_or_null("Ear") != null:
+		return
+	var ear := AudioListener3D.new()
+	ear.name = "Ear"
+	add_child(ear)
+	ear.position = Vector3.ZERO
+	# Without this the node exists and changes nothing -- Godot keeps mixing
+	# against the camera. This is the line that does the work.
+	ear.make_current()
 
 
 ## GDD section 5's 口渴 -> 画面轻微失焦, hung on the camera it defocuses.

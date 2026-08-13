@@ -81,6 +81,28 @@ const ARC_BOW_DESIGN_PX := 7.0
 const BODY_DESIGN_PX := 17.0
 const BODY_TRACKING_EM := 0.08
 
+## ---------------------------------------------------------------------------
+## 散 · 边缘先化开: WHAT IS LEFT AT THE END IS THE SENTENCE
+## ---------------------------------------------------------------------------
+## Section 2.1's opacity ladder orders the time prompt's dispersal for free,
+## because that element draws its parts on four different rungs. This one draws
+## everything at full strength -- deliberately, see the header -- so the ladder
+## has nothing to say here and the element has to state the order itself.
+##
+## It states it the way section 5.2 already ranked itself. 说后果，不说数字 makes
+## the SENTENCE the element: the arc says how far gone and the icon says which
+## reading, and BOTH of those facts are also in the words, while a player who
+## cannot read 手指不听使唤了 has been told nothing. So the marks disperse first
+## and the line of copy is the last thing standing on the snow, alone, before it
+## goes too.
+##
+## Numbers, not a feeling: at these leads the arc is gone 55% of the way through
+## the 散 and the icon at 75%, while the element itself is still at alpha 0.79
+## and 0.53 respectively.
+const ARC_LEAD := 1.0
+const ICON_LEAD := 0.55
+const WORDS_LEAD := 0.0
+
 var _tokens: UITokens = null
 var _fonts: UIFonts = null
 var _row: VitalReadout = null
@@ -100,6 +122,11 @@ var _elapsed := 0.0
 ## being read. Rule 4 -- it appears, it dies -- makes that unnecessary as well as
 ## unwanted.
 var _ground := UIInk.UNKNOWN_GROUND
+
+## The envelope UILayer is driving this note with, and how far into it we are.
+## Only ever read during the 散 -- see the leads above.
+var _breath: Breath = null
+var _breath_seconds := 0.0
 
 
 ## `text` may be empty. Section 5.2's 恢复 row specifies only the arc collapsing
@@ -173,6 +200,31 @@ func set_ground(value: float) -> void:
 
 func ground() -> float:
 	return _ground
+
+
+## Handed in by UILayer every frame it drives this note -- see its advance().
+## Everything this does is in the 散; through the 呵 and the 持 the note draws
+## exactly as it did before.
+func set_envelope(breath: Breath, seconds: float) -> void:
+	_breath = breath
+	_breath_seconds = seconds
+	if _arc != null:
+		_arc.set_dispersal(_dispersal(ARC_LEAD))
+	queue_redraw()
+
+
+## The envelope this note is being driven by, or null. Published so a test can
+## read what is ACTUALLY driving the picture rather than a description of it.
+func envelope() -> Breath:
+	return _breath
+
+
+## How much of a part is still there, this far into the exit. One everywhere but
+## the 散.
+func _dispersal(lead: float) -> float:
+	if _breath == null:
+		return 1.0
+	return _breath.dispersal_at(_breath_seconds, lead)
 
 
 ## The ink the mark is drawn in: the icon, and the arc under it.
@@ -264,6 +316,9 @@ func _draw() -> void:
 	# palette entry and never the meaning. Never warm: rule 3 gives warmth one
 	# meaning and "this is urgent" is not it.
 	var mark := ink()
+	# 散 · the icon is a mark and it goes before the words do. Outside the exit
+	# this multiplies by exactly 1.
+	mark.a *= _dispersal(ICON_LEAD)
 	if _icon != null:
 		draw_texture_rect(
 			_icon,
@@ -277,7 +332,9 @@ func _draw() -> void:
 	var font_px := _text_px()
 	# The same ink, at full strength. See the header: the sentence IS the element,
 	# and a second palette step spent on hierarchy came out of its legibility.
+	# WORDS_LEAD is zero for the same reason -- it leaves last, with the element.
 	var words := words_ink()
+	words.a *= _dispersal(WORDS_LEAD)
 	var baseline := size.y * 0.5 + _body.get_ascent(int(font_px)) * 0.5
 	draw_string(
 		_body,

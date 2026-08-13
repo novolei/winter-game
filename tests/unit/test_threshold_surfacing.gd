@@ -194,11 +194,83 @@ func test_a_note_dies_on_its_own() -> void:
 	assert_eq(_layer.live_count(), 0, "a note outlived its own breath")
 	assert_eq(_surfacing.live_count(), 0, "the surfacing kept a reference to a freed note")
 
-## Section 5.2's timing: 呵 200 / 持 2400 / 散 900. Only the hold is this
+## Section 5.2's timing: 呵 200 / 持 EIGHT SECONDS / 散 900. Only the hold is this
 ## section's own; the other two come from the tokens, which is how section 5.6's
 ## cold snap reaches this element at all.
-func test_it_holds_for_the_documented_two_point_four_seconds() -> void:
-	assert_almost_eq(ThresholdSurfacing.HOLD_SECONDS, 2.4, 0.0001)
+##
+## WHAT THIS TEST USED TO BE. It read `assert_almost_eq(HOLD_SECONDS, 2.4)` and it
+## was pinning a VALUE -- agreement with a printed figure -- not a requirement.
+## The owner asked for the dwell to double, so the figure moved. The requirement
+## is pinned by test_a_note_dies_on_its_own, which derives the envelope from
+## whatever the constant currently is and asserts the note is gone at the end of
+## it: that is rule 4, and it holds at any dwell.
+##
+## The dwell being the SAME as section 5.10's is a relationship rather than a
+## number, and it is asserted in test_time_prompt.gd where both are in scope.
+func test_it_holds_for_the_documented_eight_seconds() -> void:
+	assert_almost_eq(ThresholdSurfacing.HOLD_SECONDS, 8.0, 0.0001)
+
+## THE EXIT DID NOT GROW WITH THE DWELL, and that is a decision worth a guard.
+##
+## Section 2.4 reserves 散·长 for 结局、日次、火熄 -- endings. A threshold crossing is
+## news. So the note keeps the token 散 while its hold more than trebled, and what
+## fills those 900 ms is the dispersal order rather than more time. A later pass
+## that "makes the exit match the longer hold" would be undoing that on purpose.
+func test_the_note_still_leaves_on_the_ordinary_drift() -> void:
+	var tokens := _layer.tokens()
+	_cross(&"core_temperature", 0.5)
+	_surfacing.advance(0.01)
+	var note = _first_live()
+	assert_not_null(note)
+	if note == null:
+		return
+	var breath: Breath = _layer.breath_for(note)
+	assert_not_null(breath)
+	if breath == null:
+		return
+	assert_almost_eq(breath.exit_seconds, tokens.drift_seconds, 0.0001,
+		"section 5.2's note takes 散, not 散·长 -- a crossing is news, not an ending")
+	assert_true(breath.exit_seconds < tokens.drift_long_seconds,
+		"the ordinary drift is supposed to be the shorter of the two")
+
+## 散 · 边缘先化开: WHAT IS LEFT AT THE END IS THE SENTENCE.
+##
+## Section 5.2 is 说后果，不说数字, which makes the SENTENCE the element -- the arc
+## says how far gone and the icon says which reading, and both of those facts are
+## also in the words, while a player who cannot read 手指不听使唤了 has been told
+## nothing. So the marks disperse first and the line of copy is the last thing
+## standing on the snow.
+##
+## The order is asserted, never the constants: whoever retunes a lead has to keep
+## the ranking, and whoever adds a part has a rule to place it by.
+func test_the_note_leaves_its_sentence_until_last() -> void:
+	assert_true(ThresholdNote.ARC_LEAD > ThresholdNote.ICON_LEAD,
+		"the arc must go before the icon does")
+	assert_true(ThresholdNote.ICON_LEAD > ThresholdNote.WORDS_LEAD,
+		"the icon must go before the words do")
+	assert_almost_eq(ThresholdNote.WORDS_LEAD, 0.0, 0.0001,
+		"the sentence IS the element, so it leaves with it and never ahead of it")
+
+## And the note is actually handed its envelope, rather than the leads being three
+## constants nothing reads. Section 5.2's note has no _process of its own; the
+## layer pushes, which is what keeps a test and the running game on one clock.
+func test_a_note_is_driven_by_the_envelope_the_layer_gave_it() -> void:
+	_cross(&"core_temperature", 0.5)
+	_surfacing.advance(0.01)
+	var note = _first_live()
+	assert_not_null(note)
+	if note == null:
+		return
+	var tokens := _layer.tokens()
+	# Into the exit, where the dispersal lives.
+	_layer.advance(tokens.bloom_seconds + ThresholdSurfacing.HOLD_SECONDS
+		+ tokens.drift_seconds * 0.5)
+	var breath: Breath = note.envelope()
+	assert_not_null(breath, "the note was never handed the envelope driving it")
+	if breath == null:
+		return
+	assert_eq(breath, _layer.breath_for(note),
+		"the note is holding an envelope that is not the one the layer is driving")
 
 func test_the_stack_reopens_once_a_note_has_gone() -> void:
 	_cross(&"core_temperature", 0.5)

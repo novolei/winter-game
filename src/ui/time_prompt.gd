@@ -245,7 +245,15 @@ func _surface() -> TimeArc:
 	# this project, the heavy bloom returned 1.0044 on an alpha. So the overshoot
 	# lands on SCALE -- .94 to 1.02 and settle -- and on the exit's 8 px upward
 	# drift, while the opacity only ever climbs. See Breath.opacity_at().
-	_layer.surface(arc, _data.hold_seconds, true)
+	#
+	# AND 散·长 ON THE WAY OUT, for exactly the reason the bloom is heavy. Section
+	# 2.4 gives 昼夜更替 both halves -- 呵·重 320 and 散·长 1600 -- and this element
+	# is the same voice on a shorter cycle; section 5.4's 日出 is written with that
+	# pair. It also earns its length: with the hold doubled to eight seconds, an
+	# exit that took a ninth of the dwell would read as the clock being cut off
+	# rather than as the clock finishing. The dispersal (TimeArc, 边缘先化开) is
+	# what fills those 1.6 seconds with something happening.
+	_layer.surface(arc, _data.hold_seconds, true, Breath.Exit.LONG)
 	_voice()
 	return arc
 

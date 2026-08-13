@@ -6,6 +6,20 @@ extends Control
 ## at the current position.
 ##
 ## ---------------------------------------------------------------------------
+## IT IS A TRACK BETWEEN TWO LABELS, NOT A PATH THROUGH TWO BODIES
+## ---------------------------------------------------------------------------
+## The shape is an arc and the two things at its ends are a moon and a sun, so
+## there is a reading available in which one body travels a sky. That reading is
+## wrong here and the element has to refuse it, because a sky with a moon pinned
+## at one end and a sun pinned at the other is not a sky.
+##
+## Section 5.10 is unambiguous about which it is -- 两个图标固定不动：月在左，日在右。
+## 变化的是标记往哪边走 -- so the moon and the sun are LABELS on the two ends of a
+## track, and the only thing that travels is the mark. The track is drawn between
+## them and stops short of both, which is what makes the reading legible rather
+## than merely intended; see TRACK_CLEARANCE_ICONS.
+##
+## ---------------------------------------------------------------------------
 ## THE DIRECTION OF TRAVEL IS THE INFORMATION
 ## ---------------------------------------------------------------------------
 ## The two faces never move: 月 at the left end, 日 at the right. What changes is
@@ -38,6 +52,47 @@ const ICON_DIRECTORY := "res://assets/ui/icons"
 ## this is the same size deliberately: a small solid dot on a stroke means "you
 ## are here" in both places.
 const MARK_DESIGN_PX := 3.0
+
+## ---------------------------------------------------------------------------
+## THE TRACK IS NOT THE WHOLE ARC, AND THAT IS AN INFORMATION FIX
+## ---------------------------------------------------------------------------
+## The mark used to run from `point_at(0)` to `point_at(1)` -- the same two points
+## the terminals are pinned to. So at the START of a phase the mark was drawn
+## exactly concentric with a 20 device pixel glyph, at 6 device pixels across, in
+## the same ink. It was underneath it. And the travelled segment has zero length
+## there by definition.
+##
+## Photographed rather than reasoned about: at 1% into a night, on `pale_day`
+## snow, the whole element is a uniform hairline from one blob to another, plus
+## 夜晚 1. Every part that carries information -- how far through, which way it is
+## going -- is either absent or hidden. That is the frame the owner called
+## 信息不够清晰, and it is reproducible on HEAD.
+##
+## It is not rare, either. The first prompt after every phase change lands in that
+## window, so it is two of the twelve prompts a day.
+##
+## So the TRACK -- groove, travelled segment and mark -- is held back from each
+## terminal by half a glyph plus half a grid unit, and the terminals stay pinned
+## at the arc's true ends. Three things follow from one change:
+##
+##   1. "now" is visible at every progress, including 0 and 1, because the mark
+##      can no longer reach the glyph that was covering it
+##   2. the stroke stops at the glyph's edge instead of running into its middle,
+##      which is the 粗糙 an owner sees as "the moon sits on the end of the line"
+##   3. the element commits to ONE metaphor. An arc through two pinned bodies
+##      reads as a sky path, and a sky path with two suns on it is nonsense; a
+##      track between two labelled terminals reads as what section 5.10 actually
+##      specifies -- 两个图标固定不动，变化的是标记往哪边走.
+##
+## It is a RELATIONSHIP, not a constant: change the glyph size or the grid and the
+## clearance follows, and tests/unit/test_time_prompt.gd asserts it against
+## `icon_design_px` rather than against a number.
+const TRACK_CLEARANCE_ICONS := 0.5
+const TRACK_CLEARANCE_GAPS := 0.5
+
+## A track cannot be inset past its own middle. Reached only by an absurd glyph
+## size, and it fails as a short track rather than as an inverted one.
+const TRACK_INSET_CEILING := 0.45
 
 ## The stroke weights, in design pixels. The trough is section 4.2's slider
 ## track -- one pixel, the thinnest thing the interface owns -- and the part
@@ -97,6 +152,31 @@ const OPACITY_TROUGH := 0.24
 const OPACITY_DIM_FACE := 0.48
 const OPACITY_WORD := 0.72
 
+## ---------------------------------------------------------------------------
+## 散 · 边缘先化开 -- WHICH PART OF THIS ELEMENT LEAVES FIRST, AND WHY IT IS NOT
+## A TASTE
+## ---------------------------------------------------------------------------
+## Section 1.1 says the dispersal is 慢的、边缘先化开的、向上飘的, and until now
+## this element had two of those three: it left as one rigid picture, every part
+## at one rate. Breath on cold glass does not go that way -- the thinnest film
+## evaporates first and the shape comes apart in an order.
+##
+## The order is not chosen here. **Section 2.1's ladder is already this element's
+## own statement of how much each part weighs**, so a part leads the exit by
+## exactly how faintly it is drawn, and that falls out of `_at()` for free:
+##
+##   groove       24%  -> lead 0.76, gone 66% through the exit
+##   the face of the phase that has not arrived
+##                48%  -> lead 0.52, gone 77% through
+##   phase word   72%  -> lead 0.28, gone 87% through
+##   travelled arc, the lit face, the day, the mark
+##               100%  -> lead 0.00, they ARE the element and they go with it
+##
+## So the prompt thins from its faintest ink inward, and the last thing on the
+## snow is the dot that says where in the day you are. Nothing was added to the
+## screen to get that -- it is opacity over time, so there is no plate (rule 1),
+## no gradient and no shader.
+
 var _tokens: UITokens = null
 var _fonts: UIFonts = null
 var _data: TimePromptData = null
@@ -107,6 +187,11 @@ var _progress := 0.0
 
 var _viewport := Vector2(1920.0, 1080.0)
 var _label_font: FontVariation = null
+
+## The `Day 4` stamp's own chain. See _draw_text() for why it is not the
+## instrument face, and _build_stamp_font() for why it is a second object rather
+## than _label_font with a feature written onto it.
+var _stamp_font: FontVariation = null
 
 ## LOADED ONCE, IN build(). A ResourceLoader.load() inside _draw() runs during the
 ## render callback, and this project has already seen what that costs: the two
@@ -126,6 +211,11 @@ var _radius := 1.0
 ## white.
 var _ground := 0.5
 
+## The envelope UILayer is driving this element with, and how far into it we are.
+## Null until it is surfaced, and only ever read during the 散.
+var _breath: Breath = null
+var _breath_seconds := 0.0
+
 
 func build(tokens: UITokens, fonts: UIFonts, data: TimePromptData) -> bool:
 	_tokens = tokens
@@ -139,6 +229,7 @@ func build(tokens: UITokens, fonts: UIFonts, data: TimePromptData) -> bool:
 	if _tokens == null or _data == null:
 		return false
 	_label_font = _build_label_font()
+	_stamp_font = _build_stamp_font()
 	_day_face = _load_face(_data.day_glyph)
 	_night_face = _load_face(_data.night_glyph)
 	return true
@@ -161,6 +252,30 @@ func set_ground(value: float) -> void:
 
 func ground() -> float:
 	return _ground
+
+
+## Handed in by UILayer every frame it drives this element -- see its advance().
+## Everything this does is in the 散; through the 呵 and the 持 the element draws
+## exactly as it did before.
+func set_envelope(breath: Breath, seconds: float) -> void:
+	_breath = breath
+	_breath_seconds = seconds
+	# Only while it is coming apart. Redrawing through an eight second hold in
+	# which nothing changes would be sixty needless draws a second.
+	if breath != null and seconds >= breath.exit_begins():
+		queue_redraw()
+
+
+## The envelope this element is being driven by, or null. Published so a test can
+## read what is ACTUALLY driving the picture.
+func envelope() -> Breath:
+	return _breath
+
+
+## How far ahead of the element as a whole a part drawn at this rung leaves. See
+## the block above OPACITY_TROUGH: the ladder is the order.
+func lead_for(opacity: float) -> float:
+	return clampf(1.0 - opacity, 0.0, 1.0)
 
 
 ## The one ink this element is drawn in, at full strength. See the header.
@@ -187,16 +302,39 @@ func progress() -> float:
 	return _progress
 
 
-## 夜晚 4 -- the phase word and the day, from data. The only display copy this
-## element has, and it is not in this file (see TimePromptData).
+## 夜晚 Day 4 -- the phase word and the day stamp. The only display copy this
+## element has, and none of it is in this file (see TimePromptData).
 func text() -> String:
 	if _data == null:
 		return ""
-	return "%s %d" % [_data.night_label if _night else _data.day_label, _day]
+	return "%s %s" % [phase_word(), day_stamp()]
+
+
+func phase_word() -> String:
+	if _data == null:
+		return ""
+	return _data.night_label if _night else _data.day_label
+
+
+## `Day 4`. The label is data and the numeral is the clock; there is no total,
+## deliberately -- see TimePromptData.day_word.
+func day_stamp() -> String:
+	if _data == null:
+		return ""
+	if _data.day_word == "":
+		return str(_day)
+	return "%s %d" % [_data.day_word, _day]
 
 
 func span_radians() -> float:
 	return 0.0 if _data == null else deg_to_rad(_data.arc_degrees)
+
+
+## The face the day stamp is actually drawn with. Published so a test measures the
+## object that reaches the frame rather than a description of it -- the tabular
+## claim in particular cannot be checked by reading a dictionary back.
+func stamp_font() -> FontVariation:
+	return _stamp_font
 
 
 # --- layout -------------------------------------------------------------------
@@ -245,17 +383,47 @@ func layout_for(viewport_size: Vector2) -> Vector2:
 
 
 ## A point on the arc, `t` running 0 at the left end to 1 at the right, in
-## element-local pixels.
+## element-local pixels. This is the GEOMETRY -- the terminals are pinned to its
+## two ends. What moves runs on the track; see track_at().
 func point_at(t: float) -> Vector2:
 	var span := span_radians()
 	var u := (clampf(t, 0.0, 1.0) - 0.5) * span
 	return _centre + Vector2(sin(u), -cos(u)) * _radius
 
 
+## How far the track is held back from each terminal, in design pixels measured
+## along the arc: half a glyph so the stroke stops at its edge rather than under
+## its middle, plus half a grid unit so the two are separated rather than merely
+## touching. See TRACK_CLEARANCE_ICONS.
+func track_clearance_design_px() -> float:
+	if _data == null:
+		return 0.0
+	return _data.icon_design_px * TRACK_CLEARANCE_ICONS \
+		+ _data.gap_design_px * TRACK_CLEARANCE_GAPS
+
+
+## That clearance expressed in the arc's own 0..1 parameter, so it can be fed
+## straight to point_at(). Both quantities are in screen pixels here, which is
+## what makes this scale with the canvas rather than with the reference frame.
+func track_inset() -> float:
+	if _data == null or _radius <= 0.0:
+		return 0.0
+	var arc_length := _radius * span_radians()
+	if arc_length <= 0.0:
+		return 0.0
+	return clampf(_px(track_clearance_design_px()) / arc_length, 0.0, TRACK_INSET_CEILING)
+
+
+## A point on the TRACK -- the stretch of arc between the two terminals. `u` runs
+## 0 at the moon end and 1 at the sun end.
+func track_at(u: float) -> Vector2:
+	return point_at(_track_t(u))
+
+
 ## Where the mark stands. See the header: it walks toward the phase that is
-## coming, so the day runs the arc backwards.
+## coming, so the day runs the track backwards.
 func mark_position() -> Vector2:
-	return point_at(_progress if _night else 1.0 - _progress)
+	return track_at(_progress if _night else 1.0 - _progress)
 
 
 ## The centre of one of the two faces. The sun is the right end, the moon the
@@ -269,20 +437,21 @@ func icon_centre(sun: bool) -> Vector2:
 func _draw() -> void:
 	if _tokens == null or _data == null:
 		return
-	var span := span_radians()
 	var trough := maxf(_px(TROUGH_DESIGN_PX), 1.0)
 	var travelled := maxf(_px(TRAVELLED_DESIGN_PX), 1.0)
 
-	# The whole arc, as the groove: the same ink on the bottom rung of section
-	# 2.1's opacity ladder rather than a second colour.
-	draw_arc(_centre, _radius, _angle_at(0.0), _angle_at(1.0), ARC_SEGMENTS,
+	# The TRACK, as the groove: the same ink on the bottom rung of section 2.1's
+	# opacity ladder rather than a second colour. It stops short of both glyphs --
+	# see TRACK_CLEARANCE_ICONS.
+	var inset := track_inset()
+	draw_arc(_centre, _radius, _angle_at(inset), _angle_at(1.0 - inset), ARC_SEGMENTS,
 		_at(OPACITY_TROUGH), trough, true)
 
 	# And the part already walked, over it, in the primary ink. It grows out of
-	# the face of the phase the player is in, which is what makes the direction
-	# legible without a label.
-	var here := _progress if _night else 1.0 - _progress
-	var from := 0.0 if _night else 1.0
+	# the end of the track nearest the phase the player is in, which is what makes
+	# the direction legible without a label.
+	var here := _track_t(_progress if _night else 1.0 - _progress)
+	var from := _track_t(0.0 if _night else 1.0)
 	if not is_equal_approx(here, from):
 		draw_arc(_centre, _radius, _angle_at(from), _angle_at(here), ARC_SEGMENTS,
 			_at(1.0), travelled, true)
@@ -311,27 +480,58 @@ func _draw_face(sun: bool, colour: Color) -> void:
 		false, colour)
 
 
-## The phase word in the interface face and the day in the instrument face, on
-## one baseline, centred under the arc.
+## The phase word and the day stamp on one baseline, centred under the arc.
 ##
-## Section 5.4 makes the same split for 「第 四 日」: 日次数字用仪表字. A numeral in
-## a proportional face would also change width between 9 and 10, which moves the
-## whole centred line sideways on the day it happens.
+## ---------------------------------------------------------------------------
+## THE DAY LEFT THE INSTRUMENT FACE, AND A MEASUREMENT IS WHAT MOVED IT
+## ---------------------------------------------------------------------------
+## Section 5.10 asks for 日次 Instrument and section 5.4 makes the same split for
+## 「第 四 日」. Measured through tools/measure_type_weight.tscn on `pale_day` snow,
+## at the shipped Body 17 rasterised at 17 device pixels:
+##
+##   phase word  Noto Sans SC 600, drawn at 72%   nominal 4.36  ->  core 4.10
+##   day number  IBM Plex Mono Light, at 100%     nominal 8.53  ->  core 3.81
+##
+## The number is drawn at FULL ink and delivers less than the word drawn at
+## seventy-two percent of it. It loses more than half its own contrast to strokes
+## thinner than a pixel, and 3.3% of its pixels ever reach the colour it was
+## authored in. It is the least legible mark in the element, and it carries the
+## one scalar the seven-day spine hangs on.
+##
+## Section 2.2's revision found this and recorded it as unfixable: 仪表族是
+## IBMPlexMono-Light.ttf，一个静态字重文件，没有可调的轴 … 要改它需要换一个字重的文件，
+## 那是资产决定. That is true of the FILE and not of the ELEMENT. The interface
+## chain is already loaded, has a real weight axis, and already carries a weight
+## authored for exactly this layer -- breath 500/600, because the breath layer
+## stands on open snow with no plate under it.
+##
+## So the stamp takes the interface chain at the breath weights, and the two
+## halves of the line become one deliberate pair rather than two families landing
+## at two optical weights by accident.
+##
+## WHAT THE INSTRUMENT FACE WAS FOR IS KEPT. Section 5.4's reason is baseline
+## alignment with 第/日, which this element does not have. The other reason is in
+## this file's own history -- a proportional numeral changes width between 9 and
+## 10, which walks a centred line sideways on the day it happens -- and that is
+## answered by tabular figures rather than by monospace. See _build_stamp_font;
+## tests/unit/test_time_prompt.gd MEASURES all ten digits rather than trusting the
+## feature to have applied, because this is the class of defect where a setting is
+## accepted, read back, and never used.
 func _draw_text() -> void:
-	if _label_font == null or _fonts == null or _fonts.instrument == null:
+	if _label_font == null or _stamp_font == null:
 		return
 	var px := int(maxf(_px(_data.label_design_px), 1.0))
-	var word := _data.night_label if _night else _data.day_label
-	var number := str(_day)
+	var word := phase_word()
+	var stamp := day_stamp()
 	var space := _px(_data.gap_design_px) * 0.5
 	var word_width := _label_font.get_string_size(word, HORIZONTAL_ALIGNMENT_LEFT, -1.0, px).x
-	var number_width := _fonts.instrument.get_string_size(
-		number, HORIZONTAL_ALIGNMENT_LEFT, -1.0, px).x
-	var left := (size.x - (word_width + space + number_width)) * 0.5
+	var stamp_width := _stamp_font.get_string_size(
+		stamp, HORIZONTAL_ALIGNMENT_LEFT, -1.0, px).x
+	var left := (size.x - (word_width + space + stamp_width)) * 0.5
 	var baseline := size.y - _px(_data.label_design_px) * (LINE_HEIGHT_RATIO - 1.0)
 	draw_string(_label_font, Vector2(left, baseline), word,
 		HORIZONTAL_ALIGNMENT_LEFT, -1.0, px, _at(OPACITY_WORD))
-	draw_string(_fonts.instrument, Vector2(left + word_width + space, baseline), number,
+	draw_string(_stamp_font, Vector2(left + word_width + space, baseline), stamp,
 		HORIZONTAL_ALIGNMENT_LEFT, -1.0, px, _at(1.0))
 
 
@@ -344,11 +544,29 @@ func _angle_at(t: float) -> float:
 	return (clampf(t, 0.0, 1.0) - 0.5) * span_radians() - PI * 0.5
 
 
-## The element's ink at one rung of section 2.1's opacity ladder.
+## A track parameter (0 at the moon end of the TRACK, 1 at the sun end) as an arc
+## parameter (0 and 1 at the arc's true ends, where the terminals are pinned).
+## One function, so the groove, the travelled segment and the mark cannot come to
+## disagree about where the track is.
+func _track_t(u: float) -> float:
+	var inset := track_inset()
+	return lerpf(inset, 1.0 - inset, clampf(u, 0.0, 1.0))
+
+
+## The element's ink at one rung of section 2.1's opacity ladder -- and, during
+## the 散, that rung's own place in the dispersal. Every draw call in this file
+## goes through here, which is why the order costs one line and cannot be
+## forgotten by whoever adds the next part.
 func _at(opacity: float) -> Color:
 	var colour := ink()
-	colour.a = opacity
+	colour.a = opacity * _dispersal(opacity)
 	return colour
+
+
+func _dispersal(opacity: float) -> float:
+	if _breath == null:
+		return 1.0
+	return _breath.dispersal_at(_breath_seconds, lead_for(opacity))
 
 
 func _px(design_px: float) -> float:
@@ -384,11 +602,11 @@ func _load_face(glyph: StringName) -> Texture2D:
 ## 1.77 : 1 at the stroke core against a nominal 4.36 : 1, with not one pixel
 ## reaching its own ink.
 ##
-## The day number beside it is NOT affected and does not need to be: it is the
-## instrument face at full strength, and the same capture measured it at
-## 4.71 : 1. A monospaced Latin digit has a stem several times the width of a CJK
-## hairline at the same size, which is why one line of type can hold two very
-## different legibilities and why they are measured apart.
+## The day stamp beside it is measured apart, and it USED to be the instrument
+## face -- see _draw_text() for the measurement that moved it, which is the same
+## defect one family further along: one line of type can hold two very different
+## legibilities, so the two halves have to be measured separately or one of them
+## rides on the other's number.
 ##
 ## A CHAIN OF ITS OWN, not UIFonts.interface with spacing written onto it: that
 ## object is shared by the whole interface and spacing is per-size, so writing to
@@ -403,3 +621,38 @@ func _build_label_font() -> FontVariation:
 		_tokens.breath_latin_weight,
 		_tokens.breath_cjk_weight,
 		int(roundf(_data.label_tracking_em * _data.label_design_px)))
+
+
+## The same chain as the phase word, at the same weights, plus tabular figures.
+##
+## SAME WEIGHTS ON PURPOSE. 夜晚 and `Day 4` sit on one baseline at one size, and
+## two families at one nominal size land at two optical weights unless somebody
+## chooses. Section 2.2's revision already chose for this layer -- 600 CJK, 500
+## Latin -- and taking both from those tokens is what makes the pair a decision
+## rather than a coincidence. The phase word draws at 72% and the stamp at 100%,
+## so the hierarchy is carried by the opacity ladder, which is section 2.1's
+## channel for it, and not by the type.
+##
+## A SECOND OBJECT, not _label_font with a feature written onto it: the two are
+## drawn at different rungs and will not always want the same features, and one
+## shared FontVariation edited from two places is how a font ends up with a
+## setting nobody remembers asking for.
+##
+## `opentype_features` takes a StringName key and `variation_opentype` does not --
+## two neighbouring properties of one class with two different key contracts, one
+## of them silent (UIFonts._variation records the measurement). Which is exactly
+## why the tabular claim is checked by MEASURING all ten digits in the test rather
+## than by reading this dictionary back.
+func _build_stamp_font() -> FontVariation:
+	if _fonts == null or _fonts.interface == null or _data == null or _tokens == null:
+		return null
+	var chain := _fonts.interface_at(
+		_tokens.breath_latin_weight,
+		_tokens.breath_cjk_weight,
+		int(roundf(_data.label_tracking_em * _data.label_design_px)))
+	# interface_at() degrades to the SHARED `interface` chain when a font path is
+	# missing. Writing a feature onto that would re-figure the whole interface, so
+	# the degraded path is left exactly as it is handed over.
+	if chain != null and chain != _fonts.interface:
+		chain.opentype_features = { UIFonts.TABULAR: 1 }
+	return chain

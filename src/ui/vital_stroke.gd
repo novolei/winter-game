@@ -79,6 +79,10 @@ var _track_px := 0.0
 ## screen.
 var _ground := UIInk.UNKNOWN_GROUND
 
+## 散 · 边缘先化开. One, until whoever owns this stroke says it may leave ahead of
+## the element it belongs to. See set_dispersal().
+var _dispersal := 1.0
+
 
 func build(tokens: UITokens, row: VitalReadout, seed := 0.0) -> bool:
 	_tokens = tokens
@@ -247,6 +251,21 @@ func set_attenuation(amount: float) -> void:
 	queue_redraw()
 
 
+## 散 · 边缘先化开: how far ahead of its element this stroke has got in leaving.
+## 1 while the element is whole, 0 once this part has gone.
+##
+## Applied HERE as well as in advance(), so it does not matter whether the owner
+## pushes it before or after the tick -- two nodes' _process order is not
+## something an element's appearance should depend on.
+func set_dispersal(amount: float) -> void:
+	_dispersal = clampf(amount, 0.0, 1.0)
+	modulate.a = VitalTone.gutter(_elapsed, _state) * _dispersal
+
+
+func dispersal() -> float:
+	return _dispersal
+
+
 ## Public and carrying the driving, so a whole crystallisation is playable in a
 ## test with no frames.
 func advance(delta: float) -> void:
@@ -258,7 +277,7 @@ func advance(delta: float) -> void:
 	# 颤, and the guttering of a fire going out. Both are section 2.4's, both
 	# only at CRITICAL, and both are cool -- weight and motion, never warmth.
 	position = _home + VitalTone.shiver_offset(_tokens, _viewport, _elapsed, _state)
-	modulate.a = VitalTone.gutter(_elapsed, _state)
+	modulate.a = VitalTone.gutter(_elapsed, _state) * _dispersal
 	queue_redraw()
 
 

@@ -1,7 +1,7 @@
-[gd_resource type="Resource" script_class="BirdSpecies" format=3]
+[gd_resource type="Resource" script_class="BirdSpecies" format=3 uid="uid://b1gmg3b0mygfx"]
 
-[ext_resource type="Script" path="res://src/definitions/bird_species.gd" id="1_o0mc4"]
-[ext_resource type="Script" path="res://src/definitions/bird_take.gd" id="2_1bh8h"]
+[ext_resource type="Script" uid="uid://qrqsfcxelggv" path="res://src/definitions/bird_species.gd" id="1_o0mc4"]
+[ext_resource type="Script" uid="uid://bfqwptdtnb5kh" path="res://src/definitions/bird_take.gd" id="2_1bh8h"]
 
 [sub_resource type="Resource" id="Resource_623i4"]
 script = ExtResource("2_1bh8h")

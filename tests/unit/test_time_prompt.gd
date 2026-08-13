@@ -115,9 +115,39 @@ func test_it_dies_four_seconds_later_and_the_layer_frees_it() -> void:
 	assert_eq(_layer.live_count(), 0, "the prompt outlived its own breath")
 	assert_true(_prompt.live() == null, "the prompt kept a reference to a freed element")
 
-func test_the_hold_is_the_documented_four_seconds() -> void:
-	assert_almost_eq(_prompt.data().hold_seconds, 4.0, 0.0001)
+## WHAT THIS TEST USED TO BE, AND WHY IT MOVED
+##
+## It read `assert_almost_eq(hold_seconds, 4.0)`, and it was pinning a VALUE --
+## "the .tres agrees with the figure printed in section 5.10" -- not a
+## requirement. The owner asked for the dwell to double, so the figure moved and
+## the pin moves with it. The REQUIREMENT this element has to meet is pinned
+## elsewhere and did not need touching: test_it_dies_four_seconds_later... derives
+## the whole envelope from the data and asserts the element is gone at the end of
+## it, which is rule 4 and is what actually matters.
+##
+## `hours_between` is a different animal and stays at 4: it is section 5.10's
+## cadence, the owner said nothing about it, and it is a relationship the schedule
+## is measured against (see test_four_hours_is_four_twenty_fourths...).
+func test_the_hold_is_the_documented_eight_seconds() -> void:
+	assert_almost_eq(_prompt.data().hold_seconds, 8.0, 0.0001)
 	assert_almost_eq(_prompt.data().hours_between, 4.0, 0.0001)
+
+## THE INTERFACE HAS ONE DWELL, NOT TWO -- and that is the relationship, where the
+## line above is only the number.
+##
+## Section 5.2's note and section 5.10's prompt are the two TIMED elements in the
+## breath layer: born on an event, held, and killed by a clock the player cannot
+## extend. They are read the same way, by the same person, in the same margin of
+## the same frame. Two different dwells would be two different reading speeds
+## being asked of one reader.
+##
+## Written as a comparison rather than as two 8.0s so that moving one and
+## forgetting the other is what turns this red -- which is the failure a pair of
+## value pins cannot catch.
+func test_the_two_timed_prompts_share_one_dwell() -> void:
+	assert_almost_eq(_prompt.data().hold_seconds, ThresholdSurfacing.HOLD_SECONDS, 0.0001,
+		"section 5.2 holds for %.2f s and section 5.10 for %.2f s; one reader, one dwell"
+			% [ThresholdSurfacing.HOLD_SECONDS, _prompt.data().hold_seconds])
 
 ## A stopped clock is not a slow clock. Nothing should appear before the run
 ## begins or after it ends.
@@ -197,15 +227,77 @@ func test_the_arc_is_stamped_with_the_phase_it_was_born_in() -> void:
 
 # --- what it says ------------------------------------------------------------
 
-## His example reads 夜晚 4: the phase and the day, and both come out of data so
-## neither is a string in a .gd file.
+## 夜晚 Day 4: the phase, the label and the day, all three out of data so none of
+## them is a string in a .gd file.
 func test_it_reads_the_phase_and_the_day() -> void:
 	var arc: TimeArc = TimeArcScript.new()
 	assert_true(arc.build(_layer.tokens(), _layer.fonts(), _prompt.data()))
+	var data := _prompt.data()
 	arc.set_phase(true, 4, 0.5)
-	assert_eq(arc.text(), "%s 4" % _prompt.data().night_label)
+	assert_eq(arc.text(), "%s %s 4" % [data.night_label, data.day_word])
 	arc.set_phase(false, 2, 0.5)
-	assert_eq(arc.text(), "%s 2" % _prompt.data().day_label)
+	assert_eq(arc.text(), "%s %s 2" % [data.day_label, data.day_word])
+	arc.free()
+
+## THE NUMBER IS LABELLED, and this is the owner's own ruling: 最好加上 Day
+## 不需要说第几天. Shipped bare the line read 夜晚 1, and nothing in it says whether
+## that 1 is the day or an index of the night.
+func test_the_day_number_is_labelled() -> void:
+	var arc: TimeArc = TimeArcScript.new()
+	assert_true(arc.build(_layer.tokens(), _layer.fonts(), _prompt.data()))
+	arc.set_phase(true, 3, 0.5)
+	assert_true(_prompt.data().day_word != "",
+		"the day number went back to being a bare numeral")
+	assert_true(arc.day_stamp().contains(_prompt.data().day_word),
+		"the stamp reads '%s' and does not carry the label" % arc.day_stamp())
+	arc.free()
+
+## AND IT HAS NO TOTAL, deliberately. `Day 3 / 7` is a countdown, and the owner
+## declined it: the seven days are endured, not counted down. This is a test that
+## something must NOT appear -- the same shape as section 4.4's abandoned ending,
+## and it exists because "add the denominator" is the obvious next idea and the
+## reason not to is a design decision nobody will find in the code.
+func test_the_day_stamp_carries_no_denominator() -> void:
+	var arc: TimeArc = TimeArcScript.new()
+	assert_true(arc.build(_layer.tokens(), _layer.fonts(), _prompt.data()))
+	for day in range(1, 8):
+		arc.set_phase(false, day, 0.5)
+		var stamp := arc.day_stamp()
+		for mark in ["/", "of", "共", "7"]:
+			if mark == "7" and day == 7:
+				continue
+			assert_false(stamp.contains(mark),
+				"the day stamp reads '%s' and has grown a total" % stamp)
+	arc.free()
+
+## TABULAR FIGURES, MEASURED RATHER THAN CONFIGURED.
+##
+## The stamp left the monospaced instrument face (see TimeArc._draw_text for the
+## contrast measurement that moved it), and the one thing that face was buying is
+## a numeral whose width does not change between 9 and 10 -- because this line is
+## CENTRED, so a numeral that changes width walks the whole line sideways on the
+## day it happens.
+##
+## `opentype_features` is asked for `tnum`. This project's own record is that a
+## neighbouring property accepts a key, reads it back, and never applies it, so
+## reading the dictionary back would prove nothing. Every digit is measured.
+func test_the_day_stamp_holds_its_width_across_every_digit() -> void:
+	var arc: TimeArc = TimeArcScript.new()
+	assert_true(arc.build(_layer.tokens(), _layer.fonts(), _prompt.data()))
+	arc.layout_for(Vector2(1920, 1080))
+	var font: FontVariation = arc.stamp_font()
+	assert_not_null(font)
+	if font == null:
+		return
+	var px := 17
+	var first := font.get_string_size("0", HORIZONTAL_ALIGNMENT_LEFT, -1.0, px).x
+	assert_true(first > 0.0, "the stamp face measured every digit at zero width")
+	for digit in range(10):
+		var width := font.get_string_size(str(digit), HORIZONTAL_ALIGNMENT_LEFT, -1.0, px).x
+		assert_almost_eq(width, first, 0.01,
+			"digit %d is %.3f px wide against %.3f for 0 -- the figures are not "
+				% [digit, width, first]
+				+ "tabular, so the centred line will shift when the day rolls over")
 	arc.free()
 
 func test_both_faces_are_on_disk_and_neither_is_drawn_in_code() -> void:
@@ -255,10 +347,8 @@ func test_at_night_the_mark_walks_from_the_moon_toward_the_sun() -> void:
 	arc.set_phase(true, 4, 1.0)
 	var dawn: Vector2 = arc.mark_position()
 	assert_true(dawn.x > dusk.x, "the night ran backwards")
-	assert_almost_eq(dusk.x, arc.icon_centre(false).x, 1.0,
-		"the night should begin at the moon")
-	assert_almost_eq(dawn.x, arc.icon_centre(true).x, 1.0,
-		"the night should end at the sun")
+	assert_true(dusk.x < arc.point_at(0.5).x and dawn.x > arc.point_at(0.5).x,
+		"the night should start on the moon's side and end on the sun's")
 	arc.free()
 
 func test_in_the_day_the_mark_walks_toward_the_night_that_is_coming() -> void:
@@ -271,8 +361,111 @@ func test_in_the_day_the_mark_walks_toward_the_night_that_is_coming() -> void:
 	var dusk: Vector2 = arc.mark_position()
 	assert_true(dusk.x < dawn.x,
 		"in the day the mark must walk toward the moon, not away from it")
-	assert_almost_eq(dawn.x, arc.icon_centre(true).x, 1.0, "the day should begin at the sun")
-	assert_almost_eq(dusk.x, arc.icon_centre(false).x, 1.0, "the day should end at the moon")
+	assert_true(dawn.x > arc.point_at(0.5).x and dusk.x < arc.point_at(0.5).x,
+		"the day should start on the sun's side and end on the moon's")
+	arc.free()
+
+# --- 散 · 边缘先化开 ----------------------------------------------------------
+
+## THE LAST THING ON THE SNOW IS THE DOT THAT SAYS WHERE IN THE DAY YOU ARE.
+##
+## The dispersal order is not chosen twice: section 2.1's opacity ladder is
+## already this element's statement of how much each part weighs, so a part leads
+## the exit by exactly how faintly it is drawn. Pinned as the RELATIONSHIP -- a
+## fainter rung leaves earlier -- so that adding a part at a new rung cannot get
+## the order wrong, and re-authoring the ladder cannot silently invert it.
+func test_the_faintest_ink_leaves_the_prompt_first() -> void:
+	var arc: TimeArc = TimeArcScript.new()
+	assert_true(arc.build(_layer.tokens(), _layer.fonts(), _prompt.data()))
+	var rungs := [1.0, TimeArc.OPACITY_WORD, TimeArc.OPACITY_DIM_FACE, TimeArc.OPACITY_TROUGH]
+	var previous := -1.0
+	for rung in rungs:
+		var lead: float = arc.lead_for(rung)
+		assert_true(lead > previous,
+			"the rung at %.2f leads by %.2f, no more than the brighter rung above it"
+				% [rung, lead])
+		previous = lead
+	assert_almost_eq(arc.lead_for(1.0), 0.0, 0.0001,
+		"what is drawn at full strength IS the element and must leave with it")
+	arc.free()
+
+## And the order reaches the pixels: driven through a real exit, the groove is
+## gone while the mark is still there.
+func test_the_prompt_comes_apart_in_that_order_on_the_way_out() -> void:
+	_run(_prompt.seconds_between() + 0.5)
+	var arc := _prompt.live()
+	assert_not_null(arc)
+	if arc == null:
+		return
+	var breath: Breath = _prompt.breath()
+	assert_not_null(breath)
+	if breath == null:
+		return
+	# Two thirds of the way through the exit.
+	var t: float = breath.exit_begins() + breath.exit_seconds * 0.66
+	var groove: float = breath.dispersal_at(t, arc.lead_for(TimeArc.OPACITY_TROUGH))
+	var mark: float = breath.dispersal_at(t, arc.lead_for(1.0))
+	assert_true(groove < mark,
+		"two thirds through the exit the groove has %.3f left and the mark %.3f -- "
+			% [groove, mark] + "the element is leaving as one rigid picture")
+	assert_almost_eq(mark, 1.0, 0.0001)
+
+# --- the mark has somewhere to stand at both ends ----------------------------
+
+## THESE TWO TESTS USED TO ASSERT THE DEFECT.
+##
+## They read `assert_almost_eq(dusk.x, arc.icon_centre(false).x, 1.0)` -- the mark
+## reaches the moon's centre at the start of a night. It did, and that was the
+## bug: the mark is 3 design pixels of radius and the glyph is 20 across, in the
+## same ink, drawn after it. The mark was UNDERNEATH the moon, so at the start of
+## every phase the element showed no "now" at all, and the travelled segment has
+## zero length there by definition. Photographed on `pale_day` snow at 1% into a
+## night: a uniform hairline between two blobs.
+##
+## So the assertion above was a VALUE that happened to be true, describing a
+## picture nobody had looked at. What replaces it is the requirement: wherever the
+## mark is, it can be seen.
+func test_the_mark_never_hides_under_a_terminal() -> void:
+	var arc: TimeArc = TimeArcScript.new()
+	assert_true(arc.build(_layer.tokens(), _layer.fonts(), _prompt.data()))
+	arc.layout_for(Vector2(1920, 1080))
+	var data := _prompt.data()
+	# Half a glyph plus half the mark: below this the two overlap on screen.
+	var touching := (data.icon_design_px + TimeArc.MARK_DESIGN_PX * 2.0) * 0.5
+	for phase in [true, false]:
+		for progress in [0.0, 0.001, 0.5, 0.999, 1.0]:
+			arc.set_phase(phase, 4, progress)
+			var mark: Vector2 = arc.mark_position()
+			for sun in [true, false]:
+				var gap := mark.distance_to(arc.icon_centre(sun))
+				assert_true(gap >= touching,
+					"at %s progress %.3f the mark is %.2f px from the %s, and they "
+						% ["night" if phase else "day", progress, gap,
+							"sun" if sun else "moon"]
+						+ "overlap below %.2f px" % touching)
+	arc.free()
+
+## The clearance is a RELATIONSHIP -- half a glyph plus half a grid unit -- so
+## redrawing the icons bigger moves the track back rather than burying the mark
+## again. Pinned against the data's own numbers, never against 14.
+func test_the_track_is_held_back_by_half_a_glyph_and_half_a_gap() -> void:
+	var arc: TimeArc = TimeArcScript.new()
+	assert_true(arc.build(_layer.tokens(), _layer.fonts(), _prompt.data()))
+	arc.layout_for(Vector2(1920, 1080))
+	var data := _prompt.data()
+	assert_almost_eq(arc.track_clearance_design_px(),
+		data.icon_design_px * 0.5 + data.gap_design_px * 0.5, 0.0001)
+	# And it is a real inset, not a rounding artefact that happens to be positive.
+	assert_true(arc.track_inset() > 0.02,
+		"the track is inset by %.4f of the arc, which is not a gap anybody can see"
+			% arc.track_inset())
+	assert_true(arc.track_inset() < 0.25,
+		"the track has been inset by %.4f of the arc -- the mark has nowhere to go"
+			% arc.track_inset())
+	# The terminals stay pinned to the arc's true ends. The inset moved the TRACK,
+	# not the labels.
+	assert_almost_eq(arc.icon_centre(false).x, arc.point_at(0.0).x, 0.0001)
+	assert_almost_eq(arc.icon_centre(true).x, arc.point_at(1.0).x, 0.0001)
 	arc.free()
 
 ## An arc, not a line: the mark rises and falls across it the way a body crosses

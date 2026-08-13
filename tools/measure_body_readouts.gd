@@ -7,9 +7,24 @@ extends Node
 ##       --headless -- [--takes] [--limp] [--hands] [--posture]
 ##
 ## Written because a take's name is the supplier's intent and not its contents
-## (briefing trap 15). `Limping_Walk_inplace` is imported as `walk_limp` and has
-## never been played; before anything is wired to it, the question "does it
-## limp" has to be answered by a number.
+## (briefing trap 15). `Limping_Walk_inplace` was imported as `walk_limp` and had
+## never been played; before anything was wired to it, the question "does it
+## limp" had to be answered by a number. The answer was no, and the take now
+## ships under the name it earned, `walk_guarded`.
+##
+## ---------------------------------------------------------------------------
+## AND THE RENAME BROKE THIS TOOL FOR SEVEN WEEKS OF NOTHING SAYING SO
+## ---------------------------------------------------------------------------
+## Every clip list below is a literal, and every loop over one begins
+## `if not _player.has_animation(clip): continue`. When 9e7a6db renamed the take,
+## the lists kept saying `walk_limp`, the guard kept finding nothing, and the
+## guarded walk silently dropped out of every table this file prints. Two later
+## tasks read those tables. A row that is ABSENT reads as a take that was not
+## interesting rather than as a measurement that never ran.
+##
+## The lists are now the shipping names. If a take is named here and missing from
+## the library that is worth a line on the console, not a silent skip -- see
+## _missing().
 ##
 ## A LIMP IS AN ASYMMETRY, so that is what is measured. In a sound walk the two
 ## feet trace the same curve half a cycle apart, so the left trace against the
@@ -73,6 +88,20 @@ func _first(node: Node, type: String) -> Node:
 		if found != null:
 			return found
 	return null
+
+
+## Whether a clip this file asks for is absent -- and SAYS SO when it is.
+##
+## The silent `continue` this replaces is what let a renamed take vanish out of
+## six tables at once with a clean console (see the header). A tool that measures
+## takes by name has to treat a name it cannot resolve as news, because the
+## output of a measurement that never ran looks exactly like the output of a
+## measurement whose subject was uninteresting.
+func _missing(clip: String) -> bool:
+	if _player.has_animation(clip):
+		return false
+	print("  (%s: NOT IN THE LIBRARY -- this row was not measured, it was skipped)" % clip)
+	return true
 
 
 # --- what is in the library ---------------------------------------------------
@@ -180,8 +209,8 @@ func _report_gait_symmetry() -> void:
 	print("%-14s %8s %8s %8s %8s %8s %8s %8s" % [
 		"take", "L lift", "R lift", "ratio", "L stance", "R stance", "mirror r", "hip dip",
 	])
-	for clip in ["walk", "run", "walk_limp", "walk_weary", "walk_carry"]:
-		if not _player.has_animation(clip):
+	for clip in ["walk", "run", "walk_guarded", "walk_weary", "walk_carry"]:
+		if _missing(clip):
 			continue
 		var left := _heights(_trace(clip, "LeftFoot"))
 		var right := _heights(_trace(clip, "RightFoot"))
@@ -225,8 +254,8 @@ func _period_of(values: Array[float], dt: float) -> float:
 
 func _report_cycles() -> void:
 	var dt := 1.0 / SAMPLE_HZ
-	for clip in ["walk", "walk_limp", "walk_weary"]:
-		if not _player.has_animation(clip):
+	for clip in ["walk", "walk_guarded", "walk_weary"]:
+		if _missing(clip):
 			continue
 		var left := _heights(_trace(clip, "LeftFoot"))
 		var right := _heights(_trace(clip, "RightFoot"))
@@ -288,7 +317,7 @@ func _report_strides() -> void:
 	# in centimetres, so the same factor converts these traces to metres.
 	var scale := 1.88 / _standing_height()
 	var cycles := {
-		"walk": 1.0667, "run": 0.6667, "walk_limp": 1.1889,
+		"walk": 1.0667, "run": 0.6667, "walk_guarded": 1.1889,
 		"walk_weary": 1.4500, "walk_carry": 1.1333,
 	}
 	print("(every take is IN PLACE -- root travel is under half a centimetre per")
@@ -297,8 +326,8 @@ func _report_strides() -> void:
 	print("%-14s %11s %11s" % ["take", "slip rig/s", "m/s vs walk"])
 	var reference := 0.0
 	var rows: Array = []
-	for clip in ["walk", "run", "walk_limp", "walk_weary", "walk_carry"]:
-		if not _player.has_animation(clip):
+	for clip in ["walk", "run", "walk_guarded", "walk_weary", "walk_carry"]:
+		if _missing(clip):
 			continue
 		var cycle: float = cycles.get(clip, 1.0)
 		var hips := _trace(clip, "Hips")
@@ -383,8 +412,8 @@ func _hand_offset(clip: StringName, bone: String, at: float) -> Vector3:
 func _report_hands() -> void:
 	print("--- where the hands sit, relative to the hips (metres) ---")
 	print("%-14s %6s  %-22s %-22s %8s" % ["take", "t", "left (x,y,z)", "right (x,y,z)", "|sep|"])
-	for clip in ["idle", "idle_cold", "walk", "walk_limp", "walk_weary"]:
-		if not _player.has_animation(clip):
+	for clip in ["idle", "idle_cold", "walk", "walk_guarded", "walk_weary"]:
+		if _missing(clip):
 			continue
 		var length: float = _player.get_animation(clip).length
 		for fraction in [0.0, 0.25, 0.5, 0.75]:
@@ -405,8 +434,8 @@ func _report_hands() -> void:
 func _report_posture() -> void:
 	print("--- posture: head height and lean ---")
 	print("%-14s %9s %9s %9s" % ["take", "head y", "head z", "hips y"])
-	for clip in ["idle", "idle_cold", "walk", "walk_limp", "walk_weary"]:
-		if not _player.has_animation(clip):
+	for clip in ["idle", "idle_cold", "walk", "walk_guarded", "walk_weary"]:
+		if _missing(clip):
 			continue
 		var length: float = _player.get_animation(clip).length
 		var head := _skeleton.find_bone("Head")

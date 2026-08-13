@@ -2,6 +2,15 @@
 .godot/
 /android/
 
+# Local source art, imported binaries, and visual reference material. These are
+# intentionally kept outside Git because several individual files exceed the
+# hosting service's 100 MB object limit. Build/source code and data definitions
+# remain versioned; contributors acquire the asset pack separately.
+/assets/
+/Refs/
+/Unarmed_RM.glb
+/Unarmed_RM.glb.import
+
 # Subagent-driven-development scratch: ledgers, briefs, reports, review packages
 .superpowers/
 

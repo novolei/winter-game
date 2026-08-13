@@ -17,9 +17,41 @@ func _initialize() -> void:
 	data.day_label = "白天"
 	data.night_label = "夜晚"
 
+	# THE OWNER'S RULING: 最好加上 Day 不需要说第几天.
+	#
+	# Shipped bare, the line was `夜晚 1`, and nothing in it says whether the 1 is
+	# the day or an index of the night -- which is half of 信息不够清晰. `Day` is
+	# the label he chose, in preference to the 第 N 日 form, which he ruled out by
+	# name.
+	#
+	# NO DENOMINATOR, and no room left for one. `Day 3 / 7` is a countdown, and
+	# that is a dramatic decision about a game whose seventh day is the point; the
+	# owner declined it. See TimePromptData.day_word.
+	#
+	# A Latin word in a Chinese interface is a deviation from section 5.10's own
+	# copy (夜晚 4), and it is recorded as one in the document rather than made
+	# quietly. Section 2.2 provisions a Latin face for every family and gives a
+	# rule for mixing the two on one line, so the document permits the shape even
+	# though this section did not ask for it.
+	data.day_word = "Day"
+
 	data.hours_between = 4.0
 	data.hours_per_day = 24.0
-	data.hold_seconds = 4.0
+
+	# EIGHT SECONDS, and the exit that goes with it is section 5.4's 散·长.
+	#
+	# The owner asked for the dwell to double. At four seconds the prompt was
+	# readable; at eight it can be read, looked away from, and looked back at,
+	# which is what a deadline you are planning against actually needs (GDD
+	# section 3's NIGHTFALL = GO HOME).
+	#
+	# What doubling costs is measured rather than assumed. The period is a
+	# twenty-fourth of the authored day times four -- 150 s on every day the
+	# schedule currently authors -- so the whole envelope, 0.32 + 8.00 + 1.60,
+	# occupies 6.6% of the run against 3.5% before. tools/measure_prompt_traffic.gd
+	# is what says so, and it also says how often that lands on top of a section
+	# 5.2 note.
+	data.hold_seconds = 8.0
 
 	data.arc_degrees = 60.0
 	# CHOSEN AGAINST THE BREATHING BORDER, not for looks. At 60 degrees an arc's

@@ -136,7 +136,7 @@ func _at_start() -> void:
 	var crows := get_node_or_null("Main/Crows")
 	if crows != null and crows.has_method("arrive_now"):
 		crows.random_seed = _seed
-		crows.arrive_now()
+		crows.land_now()
 	var tyre := get_node_or_null("Main/Farmstead/TreeA/TireSwing") as Node3D
 	if tyre != null:
 		_tyre_rest = tyre.global_position

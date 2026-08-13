@@ -6,9 +6,10 @@
 script = ExtResource("1_68agh")
 day_label = "白天"
 night_label = "夜晚"
+day_word = "Day"
 hours_between = 4.0
 hours_per_day = 24.0
-hold_seconds = 4.0
+hold_seconds = 8.0
 arc_degrees = 60.0
 arc_width_design_px = 192.0
 icon_design_px = 20.0

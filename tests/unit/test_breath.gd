@@ -87,6 +87,151 @@ func test_the_exit_never_brightens() -> void:
 			"opacity rose from %.4f to %.4f during the exit" % [previous, value])
 		previous = value
 
+# --- the exit is the half that carries the poetry ----------------------------
+
+## PINNING A MOTION, NOT A DURATION.
+##
+## This project has already been caught by the difference: a landing was rewritten
+## end to end, every duration held, and the suite stayed green while the movement
+## became a different movement. 起点相同、终点相同、时长相同的两条曲线，手感可以完全不同.
+##
+## So this asserts the SHAPE of the departure. The exit's motion runs on an
+## ease-OUT while its opacity keeps section 2.4's 散: the element is therefore
+## visibly leaving while it is still legible, instead of hanging still for four
+## tenths of its exit and then being snuffed out in the last 135 ms, which is what
+## one curve on all three channels produced.
+##
+## Measured on the shipped envelope, and these are the numbers to defend:
+##
+##   a quarter of the exit gone   alpha still above 0.9, already a third risen
+##   half the exit gone           alpha still above 0.75, two thirds risen
+##
+## A later pass that puts the motion back on the fade's curve turns both of these
+## red, which is the entire reason they are written as a pair rather than as
+## "offset_at is non-zero".
+func test_the_exit_moves_early_and_fades_late() -> void:
+	var b = BreathScript.surface(_tokens)
+	var exit_from: float = b.exit_begins()
+	var travel: float = absf(b.exit_offset.y)
+	assert_true(travel > 0.0)
+
+	var quarter: float = exit_from + b.exit_seconds * 0.25
+	var risen_q: float = absf(b.offset_at(quarter).y) / travel
+	assert_true(b.opacity_at(quarter) > 0.90,
+		"a quarter into the exit the element is already at alpha %.3f -- it is being "
+			% b.opacity_at(quarter) + "switched off, not let go of")
+	assert_true(risen_q > 0.33,
+		"a quarter into the exit it has risen %.1f%% of its travel; a departure that "
+			% (risen_q * 100.0) + "has not visibly begun is a stall")
+
+	var half: float = exit_from + b.exit_seconds * 0.5
+	var risen_h: float = absf(b.offset_at(half).y) / travel
+	assert_true(b.opacity_at(half) > 0.75,
+		"halfway through the exit the element is at alpha %.3f" % b.opacity_at(half))
+	assert_true(risen_h > 0.66,
+		"halfway through the exit it has risen only %.1f%% of its travel" % (risen_h * 100.0))
+
+## And it SETTLES: the last quarter of the exit carries almost none of the
+## movement. Deceleration into stillness is what makes a thing read as having
+## departed rather than as having been dragged off.
+func test_the_exit_settles_rather_than_snapping_away() -> void:
+	var b = BreathScript.surface(_tokens)
+	var exit_from: float = b.exit_begins()
+	var travel: float = absf(b.exit_offset.y)
+	var at_three_quarters: float = absf(b.offset_at(exit_from + b.exit_seconds * 0.75).y)
+	var remaining: float = (travel - at_three_quarters) / travel
+	assert_true(remaining < 0.12,
+		"the last quarter of the exit still carries %.1f%% of the travel -- that is a "
+			% (remaining * 100.0) + "snatch at the end, not a settle")
+
+## THE MONTAGE'S GLYPHS ARE NOT LIFTED, THEY ARE CARRIED, and that is why
+## scatter() puts the motion back on the fade's own curve.
+##
+## A glyph taken by the wind accelerates out of stillness; an element letting go
+## of the screen decelerates into it. Keeping the two apart is also what leaves
+## section 5.9's already-approved montage frames byte-identical -- 被批准的是镜头,
+## and an exit rework is not a licence to restage one.
+func test_a_scattered_glyph_is_carried_on_the_drift_curve() -> void:
+	var lifted = BreathScript.surface(_tokens)
+	assert_eq(lifted.motion_ease, BreathScript.DRIFT_LIFT_EASE,
+		"an ordinary element should lift")
+	var blown = BreathScript.inscription(_tokens, 3, 8)
+	blown.scatter(Vector2.RIGHT, 2.0, 0.4)
+	assert_eq(blown.motion_ease, BreathScript.DRIFT_EASE,
+		"a scattered glyph must stay on section 2.4's 散, or every approved montage "
+			+ "frame moves")
+	# And the two really are different motions, or the assertion above is decoration.
+	var quarter := 0.25
+	assert_true(
+		BreathScript.ease_with(BreathScript.DRIFT_LIFT_EASE, quarter)
+			> BreathScript.ease_with(BreathScript.DRIFT_EASE, quarter) * 2.0,
+		"the lift and the drift are supposed to be differently front-loaded")
+
+## 散 · 边缘先化开. The dispersal is an ORDER, and the order is the thing to pin:
+## a part with a larger lead is gone earlier, at every instant of the exit, and
+## the element's own envelope (lead 0) is always the last thing left.
+func test_the_dispersal_takes_the_parts_in_order() -> void:
+	var b = BreathScript.surface(_tokens)
+	var exit_from: float = b.exit_begins()
+	var leads := [0.0, 0.25, 0.5, 0.75, 1.0]
+	for step in range(1, 20):
+		var t: float = exit_from + b.exit_seconds * float(step) / 20.0
+		var previous := 2.0
+		for lead in leads:
+			var left: float = b.dispersal_at(t, lead)
+			assert_true(left <= previous + 0.0001,
+				"at %.0f%% of the exit, lead %.2f has %.3f left against %.3f for the "
+					% [float(step) / 20.0 * 100.0, lead, left, previous]
+					+ "lead below it -- the order has inverted")
+			previous = left
+	assert_almost_eq(b.dispersal_at(exit_from + b.exit_seconds * 0.5, 0.0), 1.0, 0.0001,
+		"the element's own envelope must never disperse ahead of itself")
+
+## Nothing disperses before the exit -- an element that came apart while it was
+## still being read would be a fault, not a dispersal.
+##
+## AND LEAD ZERO IS IDENTITY AT EVERY TIME, which is the contract rather than an
+## oversight, and is pinned here because it looks like one. A part with no lead
+## leaves exactly with the element, so its multiplier is 1 throughout and the
+## element's own `modulate` does all the work -- which is what makes the common
+## case free. Sampling after the envelope is already outside the element's life;
+## the layer has freed it by then.
+func test_nothing_disperses_during_the_hold() -> void:
+	var b = BreathScript.surface(_tokens)
+	var mid: float = b.bloom_seconds * 0.5 + b.hold_seconds * 0.5
+	for lead in [0.0, 0.5, 1.0]:
+		assert_almost_eq(b.dispersal_at(mid, lead), 1.0, 0.0001,
+			"a part left early, during the hold -- the element would come apart while "
+				+ "it is still being read")
+	var after: float = b.total_seconds() + 1.0
+	assert_almost_eq(b.dispersal_at(after, 0.0), 1.0, 0.0001,
+		"a part with no lead is carried entirely by the element's own envelope, so "
+			+ "its multiplier is 1 at every time including after the end")
+	for lead in [0.25, 0.5, 1.0]:
+		assert_almost_eq(b.dispersal_at(after, lead), 0.0, 0.0001,
+			"a part that leads the exit has to be gone once the exit is over")
+
+## The leading part is gone WELL before the element, or the order is real in the
+## arithmetic and invisible on screen. Measured: at full lead a part has gone by
+## the time the element itself is still at four fifths of its ink.
+func test_the_leading_part_goes_while_the_element_is_still_bright() -> void:
+	var b = BreathScript.surface(_tokens)
+	var exit_from: float = b.exit_begins()
+	var gone := -1.0
+	for step in range(0, 201):
+		var u: float = float(step) / 200.0
+		if b.dispersal_at(exit_from + b.exit_seconds * u, 1.0) <= 0.0:
+			gone = u
+			break
+	assert_true(gone > 0.0, "the leading part never finished leaving")
+	assert_true(gone < 0.70,
+		"the first part to go is still there %.0f%% of the way through the exit; it "
+			% (gone * 100.0) + "is leaving with the element, not ahead of it")
+	assert_true(b.opacity_at(exit_from + b.exit_seconds * gone) > 0.5,
+		"by the time the leading part has gone the element is already at alpha %.3f, "
+			% b.opacity_at(exit_from + b.exit_seconds * gone)
+			+ "so nobody can see that anything left first")
+
 ## Sampling outside the envelope must be defined. A driver that overshoots the
 ## last frame by a millisecond should get "finished", not a NaN.
 func test_sampling_outside_the_envelope_is_clamped() -> void:

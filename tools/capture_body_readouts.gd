@@ -235,12 +235,12 @@ func _cell() -> Image:
 ## one of them at a different point of its stride than another and call that a
 ## difference in gait.
 func _capture_takes() -> void:
-	var clips := ["walk", "walk_limp", "walk_weary"]
-	# Measured cycle length, not clip length: walk_limp is three cycles in one take
+	var clips := ["walk", "walk_guarded", "walk_weary"]
+	# Measured cycle length, not clip length: walk_guarded is three cycles in one take
 	# and walk_weary is six, so playing "the clip" would step six strides in a row
 	# of six columns and photograph the same pose six times.
 	var cycles := {
-		"walk": 1.0667, "walk_limp": 1.1889, "walk_weary": 1.4500,
+		"walk": 1.0667, "walk_guarded": 1.1889, "walk_weary": 1.4500,
 		"walk_carry": 1.1333, "idle": 3.0, "idle_cold": 3.0,
 	}
 	# In profile to the camera. A gait is judged from the side -- which leg swings

@@ -60,9 +60,29 @@ const EVENT_STAT_RECOVERED := &"survival.stat_recovered"
 ## UIAudio.play() returns false for a cue that is not there, quietly.
 const CUE_WORSENED := &"ui.threshold"
 
-## Section 5.2's timing: 呵 200 / 持 2400 / 散 900. The bloom and the drift are
-## the token defaults; only the hold is this section's own.
-const HOLD_SECONDS := 2.4
+## Section 5.2's timing: 呵 200 / 持 EIGHT SECONDS / 散 900. The bloom and the
+## drift are the token defaults; only the hold is this section's own.
+##
+## ---------------------------------------------------------------------------
+## WHY EIGHT AND NOT 5.2'S AUTHORED 2400
+## ---------------------------------------------------------------------------
+## The owner asked for the dwell to double and this is a TIMED prompt: it is born
+## on an event, it holds, and it dies on a clock nobody can extend. So it takes
+## the new dwell along with section 5.10's, which is the only reading under which
+## the interface has one dwell rather than two.
+##
+## 2.4 s was never enough for what this element says. The copy is a SENTENCE --
+## 说后果，不说数字 -- and a player whose eyes are in the valley, which is the
+## third pillar working, has to notice the margin, look at it, and read seven
+## characters. 2.4 s is the reading time of the line with nothing left over for
+## the looking.
+##
+## THE EXIT DOES NOT GROW WITH IT, and that is deliberate. Section 2.4 gives 散·长
+## to 结局、日次、火熄 -- endings. A threshold crossing is news, not an ending, and
+## 900 ms is section 5.2's own figure. What the 900 ms now CONTAINS is the change:
+## the arc goes first, then the icon, and the sentence is alone on the snow for
+## the last third of it. See ThresholdNote's leads.
+const HOLD_SECONDS := 8.0
 
 ## Section 5.2: 多条同时 -- 纵向堆叠，间距 8px，第 N 条延迟 160×N ms（错峰是 juice，
 ## 也是可读性）. Four lines arriving on one frame is a wall; four arriving a sixth
