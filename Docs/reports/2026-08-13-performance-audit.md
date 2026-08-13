@@ -20,11 +20,11 @@ need the specified movement capture before a visual-system rewrite.
 | Seeded SnowField before the recentre repair | 16 pauses across 132 m, each about 1.34--1.44 s | Resolved historical defect; a GDScript 512 x 512 raster rebuild ran every roughly 8 m. |
 | Seeded SnowField after the repair, D3D12 on RTX 5090 | 220 samples / 132 m; 6.530 ms average, 35.093 ms worst, no frame at or above 50 ms | The severe movement freeze is gone in this controlled run. |
 | Current SnowField recentre | 30.207 ms maximum in the render-audit run | A residual watch item. It must remain covered by the existing less-than-25-ms target rather than being mistaken for the old freeze. |
-| TrackMask | No direct timing counter yet | The controlled traversal moved positions directly and did not create continuous deep-snow furrows, so it cannot clear the TrackMask path. |
+| TrackMask, real deep-snow furrow walk | 300 physics ticks / 5 s at 3.3 m/s: 300 dynamic flushes, 5 recentres, 1,200 MiB total upload traffic (240 MiB/s); flush average 0.734--0.760 ms, maximum 1.409--1.858 ms on RTX 5090 | Confirmed bandwidth problem but not the historical multi-second freeze on this hardware. It is a cross-hardware P1 resilience target. |
 
 ## Ranked findings
 
-### P1 high-risk -- TrackMask full-image traffic on movement
+### P1 confirmed -- TrackMask full-image traffic on movement
 
 `src/systems/track_mask.gd` owns a 2048 x 2048 R8 dynamic mask: 4 MiB. A
 three-metre recentre duplicates, clears, and blits that whole image, then the
@@ -33,11 +33,13 @@ roughly each 0.06 m of movement, up to about 60 times per second. The
 theoretical worst case is consequently 240 MiB/s from CPU to GPU before
 counting the full-image copy.
 
-This is a high-risk path rather than a timing-confirmed active hitch: the
-controlled traversal moved positions directly and did not create continuous
-deep-snow furrows. It is the first path to instrument during real deep-snow
-walking. The current image API requires a full-size update, so a pretend
-partial update would not solve it.
+Real D3D12 walking evidence now confirms the cadence and byte count: 300
+furrow/footprint updates in five seconds uploaded 1,200 MiB. CPU flush cost was
+0.734--0.760 ms average and 1.409--1.858 ms maximum on an RTX 5090, so it did
+not create the historical multi-second stall on that high-end target. It is
+still a material P1 cross-hardware and combined-effects risk. The current
+image API requires a full-size update, so a pretend partial update would not
+solve it.
 
 **Required remediation:** replace the moving monolithic image with a world
 anchored 4 x 4 `Texture2DArray` of 512 x 512 R8 layers. Each layer represents
@@ -45,7 +47,10 @@ anchored 4 x 4 `Texture2DArray` of 512 x 512 R8 layers. Each layer represents
 affected 256 KiB layer; recycle a layer only when it leaves the 4 x 4 window.
 The shader selects a layer from world XZ, with a one-texel overlap at edges.
 This preserves every footprint, furrow, resolution, and decay rule while
-reducing a one-layer upload by sixteen times.
+reducing a one-layer upload by sixteen times. A mark spanning a layer boundary
+correctly updates two layers (512 KiB), or four at a corner (1 MiB); therefore
+the contract is at most 256 KiB **per layer**, plus an explicit boundary-case
+cap, not an incorrect universal 256 KiB promise.
 
 ### P0 confirmed -- Sparse-dynamic-snow cap eviction
 
@@ -126,8 +131,9 @@ than reducing the player-facing snow surface first.
 2. No gameplay frame may reach 50 ms; target p99 is at most 16.7 ms for the
    chosen performance tier.
 3. TrackMask reports `last_shift_ms`, `last_upload_ms`,
-   `uploaded_bytes`, and `flush_count`. In deep snow, a dynamic upload is
-   at most 256 KiB and never a 4 MiB whole-window upload.
+   `uploaded_bytes`, and `flush_count`. In deep snow, each dynamic layer upload
+   is at most 256 KiB; a one-layer seam is 512 KiB and a four-layer corner is
+   at most 1 MiB. A 4 MiB whole-window upload is prohibited.
 4. Dynamic snow cap eviction has an explicit fixed-work budget, proved after
    travelling beyond the tile cap.
 5. SnowField retains a less-than-25-ms recentre gate and a 100 m seeded
