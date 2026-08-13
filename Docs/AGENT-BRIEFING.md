@@ -647,3 +647,23 @@ Two things make it worse than one lost reference:
 5. **`var x := typed_array[i]` is already safe — do not "fix" it.** `CrowCalls._speak()` was reported as the third instance of this bug and is not one; its existing guard catches a dangling element exactly as written. Changing it would be churn on a false premise.
 
 **Where it was found.** `crow_calls.gd:293, 296` (the report) and `:208` (`bird as Crow`); `ui_layer.gd:151` and `_release()`'s typed parameter at `:195`, reached from `:140` and `:162`; `ambience_director.gd:623, 643`, two lines out of step with `:185` in their own file. Every other candidate the sweep turned up held a `Resource`, `RefCounted` or value type, which a container keeps alive and which therefore cannot dangle.
+
+### 一条记录里，「测到了什么」和「为什么会这样」的可靠度不一样
+
+第七类假通过的原始记录是这件事最干净的例子：**测量是对的，解释是错的，而修法继承的是解释。**
+
+| | 原始记录 | 实测（`1d0e156`） |
+|---|---|---|
+| 测量 | 一个语法上死掉的 `.gdshader` 让整个套件全绿通过 | **真的** |
+| 解释 | 因为着色器在更晚的一帧编译，而套件活在第一帧之内 | **假的**——着色器在**资源加载时同步编译**，跟帧无关 |
+| 修法 | 所以加一行 `RenderingServer.force_draw()` | **什么都关不上**，因为它是从那个错误解释里推出来的 |
+
+验证方式很直接：把当初那个 `return`-in-`sky()` 放回 `aurora_sky.gdshader`，**在 HEAD 上、不改任何框架代码，套件直接变红**。
+
+真因更窄也更糟：**没有任何测试加载的着色器，根本不会被解析。**九个全部弄坏，七个报错、两个一声不吭——那七个是被构建其宿主系统的测试顺带编译的。修法因此完全不同。
+
+**所以读一条历史记录时，把它拆成两半分别信任。**带着实测数据的那一半通常可靠——它是有人当场看见的。而「为什么会这样」那一半，往往是当时最合理的推断，**没有人回头验过它**。
+
+**任何从解释推导出来的行动方案，继承的是解释的可靠度，而不是测量的。**所以照着一条旧记录去修东西之前，先花几分钟把那个缺陷复现出来：如果它以你预期的方式发作，解释大概率成立；如果它以别的方式发作，或者根本不发作，你刚刚省下的是照着错误模型改代码的一整轮。
+
+同一时期还有一条正在被同样的方式检验（陷阱 14 的 RNG 偏置：**六个种子**的原始观测，对上 **2000 个发生器**的证伪）。**两条都不是当初写记录的人不认真**——他们都写下了自己真的看见的东西。可靠度的差别不在态度，在于测量被执行过，而解释只是被想出来。
