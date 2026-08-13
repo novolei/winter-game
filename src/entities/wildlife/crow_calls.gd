@@ -4,25 +4,38 @@ extends Node3D
 ## The caws, when a flock goes up.
 ##
 ## ---------------------------------------------------------------------------
-## THIS SHIPS SILENT, AND THAT IS A FINDING RATHER THAN AN OMISSION
+## THE AUDIO IS HERE NOW -- AND THE OWNER STILL CANNOT HEAR IT
 ## ---------------------------------------------------------------------------
-## The crow's own asset pack -- Malbers "Poly Art Ravens & Crows" v4.1 -- DOES
-## ship audio: fifteen caw `.wav`s, recorded in Wave 2's own inventory of the
-## `.unitypackage`. **None of them is in this repository.** Wave 2 brought across
-## the five `.FBX`s and nothing else, and the package itself is no longer on
-## disk, so there is nothing here to import.
+## This header used to say at length that the folder was empty and that the
+## system shipped silent. That stopped being true at `7cbe595`: there are three
+## caws in `CALL_FOLDER`, they are imported, and everything in this file works.
+## The schedule draws, the emitters are built, `play()` is accepted, `playing`
+## reports true and the voices track their birds.
 ##
-## The only bird audio anywhere on this machine is `SFX_Seagull.ogg` from an
-## unrelated pack (polyperfect's Low Poly Animated Animals, which has no corvid
-## in it at all), and `Sound FX Starter Pack Vol. 1` has no bird sounds
-## whatsoever. A seagull over a winter valley is not a crow, and a wrong bird is
-## worse than silence -- so nothing has been substituted.
+## **And not one sample has ever reached the speakers.** Measured on the real
+## scene at HEAD, on the master bus peak rather than on `play()`'s return value:
 ##
-## What is built instead is everything AROUND the sound: the schedule, the
-## emitters, the positions and the recession, all of which are testable with no
-## audio on disk. Drop caws into `CALL_FOLDER` and they play. There is no `.gd`
-## change, no `.tres` to generate and no list to keep in step -- the folder IS
-## the data, which is the shape briefing constraint 4 asks for.
+##     a caw at the player, max_distance = 60      ->  -200.00 dB   (silence)
+##     the same caw placed ON the listener          ->    -8.60 dB
+##
+## The cause is NOT in this file, and this note is here so the next reader does
+## not spend a day in it. `AudioStreamPlayer3D.max_distance` is a hard cutoff
+## measured **from the listener**, the listener is the `Camera3D`, and the camera
+## rides a 90 m boom (`src/rendering/camera_rig.gd:49`). 60 < 90.71, so the
+## engine mutes every caw outright. `audible_m` below is correct as authored --
+## it is a PLAYER-relative design distance, and it is right the day the listener
+## sits on the player. **Do not "fix" it by raising the number**; that is
+## compensating for a position error with a constant, which is briefing trap 13.
+##
+## The same arithmetic silences `dog.bark` (60 m), `dog.whimper` (45), `dog.whine`
+## (35), `dog.growl` (14) and the hearth (24). The ambience bed survives only
+## because it declares no `max_distance` at all. Written up for the owner in
+## `.superpowers/sdd/wave3/task-w3-bird-system-explained.md`; the remedy is one
+## `AudioListener3D` and it re-levels the whole mix, so it is his call.
+##
+## What this file does own, and gets right: the folder IS the data. Drop caws in
+## and they play -- no `.gd` change, no `.tres` to generate, no list to keep in
+## step, which is the shape briefing constraint 4 asks for.
 ##
 ## ---------------------------------------------------------------------------
 ## SPARSE AND IRREGULAR -- NOT A CHORUS
@@ -169,18 +182,29 @@ func calls() -> Array[AudioStream]:
 	var directory := DirAccess.open(CALL_FOLDER)
 	if directory == null:
 		return _streams
+	# Briefing trap 17: running from source, `get_files()` lists the asset AND its
+	# `.import` sidecar; an exported build lists only the sidecar. Trimming makes
+	# both forms name the same asset, which is what makes one line serve both
+	# builds -- and is exactly why the source tree loaded every caw TWICE.
+	# `call_count()` reported **6 for the 3 files on disk** until `seen` existed.
+	#
+	# It never errored, which is the whole reason it lasted: a uniform draw over a
+	# doubled list is still uniform, so it sounded correct. The shape recurs in
+	# anything that enumerates a directory -- icon sets, animation libraries,
+	# weather data -- and the sidecar count is now two (`.uid` as well), so a
+	# whitelist of wanted suffixes plus this set is the durable form rather than
+	# a blacklist of known-bad ones.
+	var seen := {}
 	for name in directory.get_files():
-		# An imported asset is listed by its `.import` companion in an exported
-		# build and by its own name when running from source. Stripping the suffix
-		# makes the same line work both ways.
 		var file := name.trim_suffix(".import")
 		var wanted := false
 		for suffix in CALL_SUFFIXES:
 			if file.to_lower().ends_with(suffix):
 				wanted = true
 				break
-		if not wanted:
+		if not wanted or seen.has(file):
 			continue
+		seen[file] = true
 		var stream := ResourceLoader.load("%s/%s" % [CALL_FOLDER, file]) as AudioStream
 		if stream != null:
 			_streams.append(stream)

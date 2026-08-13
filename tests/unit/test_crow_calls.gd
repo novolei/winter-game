@@ -3,25 +3,30 @@ extends TestCase
 ## The caws: their rhythm, and the fact that they follow the birds.
 ##
 ## ---------------------------------------------------------------------------
-## THIS TESTS A SILENT SYSTEM, ON PURPOSE
+## THE FOLDER IS NO LONGER EMPTY, AND THAT CHANGED WHAT THIS FILE HAS TO SAY
 ## ---------------------------------------------------------------------------
-## There is no crow audio in this repository. The asset pack ships fifteen caw
-## `.wav`s -- Wave 2's own inventory of the `.unitypackage` records them -- and
-## none of them was brought across; only the five `.FBX`s were, and the package
-## is no longer on disk. Nothing has been substituted, because the only bird
-## sound anywhere on this machine is a seagull from an unrelated pack and a wrong
-## bird is worse than silence.
+## This header used to open "there is no crow audio in this repository". Three
+## caws arrived at `7cbe595`. What is asserted here is still everything that is
+## NOT the sound file -- how many calls a burst gets, when they land, which birds
+## make them, and that a voice tracks its bird rather than staying where the bird
+## was -- because all of that is wrong or right regardless of the folder, and all
+## of it is what a naive implementation gets wrong: one trigger per bird on the
+## frame the flock leaves, which is five crows cawing in unison.
 ##
-## So what is asserted here is everything that is NOT the sound file: how many
-## calls a burst gets, when they land, which birds make them, and that a voice
-## tracks its bird rather than staying where the bird was. All of that is wrong
-## or right regardless of what is in the folder, and all of it is what a naive
-## implementation gets wrong -- one trigger per bird on the frame the flock
-## leaves, which is five crows cawing in unison.
+## ---------------------------------------------------------------------------
+## AND NOTE WHAT THIS FILE STILL CANNOT SEE
+## ---------------------------------------------------------------------------
+## Nothing here -- and nothing anywhere in this suite -- asserts that a caw was
+## AUDIBLE. Measured on the real scene at HEAD, on the master bus peak: a caw at
+## the player reaches **-200.00 dB**, digital silence, while `playing` reports
+## `true`. The cause is outside `crow_calls.gd` (the listener is the camera and
+## the camera rides a 90 m boom, against this system's 60 m cutoff) and is
+## written up in `.superpowers/sdd/wave3/task-w3-bird-system-explained.md`.
 ##
-## `test_the_folder_is_empty_and_that_is_a_finding` is the honest half: it states
-## the count rather than skipping quietly, so the day somebody drops the caws in,
-## the gate says so instead of continuing to pass for the wrong reason.
+## It is recorded here because this file is where the next person will come
+## looking, and because it is the briefing's 「设进去了 ≠ 起作用了」 one notch
+## further along: the suite has moved from "`play()` returned true" to "the
+## server accepted it", and has never once reached "a sound was heard".
 
 const CallsScript := preload("res://src/entities/wildlife/crow_calls.gd")
 const CrowScript := preload("res://src/entities/wildlife/crow.gd")
@@ -57,15 +62,43 @@ func _release(birds: Array[Crow]) -> void:
 # --- the honest part -------------------------------------------------------------
 
 
-func test_the_folder_is_empty_and_that_is_a_finding() -> void:
-	# Not an assertion that it MUST be empty -- the day the owner drops his caws
-	# in, this should keep passing. What it pins is that the folder is where they
-	# go and that asking costs nothing.
+func test_the_folder_is_where_the_caws_go() -> void:
+	# Not an assertion that it MUST hold any particular number -- an empty folder
+	# is a legal state and this should keep passing through it. What it pins is
+	# that the folder is readable and is the data.
 	var found := _calls.call_count()
 	assert_true(found >= 0, "the call folder could not be read at all")
-	assert_true(
-		found == 0 or found > 0,
-		"crow calls on disk: %d (from %s)" % [found, CrowCalls.CALL_FOLDER]
+
+
+## Briefing trap 17. `DirAccess.get_files()` lists the asset AND its `.import`
+## sidecar when running from source, and `calls()` trims `.import` off every name
+## so that one line serves both a source tree and an exported build -- which made
+## both listings name the same file and loaded every caw TWICE. `call_count()`
+## reported **6 for the 3 files on disk**.
+##
+## It is asserted as "no path appears twice" rather than as "the count is 3",
+## deliberately: the count is a fact about the folder today and would have to be
+## edited every time a caw is added, while the duplication is the defect and is
+## true of any folder. `ResourceLoader` caches by path, so a doubly-loaded caw is
+## literally the same object twice over -- which is why identity is enough here.
+##
+## Why it survived: a uniform draw over a doubled list is still uniform, so it
+## SOUNDED correct. Nothing errored. The same shape waits in anything that
+## enumerates a directory, and the sidecar count is now two (`.uid` as well).
+func test_no_caw_is_loaded_twice() -> void:
+	var streams := _calls.calls()
+	var seen := {}
+	for stream in streams:
+		var path := stream.resource_path
+		assert_false(
+			seen.has(path),
+			"%s was loaded more than once -- the .import sidecar was counted as a second caw" % path
+		)
+		seen[path] = true
+	assert_eq(
+		_calls.call_count(),
+		seen.size(),
+		"call_count() reports %d for %d distinct caw(s) on disk" % [_calls.call_count(), seen.size()]
 	)
 
 
