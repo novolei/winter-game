@@ -276,6 +276,89 @@ func test_the_heading_wanders_but_stays_near_prevailing() -> void:
 	assert_true(swing <= ceiling, "the heading swung %.1f degrees, past its own %.1f" % [swing, ceiling])
 
 
+## THE PREVAILING DIRECTION HAS TO ACTUALLY PREVAIL.
+##
+## The test above says the heading MOVES, and it always did -- 91 degrees through
+## a blizzard, at up to 12 degrees a second. What it could not say is that the
+## movement went anywhere, and it did not: the wander was two zero-mean sines, so
+## every deviation came back inside one period.
+##
+## The quantity that catches it is the MEAN OVER A WINDOW, which is what a player
+## standing in the weather actually integrates. Measured over half an hour of the
+## gale profile, before and after:
+##
+##   worst 30 s mean, off prevailing     6.8 deg  ->  42.8 deg
+##   fraction of the run more than 8 deg off    0%  ->  71%
+##
+## Zero per cent. The gale's `wander_seconds` is 31 s, so a 30 s window averaged
+## its own sine away almost exactly and the wind's mean direction was a literal
+## constant for the whole game. That is the defect, and no single-instant
+## assertion could have seen it.
+func test_the_headings_mean_is_no_longer_one_constant() -> void:
+	var profile: WindProfile = load(GALE_PATH)
+	var step := 0.5
+	var window := int(30.0 / step)
+	var samples := PackedFloat32Array()
+	var t := 0.0
+	while t <= 1800.0:
+		samples.append(WindScript.heading_at(profile, t))
+		t += step
+	var worst := 0.0
+	var running := 0.0
+	for index in window:
+		running += samples[index]
+	for index in range(window, samples.size()):
+		worst = maxf(worst, absf(running / float(window) - profile.prevailing_degrees))
+		running += samples[index] - samples[index - window]
+	assert_true(
+		worst > 15.0,
+		"over half an hour the wind's 30 s mean never got more than %.1f degrees "
+			% worst + "off prevailing -- its average direction is a constant"
+	)
+	# ...and it did not buy that with a step. The heading is written into particle
+	# directions every frame; a corner in it flicks the snow, the spindrift and
+	# the breath at once.
+	var biggest := 0.0
+	var previous: float = WindScript.heading_at(profile, 0.0)
+	t = 0.0
+	while t <= 600.0:
+		t += FRAME
+		var now: float = WindScript.heading_at(profile, t)
+		biggest = maxf(biggest, absf(now - previous))
+		previous = now
+	assert_true(
+		biggest < 2.0,
+		"the heading stepped %.3f degrees in one frame" % biggest
+	)
+
+
+## ...and the memory is real memory: a slot's target has to depend on the slots
+## before it, or this is a sequence of independent jumps rather than a drift.
+func test_the_heading_carries_its_history_from_one_slot_to_the_next() -> void:
+	var neighbours := 0.0
+	var strangers := 0.0
+	var pairs := 0
+	for slot in range(100, 400):
+		neighbours += absf(WindScript.wander_target(slot) - WindScript.wander_target(slot + 1))
+		strangers += absf(WindScript.wander_target(slot) - WindScript.wander_target(slot + 40))
+		pairs += 1
+	neighbours /= float(pairs)
+	strangers /= float(pairs)
+	assert_true(
+		neighbours < strangers * 0.7,
+		"consecutive slots differ by %.3f and distant ones by %.3f -- there is no "
+			% [neighbours, strangers] + "memory, only a new number every slot"
+	)
+	# Bounded, because `wander_degrees` is what states the swing and a target
+	# outside -1..1 would quietly widen it.
+	for slot in range(-50, 500):
+		var target: float = WindScript.wander_target(slot)
+		assert_true(
+			target >= -1.0 and target <= 1.0,
+			"slot %d drifted to %.3f" % [slot, target]
+		)
+
+
 func test_the_heading_vector_is_unit_and_flat() -> void:
 	for degrees in [0.0, 17.354, 90.0, 180.0, -73.5, 361.0]:
 		var v: Vector3 = WindScript.heading_vector(degrees)

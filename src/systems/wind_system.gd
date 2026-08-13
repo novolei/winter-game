@@ -207,12 +207,91 @@ static func gust_field(t: float, period: float, sharpness: float) -> float:
 	return pow(clampf(0.5 + 0.5 * raw, 0.0, 1.0), maxf(sharpness, 0.01))
 
 
-## The slow swing of the heading, -1 .. 1. Two components rather than one for the
-## same reason as above: a heading that returns to prevailing on a fixed beat is
-## a windscreen wiper.
+## The slow swing of the heading, -1 .. 1, AND IT HAS MEMORY.
+##
+## ---------------------------------------------------------------------------
+## THE COMPLAINT WAS 风的方向貌似比较固定, AND TAKEN LITERALLY IT IS FALSE
+## ---------------------------------------------------------------------------
+## Logged once a second through a blizzard the instantaneous heading covers a 91
+## degree range and moves at up to 12 degrees a second. Nothing about it is fixed.
+##
+## What was fixed is its MEAN. This was two sines, both zero-mean, so every
+## deviation from `prevailing_degrees` came back inside one period -- 47 s on the
+## valley profile. And nine of the ten shipped profiles use the same
+## `prevailing_degrees`. So anything a player integrates over more than a few
+## seconds -- which is what "the wind comes from over there" is -- WAS a single
+## constant for the whole game, and he was right about what he saw even though
+## every instantaneous number said otherwise.
+##
+## The briefing's own rule names the defect exactly: a cue earns belief by having
+## mass and arriving late, and a pure zero-mean function of `t` has neither. It
+## cannot be late for anything, because it has no history to be late from.
+##
+## ---------------------------------------------------------------------------
+## MEMORY WITHOUT STATE
+## ---------------------------------------------------------------------------
+## An Ornstein-Uhlenbeck drift is the obvious model and it would have cost this
+## file the one property that makes the whole wind testable: `heading_at()` is a
+## PURE FUNCTION OF t, so four minutes of weather sweep in a millisecond and a
+## capture tool can photograph a squall instead of waiting for one. A stateful
+## integrator answers only for the t it has already walked to.
+##
+## So: the same trick `squall_field()` already uses. Time is cut into slots, each
+## slot draws an independent target from an integer hash, and the heading eases
+## between consecutive targets. Memory comes from each target being an
+## exponentially weighted sum of the last `WANDER_MEMORY` draws -- an AR(1)
+## process evaluated in closed form. Correlated across minutes, unpredictable,
+## bounded, and still answerable for any t in any order.
+##
+## The slot stream is offset off `squall_field()`'s, or the wind would swing to
+## the same quarter every time a squall arrived -- one hash driving two facts.
 static func wander_field(t: float, period: float) -> float:
-	var w := TAU / maxf(period, 0.001)
-	return 0.68 * sin(w * t + 0.9) + 0.32 * sin(w * 2.37 * t + 3.1)
+	var span := maxf(period, 0.001)
+	var slot := floori(t / span)
+	# Smoothstepped rather than lerped, so the heading is C1 across a slot
+	# boundary. It is read straight into particle directions and a corner in it
+	# would be a visible flick in the snow, the spindrift and the breath at once.
+	var ease := smoothstep(0.0, 1.0, t / span - float(slot))
+	return lerpf(wander_target(slot), wander_target(slot + 1), ease)
+
+
+## How many slots of history a heading carries, and how much of the previous slot
+## survives into the next.
+##
+## 0.72 over 8 slots gives a correlation time of about 47 / (1 - 0.72) = 168 s on
+## the valley profile: the wind settles into a quarter for two or three minutes at
+## a time, which is long enough to be a fact about the afternoon rather than a
+## wobble. Eight slots is where the weights have decayed to 0.07 and adding more
+## changes nothing.
+const WANDER_MEMORY := 8
+const WANDER_RECALL := 0.72
+
+## How much of the available swing an average slot uses. Under 1 because the
+## weighted mean of several independent draws is far tamer than any one of them,
+## and a walk that never reached its own bound would be a wander with the
+## amplitude quietly divided by three. The clamp is not a safety net: saturating
+## is the wind SETTLING into a quarter and holding there, which is the behaviour
+## this whole change exists to produce.
+const WANDER_REACH := 0.42
+
+## The slot stream this walks on, moved off the squall's. Same hash, different
+## place in it -- see `wander_field()`.
+const WANDER_STREAM := 0x2E1B7
+
+
+## Where the heading is drifting toward in slot `n`, -1 .. 1. Pure, and
+## answerable for any slot in any order, which is what keeps `heading_at()` pure.
+static func wander_target(slot: int) -> float:
+	var total := 0.0
+	var weight := 0.0
+	var recall := 1.0
+	for back in WANDER_MEMORY:
+		total += recall * (slot_offset(slot - back + WANDER_STREAM) * 2.0 - 1.0)
+		weight += recall
+		recall *= WANDER_RECALL
+	if weight <= 0.0:
+		return 0.0
+	return clampf(total / (weight * WANDER_REACH), -1.0, 1.0)
 
 
 ## The squall: a front that crosses the valley and passes.
