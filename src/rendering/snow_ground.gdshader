@@ -158,6 +158,28 @@ uniform float track_thin_rim_share = 0.55;
 // colour as well is what made them look like dark smudges stamped on top.
 uniform float track_tint = 0.5;
 
+// A centimetre-scale normal cannot self-shadow: once a tree shadow drives
+// ATTENUATION to zero, both walls and the pressed floor collapse into the same
+// snow-shade colour and a physically deep mask reads as a pale stain.  These
+// controls put that missing *cavity response* into the existing custom light
+// pass. They use the centre sample and gradient we already need, so they add no
+// texture fetch or draw call. This remains relief shading, not mesh displacement.
+uniform float footprint_cavity_start = 0.07;
+uniform float footprint_cavity_full = 0.14;
+uniform float footprint_cavity_tone = 0.82;
+uniform float footprint_wall_gain = 2.6;
+// Cast shadow removes the lit-band wall cue entirely. Preserve the wall's
+// direction inside the SHADE family instead: a wall facing the hidden sun
+// releases a little track tone, while the opposite wall gains it. This never
+// promotes a shadowed footprint into the lit palette and remains bounded.
+uniform float footprint_shadow_wall_tone = 0.48;
+// `rim` is the same restrained pushed-snow shoulder used by track_height().
+// Release its track tone toward untouched snow so the lip and pressed floor
+// remain two distinct materials instead of one uniformly coloured decal.
+uniform float footprint_lip_start = 0.45;
+uniform float footprint_lip_full = 0.82;
+uniform float footprint_lip_tone_release = 0.72;
+
 // The two scales the normal is rebuilt at. The wide one skips over the height
 // field's own 23 cm texel grid, which at this grazing sun would otherwise lay
 // a corduroy pattern across the whole field; the narrow one is small enough to
@@ -227,6 +249,11 @@ uniform float grain_amount = 0.02;
 uniform float grain_scale = 0.14;
 
 varying vec3 v_world;
+varying float v_track_value;
+varying float v_track_cavity;
+varying float v_track_lip;
+varying float v_track_wall_gain;
+varying vec3 v_broad_normal;
 
 // A small world-space variation is wanted, but an unwarped value-noise lattice
 // is not a snow pattern: at an establishing framing its square cells become
@@ -518,13 +545,35 @@ void fragment() {
 	// which is backwards. Dividing by cos(slope), which is
 	// 1/sqrt(1 + |grad|^2), restores it.
 	float perpendicular = sqrt(1.0 + dot(ground_slope, ground_slope));
-	vec2 slope = ground_slope
-		+ track_gradient(v_world.xz, track_normal_epsilon) * perpendicular;
+	vec2 track_slope = track_gradient(v_world.xz, track_normal_epsilon) * perpendicular;
+	vec2 slope = ground_slope + track_slope;
+	vec3 broad_world_normal = normalize(vec3(-ground_slope.x, 1.0, -ground_slope.y));
 	vec3 world_normal = normalize(vec3(-slope.x, 1.0, -slope.y));
 	// NORMAL is view space in fragment(), unlike in vertex() where it is model
 	// space. Writing a world-space vector straight in lights the ground from
 	// wherever the camera happens to be looking.
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
+	v_broad_normal = normalize((VIEW_MATRIX * vec4(broad_world_normal, 0.0)).xyz);
+
+	// Keep the centre/floor, walls and pushed lip separate through light(). The
+	// centre lookup is not new -- light() previously sampled this same value in
+	// track_tone_at(); moving it here lets both tone and relief share it once.
+	float centre_track = dynamic_track_at(v_world.xz);
+	float baked_track = baked_at(v_world.xz);
+	v_track_value = clamp(max(centre_track, baked_track * static_tint_boost), 0.0, 1.0);
+	v_track_cavity = smoothstep(
+		footprint_cavity_start, footprint_cavity_full, centre_track
+	);
+	float skirt = clamp(centre_track / track_rim_extent, 0.0, 1.0);
+	float rim = 4.0 * skirt * (1.0 - skirt);
+	v_track_lip = smoothstep(footprint_lip_start, footprint_lip_full, rim)
+		* (1.0 - v_track_cavity);
+	float footprint_presence = smoothstep(
+		0.01, max(footprint_cavity_start, 0.011), centre_track
+	);
+	v_track_wall_gain = mix(
+		1.0, footprint_wall_gain, max(v_track_cavity, footprint_presence)
+	);
 
 	// White, and that is load-bearing. Godot multiplies the accumulated
 	// DIFFUSE_LIGHT by ALBEDO after the light loop, so putting the snow colour
@@ -539,9 +588,22 @@ void fragment() {
 
 void light() {
 	float lambert = clamp(dot(normalize(NORMAL), normalize(LIGHT)), 0.0, 1.0);
+	// Reconstruct the broad surface response from the varying world position so
+	// the already-computed footprint detail can be amplified around it. A cavity
+	// needs one wall to turn toward the raking sun and the other away; without
+	// this separation the soft cel threshold maps both to the same pale band.
+	float broad_lambert = clamp(
+		dot(normalize(v_broad_normal), normalize(LIGHT)), 0.0, 1.0
+	);
+	float detail_delta = lambert - broad_lambert;
+	lambert = clamp(broad_lambert + detail_delta * v_track_wall_gain, 0.0, 1.0);
 	// ATTENUATION carries the directional light's shadow term, already
 	// softened by the shadow filter, so folding it in here is what makes the
 	// long cast shadows land in the dark band with a soft edge.
+	// Cast shadows still own the cel band. Cavity depth that must survive inside
+	// that shadow is expressed later as separation within the SHADE colour family,
+	// never by subtracting from a value already clamped at zero.
+	float cavity = v_track_cavity;
 	float shaded = lambert * ATTENUATION;
 	float band = smoothstep(band_threshold - band_softness, band_threshold + band_softness, shaded);
 
@@ -567,7 +629,17 @@ void light() {
 	// and the colour is only there to keep it readable at a distance where the
 	// shading detail is a pixel wide. At full strength it went back to being a
 	// sticker on the snow.
-	float t = track_tone_at(v_world.xz) * track_tint;
+	float lip = v_track_lip;
+	float t = max(v_track_value * track_tint, cavity * footprint_cavity_tone);
+	t *= 1.0 - lip * footprint_lip_tone_release;
+	float cast_shadow = 1.0 - clamp(ATTENUATION, 0.0, 1.0);
+	float shadow_wall = detail_delta * footprint_shadow_wall_tone
+		* v_track_wall_gain * cast_shadow;
+	// Positive detail_delta faces the hidden sun and releases track shade;
+	// negative faces away and deepens it. The centre remains a pressed floor,
+	// and the lip remains snow, so this adds shape rather than a flat dark decal.
+	t -= shadow_wall * max(v_track_cavity, v_track_lip);
+	t = clamp(t, 0.0, 1.0);
 	vec3 lit = mix(snow_surface, track_lit.rgb, t);
 	vec3 shade = mix(snow_shade.rgb, track_shade.rgb, t);
 	// LIGHT_COLOR is deliberately not a factor: the band picks a palette
