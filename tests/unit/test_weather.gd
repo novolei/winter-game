@@ -90,6 +90,14 @@ class BusStandIn extends RefCounted:
 			names.append(entry["event"])
 		return names
 
+	func weather_order() -> Array:
+		var names: Array = []
+		for entry in seen:
+			var event: StringName = entry["event"]
+			if String(event).begins_with("weather."):
+				names.append(event)
+		return names
+
 
 class LightingStandIn extends RefCounted:
 	var preset_id: StringName = &"pale_day"
@@ -308,6 +316,47 @@ func test_every_shipped_weather_carries_a_tell() -> void:
 			"'%s' lands with no warning at all -- GDD section 7's iron law" % id)
 
 
+## Ground snow may only be added by an authored response.  An event with a
+## positive snowfall scalar but no response would make the new dynamic field
+## depend on a code fallback, defeating the data-driven weather contract.
+func test_every_ground_depositing_weather_has_an_authored_snow_response() -> void:
+	_system.load_events_from_directory(EVENTS_DIRECTORY)
+	for id in THE_SIX:
+		var event: WeatherEventDefinition = _system.definition(id)
+		if event == null or event.snowfall_rate <= 0.0:
+			continue
+		assert_not_null(event.snow_response, "%s has snowfall but no ground response" % id)
+		if event.snow_response == null:
+			continue
+		assert_true(
+			event.snow_response.deposition_m_per_second > 0.0,
+			"%s names a response that cannot deposit snow" % id
+		)
+		assert_true(
+			event.snow_response.maximum_added_depth_m > 0.0,
+			"%s names a response with no bounded dynamic depth" % id
+		)
+
+
+## The event boundary is a semantic weather snapshot, not a direct SnowField
+## reference.  Its scalar may move every weather frame; SnowField's fixed tick
+## remains the only place that alters sparse world tiles.
+func test_weather_publishes_its_response_as_a_snow_input_snapshot() -> void:
+	var response: SnowResponseDefinition = SnowResponseDefinition.new()
+	response.deposition_m_per_second = 0.001
+	response.maximum_added_depth_m = 0.1
+	_system.load_events([_event(&"probe", {
+		"snowfall_rate": 1.0,
+		"snow_response": response,
+	})])
+	assert_true(_system.begin(&"probe"))
+	var snapshot = _bus.first(&"snow.inputs_changed")
+	assert_not_null(snapshot, "the weather tell did not publish a snow input")
+	if snapshot is Dictionary:
+		assert_eq(snapshot["response"], response)
+		assert_true(float(snapshot["snowfall"]) >= 0.0)
+
+
 ## THE TEST THIS TASK IS JUDGED ON. A tell carried only by `sound` announces
 ## nothing in a headless capture, nothing before the audio task lands, and
 ## nothing to a player with the volume down.
@@ -425,7 +474,7 @@ func test_the_whole_arc_is_walked_in_order_and_announced_once_each() -> void:
 	assert_eq(_bus.count(_system.EVENT_ARRIVED), 1, "one arrival")
 	assert_eq(_bus.count(_system.EVENT_FADING), 1, "one departure")
 	assert_eq(_bus.count(_system.EVENT_CLEARED), 1, "one clearing")
-	assert_eq(_bus.order(), [
+	assert_eq(_bus.weather_order(), [
 		_system.EVENT_TELL_STARTED, _system.EVENT_ARRIVED,
 		_system.EVENT_FADING, _system.EVENT_CLEARED,
 	], "the tell must be published BEFORE the arrival, always")

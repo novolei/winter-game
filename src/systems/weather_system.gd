@@ -108,6 +108,7 @@ const EVENT_TELL_STARTED := &"weather.tell_started"
 const EVENT_ARRIVED := &"weather.arrived"
 const EVENT_FADING := &"weather.fading"
 const EVENT_CLEARED := &"weather.cleared"
+const EVENT_SNOW_INPUTS_CHANGED := &"snow.inputs_changed"
 
 ## Spelled out rather than preloaded off WorldClock, the same way MusicDirector
 ## and NightExposure spell them out. Deleting the clock has to leave this file
@@ -834,6 +835,14 @@ func _drive() -> void:
 		_snow.set_snowfall_rate(_applied_snow)
 	if _owns_wind_bite and _wind != null and _wind.has_method("set_gale_multiplier"):
 		_wind.set_gale_multiplier(_applied_wind)
+	# SnowField receives a semantic weather snapshot, never a direct reference to
+	# this system.  This can be published every weather frame because it changes
+	# only one scalar; SnowField's own fixed tick decides when sparse ground tiles
+	# are actually rewritten.
+	_publish(EVENT_SNOW_INPUTS_CHANGED, {
+		"response": _event.snow_response if _event != null else null,
+		"snowfall": _applied_snow,
+	})
 
 
 func _tell_snow_target(sky: float) -> float:

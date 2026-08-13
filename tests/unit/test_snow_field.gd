@@ -144,6 +144,30 @@ func test_a_run_seed_replays_the_same_open_snow_after_a_recentre() -> void:
 	)
 
 
+## A recentre is part of walking, not a loading screen.  The opening snow may
+## vary by seed, but its raster must never be rebuilt through a per-texel
+## GDScript loop on the frame that moves the window.  This is intentionally a
+## measured boundary rather than a cosmetic timing assertion: the live probe
+## crossed the same edge every eight metres and stopped for more than a second.
+func test_a_seeded_recentre_stays_bounded_and_keeps_the_same_world_snow() -> void:
+	const SEED := 24681357
+	const BUDGET_MS := 25.0
+	var open_spot := Vector3(-20.0, 0.0, 20.0)
+	_field.set_run_seed(SEED)
+	var before: float = _field.depth_at(open_spot)
+	assert_true(_field.follow(Vector3(15.0, 0.0, 0.0)), "setup failed: the field did not recentre")
+	assert_true(
+		_field.last_recentre_duration_ms() < BUDGET_MS,
+		"seeded recentre took %.3f ms; moving the snow window must stay under %.1f ms" % [
+			_field.last_recentre_duration_ms(), BUDGET_MS,
+		]
+	)
+	assert_almost_eq(
+		_field.depth_at(open_spot), before, 0.0001,
+		"the bounded seeded recentre changed snow at one fixed world point"
+	)
+
+
 ## The production injection path.  SnowField must receive the owner through the
 ## registry before it builds, otherwise farm props settle against one seed and
 ## the rendered field changes under them on the first process frame.
@@ -238,6 +262,133 @@ func test_run_seed_does_not_change_the_authored_first_day_safe_routes() -> void:
 		worst_delta, 0.0, 0.001,
 		"a run seed changed an authored first-day-safe route by %.4f m" % worst_delta
 	)
+
+
+## The render path receives the profile's real variable-length corridors rather
+## than a second, copied set of route coordinates.  That is what lets native
+## mature-noise image generation stay fast while the visual and physical safe
+## routes remain the same authored fact.
+func test_mature_route_shader_data_carries_every_authored_safe_route() -> void:
+	var data := _field.mature_route_shader_data()
+	var points: PackedVector2Array = data["points"]
+	var offsets: PackedInt32Array = data["offsets"]
+	var counts: PackedInt32Array = data["counts"]
+	var half_widths: PackedFloat32Array = data["half_widths"]
+	var feathers: PackedFloat32Array = data["feathers"]
+	assert_eq(offsets.size(), counts.size(), "each shader route needs one point range")
+	assert_eq(counts.size(), half_widths.size(), "each shader route needs its authored width")
+	assert_eq(counts.size(), feathers.size(), "each shader route needs its authored feather")
+	assert_true(counts.size() > 0, "the production profile provided no protected route data")
+	var reconstructed_points := 0
+	for index in range(counts.size()):
+		assert_true(counts[index] >= 2, "shader route %d has no segment" % index)
+		assert_eq(offsets[index], reconstructed_points, "shader route points are not contiguous")
+		reconstructed_points += counts[index]
+	assert_eq(reconstructed_points, points.size(), "shader route data dropped or duplicated points")
+	assert_true(
+		counts.size() <= SnowFieldScript.MATURE_ROUTE_CAPACITY
+			and points.size() <= SnowFieldScript.MATURE_ROUTE_POINT_CAPACITY,
+		"the shipped profile exceeds the shader transport capacity"
+	)
+
+
+## Phase C's first acceptance boundary.  A weather response does not write a
+## frame-dependent height map: its scalar input is consumed only on SnowField's
+## fixed simulation tick, and the result is an added world depth.
+func test_dynamic_snow_waits_for_a_fixed_tick_then_accumulates() -> void:
+	var response: SnowResponseDefinition = SnowResponseDefinition.new()
+	response.deposition_m_per_second = 0.001
+	response.maximum_added_depth_m = 0.2
+	var open_spot := Vector3(-30.0, 0.0, 30.0)
+	_field.set_snow_response(response, 1.0)
+	_field.advance_dynamic(0.49)
+	assert_almost_eq(_field.dynamic_depth_at(open_spot), 0.0, 0.000001)
+	_field.advance_dynamic(0.01)
+	assert_true(
+		_field.dynamic_depth_at(open_spot) > 0.0,
+		"a full fixed tick of snowfall left the open field unchanged"
+	)
+
+
+## The base seed is replayable and so is the weather history laid on top of it.
+## A later save/replay layer will serialise the sparse tiles; this phase proves
+## the inputs themselves are already independent of field recentering and frame
+## chunking.
+func test_dynamic_snow_is_deterministic_for_same_seed_and_ticks() -> void:
+	var response: SnowResponseDefinition = SnowResponseDefinition.new()
+	response.deposition_m_per_second = 0.0008
+	response.maximum_added_depth_m = 0.2
+	var first: SnowField = SnowFieldScript.new()
+	var second: SnowField = SnowFieldScript.new()
+	first.set_run_seed(1729)
+	second.set_run_seed(1729)
+	first.build_at(Vector3.ZERO)
+	second.build_at(Vector3.ZERO)
+	first.set_snow_response(response, 0.75)
+	second.set_snow_response(response, 0.75)
+	first.advance_dynamic(18.0)
+	for _step in range(36):
+		second.advance_dynamic(0.5)
+	var spot := Vector3(-30.0, 0.0, 30.0)
+	assert_almost_eq(first.dynamic_depth_at(spot), second.dynamic_depth_at(spot), 0.000001)
+	assert_almost_eq(first.depth_at(spot), second.depth_at(spot), 0.000001)
+	first.free()
+	second.free()
+
+
+## The run seed's authored safety corridors also suppress dynamic deposition.
+## Otherwise a route which opens safe could silently become a Day-1 wade after
+## one ordinary snowfall.
+func test_dynamic_snow_preserves_authored_safe_routes() -> void:
+	var response: SnowResponseDefinition = SnowResponseDefinition.new()
+	response.deposition_m_per_second = 0.001
+	response.maximum_added_depth_m = 0.2
+	_field.set_snow_response(response, 1.0)
+	_field.advance_dynamic(2.0)
+	assert_almost_eq(_field.dynamic_depth_at(Vector3.ZERO), 0.0, 0.000001)
+	assert_true(
+		_field.dynamic_depth_at(Vector3(-30.0, 0.0, 30.0)) > 0.0,
+		"the open field did not receive the snowfall used to test the protected route"
+	)
+
+
+## The public gameplay seam is the same EventBus footprint that writes the
+## visible TrackMask.  SnowField must compact the *whole* column after fresh
+## snow has arrived; compacting only the initial mature layer would leave a
+## new-storm path physically unchanged.
+func test_a_real_footprint_event_compacts_deposited_dynamic_snow() -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	assert_not_null(tree, "the integration seam needs the live EventBus autoload")
+	if tree == null:
+		return
+	var bus := tree.root.get_node_or_null("EventBus")
+	assert_not_null(bus, "the live tree has no EventBus")
+	if bus == null:
+		return
+	var response: SnowResponseDefinition = SnowResponseDefinition.new()
+	response.deposition_m_per_second = 0.001
+	response.maximum_added_depth_m = 0.2
+	var field: SnowField = SnowFieldScript.new()
+	tree.root.add_child(field)
+	var open_spot := Vector3(-30.0, 0.0, 30.0)
+	bus.emit_event(field.SNOW_INPUTS_CHANGED_EVENT, {"response": response, "snowfall": 1.0})
+	field.advance_dynamic(field.dynamic_tick_seconds)
+	var dynamic_before: float = field.dynamic_depth_at(open_spot)
+	var surface_before: float = field.depth_at(open_spot)
+	assert_true(dynamic_before > 0.0, "setup failed: the live weather input deposited no snow")
+	bus.emit_event(field.FOOTPRINT_EVENT, {
+		"subject": &"player", "position": open_spot, "pack_radius": 0.5, "pack_amount": 0.8,
+	})
+	assert_almost_eq(
+		field.dynamic_depth_at(open_spot), dynamic_before, 0.000001,
+		"a footprint must compact the column, not destroy the deposited mass"
+	)
+	assert_true(
+		field.depth_at(open_spot) < surface_before,
+		"the real track.footprint event did not compact deposited dynamic snow"
+	)
+	tree.root.remove_child(field)
+	field.free()
 
 
 func _authored_safe_routes() -> Array:

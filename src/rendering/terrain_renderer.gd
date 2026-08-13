@@ -187,6 +187,11 @@ var _snow: Node
 var _tracks: Node
 var _lighting: Node
 var _accumulation: Node
+## Safe-route geometry is immutable for one loaded SnowField profile.  Cache the
+## source node rather than rebuilding and uploading its uniform arrays every
+## frame; a window recenter changes only field_origin and the native-generated
+## raw mature-noise texture.
+var _mature_route_source: Node
 
 
 ## The two-band contract's world side, pushed in from the lighting. The preset
@@ -364,6 +369,26 @@ func _stamp_visual_field_continuity() -> void:
 	_material.set_shader_parameter("visual_field_warp_amount", visual_field_warp_amount)
 
 
+## SnowFieldProfile owns these paths.  The renderer only translates the
+## variable-length Resource paths into the shader's fixed uniform transport;
+## this lets the GPU apply the same protected-route weight as CPU depth queries
+## without re-walking a 512² image in GDScript every time the player moves.
+func _stamp_mature_routes() -> void:
+	if _material == null or _snow == null or _mature_route_source == _snow:
+		return
+	if not _snow.has_method("mature_route_shader_data"):
+		return
+	var data: Dictionary = _snow.mature_route_shader_data()
+	var counts: PackedInt32Array = data.get("counts", PackedInt32Array())
+	_material.set_shader_parameter("mature_route_count", counts.size())
+	_material.set_shader_parameter("mature_route_offsets", data.get("offsets", PackedInt32Array()))
+	_material.set_shader_parameter("mature_route_counts", counts)
+	_material.set_shader_parameter("mature_route_half_widths", data.get("half_widths", PackedFloat32Array()))
+	_material.set_shader_parameter("mature_route_feathers", data.get("feathers", PackedFloat32Array()))
+	_material.set_shader_parameter("mature_route_points", data.get("points", PackedVector2Array()))
+	_mature_route_source = _snow
+
+
 ## How a mark in the snow is SHAPED -- how deep, how tinted, the rim around it,
 ## and the two scales the per-pixel normal is rebuilt at. None of it moves at
 ## runtime; it is pushed from _ready() so the first frame is right and re-pushed
@@ -437,6 +462,7 @@ func _process(_delta: float) -> void:
 		apply_snow_cover(_accumulation.cover())
 	if _snow == null or _tracks == null or _material == null:
 		return
+	_stamp_mature_routes()
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	var player: Node3D = null
 	if registry != null:

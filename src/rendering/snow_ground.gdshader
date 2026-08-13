@@ -48,6 +48,21 @@ uniform float scour_hollow = 0.36;
 uniform float scour_crest = 0.72;
 uniform float mature_variation_m = 0.0;
 
+// The protected first-day routes remain an authored Resource on the CPU.  They
+// are flattened into these uniforms by TerrainRenderer, so a raw mature-noise
+// image can be regenerated in native code without spending a GDScript loop on
+// every moved window.  The capacities mirror SnowField's transport limits and
+// are intentionally much larger than the shipped profile, so adding ordinary
+// routes is still a data change.
+const int MATURE_ROUTE_CAPACITY = 32;
+const int MATURE_ROUTE_POINT_CAPACITY = 256;
+uniform int mature_route_count = 0;
+uniform int mature_route_offsets[MATURE_ROUTE_CAPACITY];
+uniform int mature_route_counts[MATURE_ROUTE_CAPACITY];
+uniform float mature_route_half_widths[MATURE_ROUTE_CAPACITY];
+uniform float mature_route_feathers[MATURE_ROUTE_CAPACITY];
+uniform vec2 mature_route_points[MATURE_ROUTE_POINT_CAPACITY];
+
 // TrackMask, dynamic layer: one image, any number of prints. A thousand
 // footprints cost the same as one because they are all already composited into
 // this texture. The window follows the player.
@@ -276,14 +291,63 @@ float packed_at(vec2 w) {
 	return textureLod(snow_packed, uv, 0.0).r * window_falloff(uv, w);
 }
 
-// The texture encodes signed variation as 0.5 + signed / 2.  Sampling from
+float segment_distance(vec2 point, vec2 from, vec2 to) {
+	vec2 span = to - from;
+	float squared = dot(span, span);
+	if (squared <= 0.000001) {
+		return length(point - from);
+	}
+	float along = clamp(dot(point - from, span) / squared, 0.0, 1.0);
+	return length(point - (from + span * along));
+}
+
+// This is SnowRouteConstraint.protection_at() in shader form.  Do not simplify
+// the feather to a hard branch: a snow-depth step becomes a reconstructed
+// normal step, visible as a seam even when its colour is correct.
+float mature_open_weight(vec2 world_position) {
+	float protected_weight = 0.0;
+	for (int route_index = 0; route_index < MATURE_ROUTE_CAPACITY; route_index++) {
+		if (route_index >= mature_route_count) {
+			break;
+		}
+		int offset = mature_route_offsets[route_index];
+		int count = mature_route_counts[route_index];
+		float nearest = 1e20;
+		for (int point_index = 0; point_index < MATURE_ROUTE_POINT_CAPACITY - 1; point_index++) {
+			if (point_index >= count - 1) {
+				break;
+			}
+			nearest = min(
+				nearest,
+				segment_distance(
+					world_position,
+					mature_route_points[offset + point_index],
+					mature_route_points[offset + point_index + 1]
+				)
+			);
+		}
+		float half_width = mature_route_half_widths[route_index];
+		float feather = mature_route_feathers[route_index];
+		float route_weight = 0.0;
+		if (nearest <= half_width) {
+			route_weight = 1.0;
+		} else if (feather > 0.0 && nearest < half_width + feather) {
+			route_weight = 1.0 - smoothstep(half_width, half_width + feather, nearest);
+		}
+		protected_weight = max(protected_weight, route_weight);
+	}
+	return 1.0 - protected_weight;
+}
+
+// The texture encodes raw signed variation as 0.5 + signed / 2.  Sampling from
 // absolute world coordinates and returning to neutral beyond this moving
 // window preserves the same result after a recenter without putting a square
-// raster edge into the far field.
+// raster edge into the far field.  The route is applied in world space after
+// sampling, exactly as SnowField.mature_variation_at() does on the CPU.
 float mature_variation_at(vec2 w) {
 	vec2 uv = (w - field_origin) / field_extent;
 	float encoded = mix(0.5, textureLod(mature_snow, uv, 0.0).r, window_falloff(uv, w));
-	return (encoded * 2.0 - 1.0) * mature_variation_m;
+	return (encoded * 2.0 - 1.0) * mature_variation_m * mature_open_weight(w);
 }
 
 // repeat_disable clamps to the edge texel, which would smear the outermost

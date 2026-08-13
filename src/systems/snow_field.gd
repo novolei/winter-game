@@ -10,6 +10,7 @@ extends Node
 ##   packed  -- how much of the snow has been trodden flat. 0 fresh, 1 flat.
 ##   mature_snow -- immutable, run-seeded opening variation around the authored
 ##                  snow baseline. Protected routes encode exactly neutral.
+##   dynamic_snow -- sparse, world-anchored additions made after the opening.
 ##
 ## and everything else is derived from them:
 ##
@@ -34,11 +35,10 @@ extends Node
 ## same integer number of texels, and the packed layer is blitted by that same
 ## integer. Nothing resamples, so nothing smears.
 ##
-## No toroidal wrap yet -- a recentre regenerates the base outright. That is
-## about 15 ms of C++ noise every time the target strays 8 m from the middle,
-## which is a visible-in-a-profiler cost and an invisible-on-screen one. It is
-## deliberately the naive version; the wrap can come once there is something to
-## measure it against.
+## No toroidal wrap yet -- a recentre regenerates the base outright.  The two
+## source rasters are generated in engine code, never by walking 512² texels in
+## GDScript.  That keeps the world-anchored result exact without turning a
+## routine step across the valley into a loading pause.
 
 const RESOLUTION := 512
 const EXTENT_M := 120.0
@@ -50,8 +50,18 @@ const CELL_M := EXTENT_M / float(RESOLUTION)
 const RECENTER_SLACK_M := 8.0
 
 const FOOTPRINT_EVENT := &"track.footprint"
+const SNOW_INPUTS_CHANGED_EVENT := &"snow.inputs_changed"
 const RUN_SEED_SERVICE := &"run_seed"
 const SNOW_PROFILE_PATH := "res://data/snow/valley_profile.tres"
+
+## The route list is authored in SnowFieldProfile.  The shader needs the same
+## facts to keep a protected corridor neutral in the rendered field without
+## baking that corridor into every moved texture.  These are transport limits,
+## not gameplay limits: profiles can add routes and points until either broad
+## capacity is reached, at which point the data is rejected visibly by tests
+## rather than silently dropping a safe route.
+const MATURE_ROUTE_CAPACITY := 32
+const MATURE_ROUTE_POINT_CAPACITY := 256
 
 ## A building announcing the ground it stands on. Published by whatever knows
 ## where a building's rooms are -- in practice src/entities/interior/
@@ -178,6 +188,13 @@ const BUILDING_FOOTPRINT_EVENT := &"building.footprint"
 @export var run_seed := 0
 @export_file("*.tres") var snow_profile_path := SNOW_PROFILE_PATH
 
+## Dynamic accumulation advances at this fixed cadence, never from a render
+## frame.  Wind transport, shelter and thaw deliberately have no hook here yet;
+## Phase C is only falling snow plus the existing footprint compaction.
+@export_range(0.1, 5.0, 0.1, "suffix:s") var dynamic_tick_seconds := 0.5
+@export_range(1.0, 16.0, 0.25, "suffix:m") var dynamic_tile_size_m := 3.75
+@export_range(64, 8192, 1) var maximum_dynamic_tiles := 2048
+
 ## Cycles per metre. 0.036 is a swell about 28 m across.
 ##
 ## It was 0.05, chosen when the relief was proportional to the noise and the
@@ -292,6 +309,17 @@ var _snow_profile: SnowFieldProfile
 var _mature_snow: Image
 var _mature_snow_texture: ImageTexture
 var _has_run_seed := false
+var _last_recentre_duration_ms := 0.0
+var _dynamic_snow: SnowDynamicDepthLayer
+var _snow_response: SnowResponseDefinition
+var _snow_intensity := 0.0
+var _dynamic_tick_elapsed := 0.0
+## Cached while the field is in the tree. `_exit_tree()` is also reached when a
+## test removes this node, when absolute scene paths are no longer valid.
+## Keeping these two event-boundary references avoids an exit-time engine error
+## and mirrors the exact objects to which `_ready()` subscribed.
+var _service_registry: Node
+var _event_bus: Node
 ## Building instance id -> {areas, floor_y, doorways}. Keyed by the publisher so
 ## a building that announces itself twice replaces rather than doubles.
 var _carves := {}
@@ -300,30 +328,37 @@ var _carves := {}
 func _ready() -> void:
 	_resolve_run_seed()
 	build_at(Vector3.ZERO)
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null:
-		registry.register(&"snow_field", self)
+	_service_registry = get_node_or_null("/root/ServiceRegistry")
+	if _service_registry != null:
+		_service_registry.register(&"snow_field", self)
 	# Trap 3: an autoload is a node under /root, never an Engine singleton.
-	var bus := get_node_or_null("/root/EventBus")
-	if bus != null:
-		bus.subscribe(FOOTPRINT_EVENT, _on_footprint)
-		bus.subscribe(BUILDING_FOOTPRINT_EVENT, on_building_footprint)
+	_event_bus = get_node_or_null("/root/EventBus")
+	if _event_bus != null:
+		_event_bus.subscribe(FOOTPRINT_EVENT, _on_footprint)
+		_event_bus.subscribe(SNOW_INPUTS_CHANGED_EVENT, _on_snow_inputs_changed)
+		_event_bus.subscribe(BUILDING_FOOTPRINT_EVENT, on_building_footprint)
 
 
 func _exit_tree() -> void:
-	var registry := get_node_or_null("/root/ServiceRegistry")
-	if registry != null and registry.get_service(&"snow_field") == self:
-		registry.unregister(&"snow_field")
-	var bus := get_node_or_null("/root/EventBus")
-	if bus != null:
-		bus.unsubscribe(FOOTPRINT_EVENT, _on_footprint)
-		bus.unsubscribe(BUILDING_FOOTPRINT_EVENT, on_building_footprint)
+	if _service_registry != null and _service_registry.get_service(&"snow_field") == self:
+		_service_registry.unregister(&"snow_field")
+	if _event_bus != null:
+		_event_bus.unsubscribe(FOOTPRINT_EVENT, _on_footprint)
+		_event_bus.unsubscribe(SNOW_INPUTS_CHANGED_EVENT, _on_snow_inputs_changed)
+		_event_bus.unsubscribe(BUILDING_FOOTPRINT_EVENT, on_building_footprint)
+	_service_registry = null
+	_event_bus = null
+
+
+func _physics_process(delta: float) -> void:
+	advance_dynamic(delta)
 
 
 ## Builds the field centred on the origin. Separate from _ready() so a test can
 ## drive it without a tree.
 func build_at(centre: Vector3 = Vector3.ZERO) -> void:
 	_build()
+	clear_dynamic_snow()
 	_packed_walked.fill(Color(0.0, 0.0, 0.0, 1.0))
 	_packed.fill(Color(0.0, 0.0, 0.0, 1.0))
 	_packed_dirty = true
@@ -356,7 +391,12 @@ func _build() -> void:
 	if _snow_profile != null:
 		_mature_snow_noise.fractal_octaves = maxi(_snow_profile.variation_octaves, 1)
 		_mature_snow_noise.fractal_gain = clampf(_snow_profile.variation_gain, 0.0, 1.0)
-		_mature_snow_noise.frequency = maxf(_snow_profile.variation_frequency_per_m, 0.00001)
+		# get_image() samples integer texels rather than world metres.  This
+		# conversion is the same one used for terrain noise below: setting an
+		# offset in texels makes the generated image a pure function of world XZ.
+		_mature_snow_noise.frequency = maxf(
+			_snow_profile.variation_frequency_per_m * CELL_M, 0.00001
+		)
 	_mature_snow_noise.seed = run_seed
 	_packed_walked = Image.create_empty(RESOLUTION, RESOLUTION, false, Image.FORMAT_R8)
 	_packed_walked.fill(Color(0.0, 0.0, 0.0, 1.0))
@@ -366,13 +406,95 @@ func _build() -> void:
 	_mature_snow = Image.create_empty(RESOLUTION, RESOLUTION, false, Image.FORMAT_RF)
 	_mature_snow.fill(Color(0.5, 0.0, 0.0, 1.0))
 	_mature_snow_texture = ImageTexture.create_from_image(_mature_snow)
+	_dynamic_snow = SnowDynamicDepthLayer.new()
+	_dynamic_snow.tile_size_m = dynamic_tile_size_m
+	_dynamic_snow.maximum_tiles = maximum_dynamic_tiles
+
+
+## This is the sole weather-facing contract.  A weather response is a resource,
+## not an event id: new kinds of snowfall are data additions.  The scalar is
+## cached and consumed on the field's own fixed ticks, so a weather crossfade
+## cannot trigger a frame-rate-dependent full-window rewrite.
+func set_snow_response(response: SnowResponseDefinition, intensity: float) -> void:
+	_snow_response = response
+	_snow_intensity = clampf(intensity, 0.0, 1.0)
+
+
+## EventBus payload boundary.  WeatherSystem publishes a resource plus its
+## continuous scalar; no SnowField code reaches directly into WeatherSystem.
+func _on_snow_inputs_changed(payload) -> void:
+	if not (payload is Dictionary):
+		return
+	var response = (payload as Dictionary).get("response", null) as SnowResponseDefinition
+	set_snow_response(response, float((payload as Dictionary).get("snowfall", 0.0)))
+
+
+## Advance exactly as many fixed ticks as the elapsed time contains. Public for
+## deterministic simulation tests and future save/replay; `_physics_process`
+## is merely the live caller.
+func advance_dynamic(delta: float) -> void:
+	if delta <= 0.0 or dynamic_tick_seconds <= 0.0:
+		return
+	_dynamic_tick_elapsed += delta
+	while _dynamic_tick_elapsed + 0.000001 >= dynamic_tick_seconds:
+		_dynamic_tick_elapsed -= dynamic_tick_seconds
+		_apply_dynamic_tick(dynamic_tick_seconds)
+
+
+## Snow is deposited one sparse tile at a time over the active field.  There is
+## no texture upload here and no per-frame 512² walk: at the default tile size
+## this is at most 32 x 32 scalar additions every half-second, and empty weather
+## allocates nothing at all.
+func _apply_dynamic_tick(delta: float) -> void:
+	if _dynamic_snow == null or _snow_response == null:
+		return
+	var rate := _snow_response.deposition_m_per_second * _snow_intensity
+	var cap := _snow_response.maximum_added_depth_m
+	if rate <= 0.0 or cap <= 0.0:
+		return
+	_dynamic_snow.tile_size_m = dynamic_tile_size_m
+	_dynamic_snow.maximum_tiles = maximum_dynamic_tiles
+	_dynamic_snow.begin_tick()
+	var low := _dynamic_snow.tile_key(_origin)
+	var high := _dynamic_snow.tile_key(_origin + Vector2(EXTENT_M, EXTENT_M))
+	for y in range(low.y, high.y + 1):
+		for x in range(low.x, high.x + 1):
+			var tile := Vector2i(x, y)
+			var world_xz := _dynamic_snow.tile_centre(tile)
+			# Protected routes are an authored Day-1 guarantee, not merely an
+			# opening-noise exception.  Feathering comes from the same profile as
+			# the seeded field, avoiding a hard snow-depth seam around a road.
+			var writable := _open_snow_weight(world_xz)
+			if writable <= 0.0:
+				continue
+			_dynamic_snow.add_at(world_xz, rate * delta * writable, cap)
+	_dynamic_snow.trim_to_limit()
+
+
+func clear_dynamic_snow() -> void:
+	_dynamic_tick_elapsed = 0.0
+	if _dynamic_snow == null:
+		return
+	_dynamic_snow = SnowDynamicDepthLayer.new()
+	_dynamic_snow.tile_size_m = dynamic_tile_size_m
+	_dynamic_snow.maximum_tiles = maximum_dynamic_tiles
+
+
+func dynamic_depth_at(world: Vector3) -> float:
+	if _dynamic_snow == null:
+		return 0.0
+	return _dynamic_snow.depth_at(Vector2(world.x, world.z))
+
+
+func dynamic_tile_count() -> int:
+	return 0 if _dynamic_snow == null else _dynamic_snow.tile_count()
 
 
 func _snap(point: Vector2) -> Vector2:
 	return Vector2(floorf(point.x / CELL_M) * CELL_M, floorf(point.y / CELL_M) * CELL_M)
 
 
-func _regenerate_terrain() -> void:
+func _regenerate_terrain(mature_shift := Vector2i.ZERO) -> void:
 	# Whole-texel offset: texel (x, y) always sees the same noise input for the
 	# same world position, whatever the window is currently showing.
 	_noise.offset = Vector3(roundf(_origin.x / CELL_M), roundf(_origin.y / CELL_M), 0.0)
@@ -380,7 +502,10 @@ func _regenerate_terrain() -> void:
 	# its own min/max, so the same world position would change height every time
 	# the window moved -- the ground would breathe as you walked.
 	_terrain_base = _noise.get_image(RESOLUTION, RESOLUTION, false, false, false)
-	_regenerate_mature_snow()
+	if mature_shift == Vector2i.ZERO:
+		_regenerate_mature_snow()
+	else:
+		_shift_mature_snow(mature_shift.x, mature_shift.y)
 	_apply_carves()
 
 
@@ -420,14 +545,87 @@ func _resolve_run_seed() -> void:
 func _regenerate_mature_snow() -> void:
 	if _mature_snow == null:
 		return
-	for y in range(RESOLUTION):
-		for x in range(RESOLUTION):
-			var encoded := 0.5
-			if _has_run_seed and _snow_profile != null and _mature_snow_noise != null:
-				var world := _origin + Vector2(float(x), float(y)) * CELL_M
-				var variation := _mature_snow_noise.get_noise_2d(world.x, world.y)
-				encoded = 0.5 + 0.5 * variation * _open_snow_weight(world)
-			_mature_snow.set_pixel(x, y, Color(clampf(encoded, 0.0, 1.0), 0.0, 0.0, 1.0))
+	if _has_run_seed and _snow_profile != null and _mature_snow_noise != null:
+		# FastNoiseLite fills the complete source image in native code.  The
+		# preceding version called get_noise_2d() and Image.set_pixel() from
+		# GDScript 262,144 times at every recentre, which froze a live D3D12 run
+		# for 1.3 seconds every eight metres.  Do not put profile masking back in
+		# this loop: both CPU queries and the shader apply the world-space route
+		# weight below, after sampling this neutral raw variation.
+		_mature_snow_noise.offset = Vector3(
+			roundf(_origin.x / CELL_M), roundf(_origin.y / CELL_M), 0.0
+		)
+		_mature_snow = _mature_snow_noise.get_image(RESOLUTION, RESOLUTION, false, false, false)
+		_mature_snow.convert(Image.FORMAT_RF)
+	else:
+		_mature_snow.fill(Color(0.5, 0.0, 0.0, 1.0))
+	if _mature_snow_texture == null:
+		_mature_snow_texture = ImageTexture.create_from_image(_mature_snow)
+	else:
+		_mature_snow_texture.update(_mature_snow)
+
+
+## Carries the raw, immutable mature variation across a moved window and asks
+## FastNoiseLite for only the newly exposed texel strips.  This is deliberately
+## not a larger recentre slack: the field may move whenever coverage demands
+## it, while a 34-texel shift now generates roughly 13% rather than 100% of the
+## mature image.  Both Image.blit_rect() and get_image() run inside the engine;
+## no per-pixel GDScript loop is permitted on this walking path.
+func _shift_mature_snow(shift_x: int, shift_y: int) -> void:
+	if _mature_snow == null:
+		return
+	if not _has_run_seed or _snow_profile == null or _mature_snow_noise == null:
+		_mature_snow.fill(Color(0.5, 0.0, 0.0, 1.0))
+		_upload_mature_snow()
+		return
+	if absi(shift_x) >= RESOLUTION or absi(shift_y) >= RESOLUTION:
+		_regenerate_mature_snow()
+		return
+
+	var previous := _mature_snow
+	var shifted := Image.create_empty(RESOLUTION, RESOLUTION, false, Image.FORMAT_RF)
+	shifted.fill(Color(0.5, 0.0, 0.0, 1.0))
+	var overlap_width := RESOLUTION - absi(shift_x)
+	var overlap_height := RESOLUTION - absi(shift_y)
+	var source := Rect2i(
+		maxi(shift_x, 0), maxi(shift_y, 0), overlap_width, overlap_height
+	)
+	var destination := Vector2i(maxi(-shift_x, 0), maxi(-shift_y, 0))
+	shifted.blit_rect(previous, source, destination)
+	_mature_snow = shifted
+
+	# The vertical exposed strip covers its whole height.  The horizontal strip
+	# below then fills only the remaining overlap width, so their shared corner
+	# is generated once and every new texel has exactly one world source.
+	if shift_x != 0:
+		var exposed_x := overlap_width if shift_x > 0 else 0
+		_generate_mature_region(Rect2i(exposed_x, 0, absi(shift_x), RESOLUTION))
+	if shift_y != 0:
+		var exposed_y := overlap_height if shift_y > 0 else 0
+		_generate_mature_region(Rect2i(destination.x, exposed_y, overlap_width, absi(shift_y)))
+	_upload_mature_snow()
+
+
+## Fill one destination rectangle of the current mature image from its absolute
+## world offset.  The field origin and the rectangle position are both in whole
+## texels, so a world point receives the exact same raw noise value after any
+## sequence of recentres.
+func _generate_mature_region(region: Rect2i) -> void:
+	if region.size.x <= 0 or region.size.y <= 0:
+		return
+	_mature_snow_noise.offset = Vector3(
+		roundf(_origin.x / CELL_M) + region.position.x,
+		roundf(_origin.y / CELL_M) + region.position.y,
+		0.0
+	)
+	var generated := _mature_snow_noise.get_image(
+		region.size.x, region.size.y, false, false, false
+	)
+	generated.convert(Image.FORMAT_RF)
+	_mature_snow.blit_rect(generated, Rect2i(Vector2i.ZERO, region.size), region.position)
+
+
+func _upload_mature_snow() -> void:
 	if _mature_snow_texture == null:
 		_mature_snow_texture = ImageTexture.create_from_image(_mature_snow)
 	else:
@@ -520,7 +718,10 @@ func depth_at(world: Vector3) -> float:
 	var mature_depth := clampf(
 		max_depth_m * scour_at(world) + mature_variation_at(world), 0.0, max_depth_m
 	)
-	return mature_depth * (1.0 - packed)
+	# A footprint compacts the material at this location, not only the snow
+	# which happened to be present on day one.  New flakes therefore join the
+	# same physical column before the existing packed factor is applied.
+	return (mature_depth + dynamic_depth_at(world)) * (1.0 - packed)
 
 
 ## The additional mature snow a run's opening weather history left at this
@@ -532,7 +733,8 @@ func mature_variation_at(world: Vector3) -> float:
 		return 0.0
 	var cell := cell_of(Vector2(world.x, world.z))
 	var encoded := sample_bilinear(_mature_snow, cell.x, cell.y)
-	return (encoded * 2.0 - 1.0) * _snow_profile.mature_variation_m
+	var open_weight := _open_snow_weight(Vector2(world.x, world.z))
+	return (encoded * 2.0 - 1.0) * _snow_profile.mature_variation_m * open_weight
 
 
 ## What you would stand on if the snow held your weight: ground plus snow. This
@@ -634,8 +836,18 @@ func follow(world: Vector3) -> bool:
 	# ends by re-stamping every carve into both rasters -- and it must stamp
 	# them over the shifted tracks, not have them shifted out from under it.
 	_shift_packed(shift_x, shift_y)
-	_regenerate_terrain()
+	var started_us := Time.get_ticks_usec()
+	_regenerate_terrain(Vector2i(shift_x, shift_y))
+	_last_recentre_duration_ms = float(Time.get_ticks_usec() - started_us) / 1000.0
 	return true
+
+
+## The measured work of the most recent actual window move.  It exists for the
+## walking-performance regression and for the live probe; callers must not
+## infer it from frame time because rendering and input are deliberately not
+## part of this SnowField contract.
+func last_recentre_duration_ms() -> float:
+	return _last_recentre_duration_ms
 
 
 ## The window moved +shift texels, so whatever sat at texel p now sits at
@@ -674,6 +886,49 @@ func mature_snow_texture() -> ImageTexture:
 
 func mature_variation_limit_m() -> float:
 	return 0.0 if _snow_profile == null else _snow_profile.mature_variation_m
+
+
+## A packed, shader-ready view of the authored safe routes.  The resource stays
+## the source of truth; this just flattens its variable-length paths into GPU
+## uniform arrays.  Keeping protection world-space means the raw mature-noise
+## image can regenerate in native code without either a texture seam or a
+## per-texel GDScript route query.
+func mature_route_shader_data() -> Dictionary:
+	var points := PackedVector2Array()
+	var route_offsets := PackedInt32Array()
+	var route_counts := PackedInt32Array()
+	var route_half_widths := PackedFloat32Array()
+	var route_feathers := PackedFloat32Array()
+	if _snow_profile == null:
+		return {
+			"points": points,
+			"offsets": route_offsets,
+			"counts": route_counts,
+			"half_widths": route_half_widths,
+			"feathers": route_feathers,
+		}
+	for route in _snow_profile.protected_routes:
+		if route == null or route.points.size() < 2 or route.half_width_m <= 0.0:
+			continue
+		if route_offsets.size() >= MATURE_ROUTE_CAPACITY:
+			push_error("SnowFieldProfile has more protected routes than the renderer supports")
+			break
+		if points.size() + route.points.size() > MATURE_ROUTE_POINT_CAPACITY:
+			push_error("SnowFieldProfile has more protected route points than the renderer supports")
+			break
+		route_offsets.append(points.size())
+		route_counts.append(route.points.size())
+		route_half_widths.append(route.half_width_m)
+		route_feathers.append(route.feather_m)
+		for point in route.points:
+			points.append(point)
+	return {
+		"points": points,
+		"offsets": route_offsets,
+		"counts": route_counts,
+		"half_widths": route_half_widths,
+		"feathers": route_feathers,
+	}
 
 
 # ---------------------------------------------------------------------------

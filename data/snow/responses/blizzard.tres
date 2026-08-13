@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="SnowResponseDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/snow_response_definition.gd" id="1_lgqx7"]
+
+[resource]
+script = ExtResource("1_lgqx7")
+deposition_m_per_second = 8e-05
+maximum_added_depth_m = 0.18

@@ -94,6 +94,12 @@ extends Resource
 ## to have an opinion about the snow.
 @export var snowfall_rate := -1.0
 
+## The ground-depth model for this event.  WeatherSystem publishes this
+## resource with its continuous applied snowfall scalar; SnowField consumes it
+## at a fixed cadence.  A new weather changes ground accumulation by assigning
+## a response `.tres`, never by adding an event-name branch in code.
+@export var snow_response: SnowResponseDefinition = null
+
 @export_group("Look")
 ## Which of Art Bible section 4.2's six looks this weather wears. Empty means
 ## the sky is left wherever the tell put it -- see `WeatherTell.lighting_preset`,

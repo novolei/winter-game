@@ -1,6 +1,7 @@
 [gd_resource type="Resource" script_class="WeatherEventDefinition" format=3]
 
 [ext_resource type="Script" path="res://src/definitions/weather_event_definition.gd" id="1_k441t"]
+[ext_resource type="Resource" path="res://data/snow/responses/blizzard.tres" id="2_4sdyw"]
 [ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="2_4vqkb"]
 [ext_resource type="Script" path="res://src/definitions/weather_tell.gd" id="3_4sdyw"]
 [ext_resource type="Resource" path="res://data/weather/wind_map_gale.tres" id="4_o6kmo"]
@@ -33,6 +34,7 @@ stat_modifiers = Array[ExtResource("2_4vqkb")]([SubResource("Resource_6iuwa")])
 visibility_multiplier = 0.25
 wind_speed_multiplier = 1.6
 snowfall_rate = 1.0
+snow_response = ExtResource("2_4sdyw")
 lighting_preset = &"whiteout"
 lighting_fade_seconds = 10.0
 wind_map = ExtResource("4_o6kmo")

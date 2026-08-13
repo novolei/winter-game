@@ -2,6 +2,7 @@
 
 [ext_resource type="Script" path="res://src/definitions/weather_event_definition.gd" id="1_tre2d"]
 [ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="2_u751t"]
+[ext_resource type="Resource" path="res://data/snow/responses/freezing_rain.tres" id="2_vmu46"]
 [ext_resource type="Script" path="res://src/definitions/weather_tell.gd" id="3_vmu46"]
 
 [sub_resource type="Resource" id="Resource_2s8fx"]
@@ -38,3 +39,4 @@ stat_modifiers = Array[ExtResource("2_u751t")]([SubResource("Resource_2s8fx"), S
 visibility_multiplier = 0.7
 wind_speed_multiplier = 1.1
 snowfall_rate = 0.65
+snow_response = ExtResource("2_vmu46")

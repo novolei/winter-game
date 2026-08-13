@@ -1,6 +1,7 @@
 [gd_resource type="Resource" script_class="WeatherEventDefinition" format=3]
 
 [ext_resource type="Script" path="res://src/definitions/weather_event_definition.gd" id="1_sagux"]
+[ext_resource type="Resource" path="res://data/snow/responses/clear_break.tres" id="2_8ow7x"]
 [ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="2_sfml6"]
 [ext_resource type="Script" path="res://src/definitions/weather_tell.gd" id="3_8ow7x"]
 [ext_resource type="Resource" path="res://data/weather/wind_map_calm.tres" id="4_cqvib"]
@@ -31,6 +32,7 @@ stat_modifiers = Array[ExtResource("2_sfml6")]([SubResource("Resource_hxwx4")])
 visibility_multiplier = 1.4
 wind_speed_multiplier = 0.6
 snowfall_rate = 0.02
+snow_response = ExtResource("2_8ow7x")
 lighting_preset = &"sunrise"
 lighting_fade_seconds = 12.0
 wind_map = ExtResource("4_cqvib")
