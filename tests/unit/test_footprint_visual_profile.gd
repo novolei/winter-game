@@ -11,6 +11,44 @@ const PROFILE_PATH := "res://data/tracks/human_winter_boot.tres"
 const SHADER_PATH := "res://src/rendering/snow_ground.gdshader"
 
 
+class ThinCoverSnowStub extends Node:
+	var max_depth_m := 0.6
+	var allowed_depression_m := 0.0
+	var response_depth_m := 0.16
+
+	func structural_depth_at(_world: Vector3) -> float:
+		return 0.0
+
+	func wade_factor(_world: Vector3) -> float:
+		return 0.0
+
+	func imprint_factor_at(_world: Vector3) -> float:
+		return 1.0
+
+	func allowed_boot_depression_at(_world: Vector3) -> float:
+		return allowed_depression_m
+
+	func footprint_response_depth_m() -> float:
+		return response_depth_m
+
+	func visible_depth_at(_world: Vector3) -> float:
+		return 0.08
+
+	func surface_gradient_at(_world: Vector3) -> Vector2:
+		return Vector2.ZERO
+
+
+class FootprintCaptureBus extends Node:
+	var payload: Dictionary = {}
+
+	func emit_event(event_name: StringName, data: Variant) -> void:
+		if event_name == &"track.footprint" and data is Dictionary:
+			payload = (data as Dictionary).duplicate(true)
+
+	func unsubscribe(_event_name: StringName, _callback: Callable) -> void:
+		pass
+
+
 func test_the_human_boot_profile_is_data_and_owns_the_player_subject() -> void:
 	var profile = load(PROFILE_PATH)
 	assert_not_null(profile, "the winter boot profile was not generated")
@@ -197,33 +235,161 @@ func test_every_production_bite_leaves_a_readable_thin_boot_depression() -> void
 			% [tilt_degrees, tilt_degrees - readable_boundary])
 
 
-func test_mature_veneer_drives_a_bounded_physical_boot_depression() -> void:
+func test_mature_veneer_reaches_the_final_surface_as_a_planted_boot_cavity() -> void:
+	# This is the shipping chain, not a profile sampled in isolation: the player
+	# turns the snow facts into an event, TrackMask routes the player subject and
+	# writes its real raster, then the same height equation as snow_ground turns
+	# that raster into the final normal-derived cavity.
+	var tree := Engine.get_main_loop() as SceneTree
+	var player: CharacterBody3D = preload(
+		"res://src/entities/player/player_controller.gd"
+	).new()
+	var snow := ThinCoverSnowStub.new()
+	var bus := FootprintCaptureBus.new()
 	var snow_profile = load("res://data/snow/valley_profile.tres")
-	var boot_profile = load(PROFILE_PATH)
-	assert_not_null(snow_profile)
-	assert_not_null(boot_profile)
-	if snow_profile == null or boot_profile == null:
+	assert_not_null(snow_profile, "the production snow budget is missing")
+	if snow_profile == null:
+		player.free()
+		snow.free()
+		bus.free()
 		return
-	assert_true("minimum_imprintable_cover_m" in snow_profile,
-		"the opening snow profile does not author compressible cover")
-	assert_true("footprint_response_depth_m" in snow_profile,
-		"footprint strength cannot be converted from metres without a response depth")
-	if not ("minimum_imprintable_cover_m" in snow_profile) \
-			or not ("footprint_response_depth_m" in snow_profile):
+	# Exercise the exact weakest production bite without asking a random seed to
+	# approximate randf() == 1. The player still builds the shipping payload; we
+	# feed it the mathematically lowest allowed depression and turn off only the
+	# second, now-already-accounted-for random multiplier.
+	var production_bite_jitter: float = player.get("print_bite_jitter")
+	snow.allowed_depression_m = snow_profile.max_boot_depression_m \
+		* (1.0 - production_bite_jitter)
+	snow.response_depth_m = snow_profile.footprint_response_depth_m
+	player.set("print_bite_jitter", 0.0)
+	player.process_mode = Node.PROCESS_MODE_DISABLED
+	tree.root.add_child(player)
+	player.set("_snow", snow)
+	player.set("_bus", bus)
+	player.set("_facing", Vector3.RIGHT)
+	seed(19770813)
+	player.call("_place_print")
+	var payload := bus.payload
+	assert_false(payload.is_empty(), "the production player emitted no footprint")
+	if payload.is_empty():
+		tree.root.remove_child(player)
+		player.free()
+		snow.free()
+		bus.free()
 		return
-	var response_m: float = snow_profile.footprint_response_depth_m
-	var base_strength: float = snow_profile.max_boot_depression_m / response_m
-	# At the authored 8 cm veneer imprint_factor is one, hence production scuff
-	# is zero. Exercise that exact call rather than the legacy dust endpoint.
-	var weakest := _thin_boot_samples(
-		boot_profile, base_strength * (1.0 - 0.30), 0.0
+
+	var profile: TrackProfileDefinition = load(PROFILE_PATH)
+	var mask: TrackMask = TrackMaskScript.new()
+	mask.build_at(Vector3.ZERO)
+	mask.call("_on_footprint", payload)
+	var metrics := _production_mark_metrics(mask, payload)
+	var scuff: float = payload.scuff
+	assert_true(scuff >= 0.99,
+		"compressible cover selected deep-snow morphology (scuff %.3f)" % scuff)
+	assert_true(profile.sole_definition_at(1.0 - scuff) >= 0.90,
+		"thin cover routed to a low-definition pocket instead of the planted sole")
+	assert_true(metrics.along_reach <= 0.34 and metrics.across_reach >= 0.20,
+		"the final %.3f x %.3f m mark is a lengthwise scratch, not a compact boot"
+			% [metrics.along_reach, metrics.across_reach])
+
+	var shader := FileAccess.get_file_as_string(SHADER_PATH)
+	assert_true(shader.contains("return -t * track_depth + rim_gate * rim * track_rim;"),
+		"the test's height equation no longer matches snow_ground.gdshader")
+	# TerrainRenderer overwrites the shader's fallback track_depth from this same
+	# SnowField contract before drawing; using the fallback 0.05 here would model
+	# a shader resource in isolation, not the shipping material.
+	var renderer_source := FileAccess.get_file_as_string(
+		"res://src/rendering/terrain_renderer.gd"
 	)
-	var actual_forefoot_m: float = weakest.forefoot * response_m
-	assert_true(actual_forefoot_m >= 0.022,
-		"weakest production step depresses only %.1f mm" % (actual_forefoot_m * 1000.0))
-	assert_true(actual_forefoot_m <= snow_profile.max_boot_depression_m + 0.0001,
-		"weakest step exceeds the authored %.1f mm snow budget"
-			% (snow_profile.max_boot_depression_m * 1000.0))
+	assert_true(renderer_source.contains("response_depth = float(_snow.call"),
+		"TerrainRenderer no longer binds SnowField's footprint response")
+	var track_depth: float = snow.footprint_response_depth_m()
+	var track_rim := _shader_uniform_float(shader, "track_rim")
+	var rim_extent := _shader_uniform_float(shader, "track_rim_extent")
+	var gate_start := _shader_uniform_float(shader, "track_rim_gate_start")
+	var gate_full := _shader_uniform_float(shader, "track_rim_gate_full")
+	var thin_rim_share := _shader_uniform_float(shader, "track_thin_rim_share")
+	var local_peak: float = metrics.peak
+	var rim_gate := lerpf(
+		thin_rim_share, 1.0, smoothstep(gate_start, gate_full, local_peak)
+	)
+	var final_cavity_m := -_shipping_track_height(
+		local_peak, rim_gate, track_depth, rim_extent, track_rim
+	)
+	assert_true(final_cavity_m >= 0.022 and final_cavity_m <= 0.030,
+		"the final surface cavity is %.1f mm; the mask value alone is not a depression"
+			% (final_cavity_m * 1000.0))
+	var highest := -INF
+	for step in range(101):
+		var value := local_peak * float(step) / 100.0
+		highest = maxf(highest, _shipping_track_height(
+			value, rim_gate, track_depth, rim_extent, track_rim
+		))
+	assert_true(highest <= 0.000001,
+		"the thin-print shoulder rises %.2f mm above untouched snow"
+			% (highest * 1000.0))
+	var pushed_snow_shoulder_m := rim_gate \
+		* (4.0 * clampf(local_peak / rim_extent, 0.0, 1.0) \
+		* (1.0 - clampf(local_peak / rim_extent, 0.0, 1.0))) * track_rim
+	assert_true(pushed_snow_shoulder_m >= 0.005,
+		"the weakest print lost its readable pushed-snow shoulder (%.1f mm)"
+			% (pushed_snow_shoulder_m * 1000.0))
+	assert_true(snow_profile.max_boot_depression_m <= 0.060001,
+		"the boot budget exceeds 8 cm cover minus the 2 cm residual layer")
+
+	mask.free()
+	tree.root.remove_child(player)
+	player.free()
+	snow.free()
+	bus.free()
+
+
+func _production_mark_metrics(mask: TrackMask, payload: Dictionary) -> Dictionary:
+	var centre: Vector3 = payload.position
+	var heading: Vector2 = payload.forward.normalized()
+	var across := Vector2(-heading.y, heading.x)
+	var min_along := INF
+	var max_along := -INF
+	var min_across := INF
+	var max_across := -INF
+	var peak := 0.0
+	for yi in range(-25, 26):
+		for xi in range(-25, 26):
+			var along_m := float(xi) * 0.02
+			var across_m := float(yi) * 0.02
+			var xz := Vector2(centre.x, centre.z) \
+				+ heading * along_m + across * across_m
+			var value := mask.value_at(Vector3(xz.x, 0.0, xz.y))
+			peak = maxf(peak, value)
+			if value >= 0.025:
+				min_along = minf(min_along, along_m)
+				max_along = maxf(max_along, along_m)
+				min_across = minf(min_across, across_m)
+				max_across = maxf(max_across, across_m)
+	return {
+		"along_reach": max_along - min_along,
+		"across_reach": max_across - min_across,
+		"peak": peak,
+	}
+
+
+func _shader_uniform_float(source: String, uniform_name: String) -> float:
+	var prefix := "uniform float %s = " % uniform_name
+	var start := source.find(prefix)
+	assert_true(start >= 0, "snow shader lost uniform %s" % uniform_name)
+	if start < 0:
+		return 0.0
+	start += prefix.length()
+	var finish := source.find(";", start)
+	return source.substr(start, finish - start).to_float()
+
+
+func _shipping_track_height(
+	value: float, rim_gate: float, track_depth: float, rim_extent: float, track_rim: float
+) -> float:
+	var skirt := clampf(value / rim_extent, 0.0, 1.0)
+	var rim := 4.0 * skirt * (1.0 - skirt)
+	return -value * track_depth + rim_gate * rim * track_rim
 
 
 func _thin_boot_samples(

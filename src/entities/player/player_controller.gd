@@ -2590,10 +2590,10 @@ func _place_print() -> void:
 		"aspect": print_aspect * (1.0 + randf_range(-print_aspect_jitter, print_aspect_jitter)),
 		"core": lerpf(print_core_thin, print_core_deep, wade),
 		"irregularity": lerpf(print_irregularity_thin, print_irregularity_deep, wade),
-		# 0 in snow deep enough to punch through, 1 on ground too thin to do
-		# anything but scrape across. Morphed rather than switched, so there is no
-		# depth at which the mark changes kind in front of you.
-		"scuff": 1.0 - maxf(wade, imprint),
+		# Shape follows STRUCTURAL snow, not merely how much surface powder can be
+		# compressed. The mature veneer supplies honest depth/strength, but it must
+		# not route a thin planted sole into the collapsed deep-drift silhouette.
+		"scuff": 1.0 - wade,
 		# Any large spread works; it only has to move the noise far enough that
 		# two prints never see the same patch of it.
 		"edge_seed": randf() * 997.0,

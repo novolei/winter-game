@@ -26,7 +26,7 @@ func _initialize() -> void:
 	profile.variation_gain = 0.45
 	profile.minimum_imprintable_cover_m = 0.08
 	profile.full_imprint_depth_m = 0.08
-	profile.max_boot_depression_m = 0.035
+	profile.max_boot_depression_m = 0.044
 	profile.residual_cover_m = 0.02
 	profile.footprint_response_depth_m = 0.16
 	profile.protected_routes = [

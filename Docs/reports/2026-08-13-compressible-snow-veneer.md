@@ -9,12 +9,17 @@ The opening valley now separates two snow facts:
   packed/building mask removes it, so interiors and fully beaten paths remain
   clear instead of receiving a cosmetic white layer.
 
-The profile also authors an 8 cm full-imprint threshold, a 35 mm maximum boot
+The profile also authors an 8 cm full-imprint threshold, a 44 mm maximum boot
 depression, a 20 mm residual bed and the 160 mm TrackMask response scale. The
-player converts the allowed depression from metres into mask strength and emits
-the structural depth, visible depth, imprint factor and allowed depression in
-the footprint payload. This keeps the event truthful while adding no texture
-fetch, draw call, per-frame scan or coordinate special case.
+44 mm budget remains below the physical 60 mm available above the residual bed;
+after the weakest authored bite and the shader's preserved pushed-snow shoulder, it
+delivers a 22--30 mm final cavity rather than mistaking mask strength for visible
+depth. The player converts the allowed depression from metres into mask strength
+and emits the structural depth, visible depth, imprint factor and allowed
+depression in the footprint payload. Morphology follows structural snow alone,
+so an imprintable veneer uses the compact planted-sole profile instead of a
+lengthwise deep-drift pocket. This keeps the event truthful while adding no
+texture fetch, draw call, per-frame scan or coordinate special case.
 
 The CPU surface and ground shader apply the same `max(structural column,
 minimum cover) * unpacked` formula. Dynamic snow's existing sparse simulation
