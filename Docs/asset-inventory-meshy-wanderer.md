@@ -130,12 +130,15 @@ worth having.
 
 All four measured in the same rebuilt file, on the same rig, the same way:
 
-| library take | length | net travel | hip end | head end | lean max | peak descent | time on the ground |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| **`fall_backward_hard`** (new) | 3.5333 s | 1.466 m | 0.329 m | 0.263 m | 100.4° | **2.280 m/s** | ~1.17 s |
-| `death_slow_back` (`Shot_and_Slow_Fall_Backward`) | 4.4667 s | 1.115 m | 0.174 m | 0.070 m | 104.7° | 1.838 m/s | ~0.82 s |
-| `death_collapse_back` (`dying_backwards`) | 2.2667 s | 0.859 m | 0.179 m | 0.102 m | 100.9° | 2.038 m/s | ~0.98 s |
-| `knockdown_recover` (`knockdown_and_recover`) | 3.0333 s | 4.589 m | 1.175 m | 1.582 m | 122.4° | 2.645 m/s | — he gets back up |
+| library take | length | net travel | hip end | head end | lean max | peak descent | on the ground from |
+|---|---:|---:|---:|---:|---:|---:|---|
+| **`fall_backward_hard`** (new) | 3.5333 s | 1.466 m | 0.329 m | 0.263 m | 100.4° | **2.280 m/s** | 2.36 s — **1.18 s** of 3.53 |
+| `death_slow_back` (`Shot_and_Slow_Fall_Backward`) | 4.4667 s | 1.115 m | 0.174 m | 0.070 m | 104.7° | 1.838 m/s | 2.98 s — 1.49 s of 4.47 |
+| `death_collapse_back` (`dying_backwards`) | 2.2667 s | 0.859 m | 0.179 m | 0.102 m | 100.9° | 2.038 m/s | 1.36 s — 0.91 s of 2.27 |
+| `knockdown_recover` (`knockdown_and_recover`) | 3.0333 s | 4.589 m | 1.175 m | 1.582 m | 122.4° | 2.645 m/s | never — lowest hip 0.500 m, then he stands |
+
+Grounded-from times are read off each take's own hip-height timeline, which
+`tools/measure_wanderer_takes.gd` prints for anything that drops more than 30 cm.
 
 They are genuinely three different motions, not one clip at three speeds — the shapes
 differ, not just the lengths:
@@ -158,9 +161,9 @@ yes, and it is the right take — with one condition and one caveat.**
 - It is the hardest impact available: 2.280 m/s at the hip through the pipeline, against
   2.038 and 1.838. Momentum-thrown snow needs an impact speed and this is the only take
   that gives it a real one.
-- It holds the ground for 1.17 s, a third of its length — long enough to stamp an
+- It holds the ground for 1.18 s, a third of its length — long enough to stamp an
   impression and let the thrown snow settle. `knockdown_recover`, the other violent take,
-  is up again before that.
+  never gets below a 0.500 m hip before it stands up again.
 - **The condition: it carries 1.466 m of root motion.** The impression must be stamped
   where the body *finishes*, not at the character's transform when the fall starts. A
   naive implementation puts the mark a metre and a half from the man, and nothing will
