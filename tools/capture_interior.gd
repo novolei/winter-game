@@ -150,6 +150,23 @@ func _run() -> void:
 	await get_tree().create_timer(1.0).timeout
 	if _fire == "out":
 		_stove.extinguish()
+		# WAITED OUT, NOT SHOT OVER. `extinguish()` starts InteriorWarmth's 0.8 s
+		# fade; `_shoot()` awaits three frames. So this flag used to photograph a
+		# room at warmth 0.85 while its own docstring said "smothered" and its own
+		# report line printed the 0.85 -- the number was on screen the whole time
+		# and read as the fire dying rather than as the shot being wrong. A room
+		# 85 % still warm is the reveal's payoff frame with the caption changed.
+		#
+		# Waited on the STATE and not on a stopwatch, for the same reason the
+		# threshold shot is: `warm_seconds` is authored and may be retuned, and a
+		# sleep tuned to today's value would silently start shooting early again.
+		var fading := 0.0
+		while _warmth.warmth() > 0.001 and fading < 5.0:
+			await get_tree().process_frame
+			fading += get_process_delta_time()
+		if _warmth.warmth() > 0.001:
+			push_error("capture_interior: the room never went cold; warmth %.3f after %.1f s"
+				% [_warmth.warmth(), fading])
 
 	await _shoot("interior-4-inside", _wide)
 	await _shoot("interior-5-game-camera", _gameplay_size)

@@ -60,8 +60,51 @@ uniform float warmth : hint_range(0.0, 1.0) = 0.0;
 // here and there must not be.
 uniform float emission_strength : hint_range(0.0, 4.0) = 0.0;
 
+// ---------------------------------------------------------------------------
+// DRIVEN PER PRESET, like cel_flat's -- but through InteriorWarmth rather than
+// through CelPainter, because the number a room takes is not the number a wall
+// takes.
+// ---------------------------------------------------------------------------
+// These were constants for three waves. `CelPainter` broadcasts the preset's
+// band to every cel_flat material in the world and this shader was not on that
+// list, so the farmhouse interior sat at its authored boundary from PALE DAY to
+// DEEP NIGHT while the valley outside the door moved by 4.64x in luminance.
+//
+// It is NOT fixed by adding this file to CelPainter's register, and the reason
+// is the whole design of the room. Outdoors the band rises as the world darkens
+// -- 0.12 at PALE DAY to 0.35 at WHITEOUT -- because the sun is weakening and
+// more of the world falls into shade. **Indoors the light is a fire standing in
+// the room, and a fire does not weaken at three in the morning.** At DEEP
+// NIGHT's wall value of 0.42 the boundary is a ring about two metres from the
+// stove with five-sixths of the floor outside it: a room with a torch in it, on
+// the night the room exists for.
+//
+// So `src/entities/interior/interior_warmth.gd` blends these between the two, by
+// `warmth`: with the fire at full they are the fire's own boundary, and as the
+// fire dies they hand back to the world's. **The room going cold and the room
+// rejoining the valley are the same event.** See that file for the arithmetic
+// and for why 0.18 rather than 0.30.
 uniform float band_threshold = 0.30;
 uniform float band_softness = 0.07;
+
+// THE COLOUR THE LIT BAND TAKES FROM THE LIGHT -- and it reaches a cold room
+// only.
+//
+// Same uniform and same multiply as cel_flat.gdshader, so a wall inside the room
+// and a wall outside it take the world's hue identically while the stove is out.
+// SUNRISE is the one preset that carries any: `world_light_color` amber at
+// strength 0.42.
+//
+// InteriorWarmth fades it to white as `warmth` rises, and that is a rule rather
+// than a taste. Rule 3 of the UI document states the law the whole project
+// shares -- **a warm pixel means the presence of heat and nothing else** -- and
+// the heat in this room is the stove. The dawn outside is not heat in here.
+// Stacking its amber on the fire's would make part of the room warm for a reason
+// that is not heat, which is the one thing that rule forbids.
+//
+// Not `source_color`: a linear multiplier, above 1.0 on the red channel whenever
+// the light is warm.
+uniform vec3 light_tint = vec3(1.0);
 
 void fragment() {
 	// White on purpose -- see cel_flat.gdshader and briefing trap 7. Godot
@@ -79,5 +122,8 @@ void light() {
 	float band = smoothstep(band_threshold - band_softness, band_threshold + band_softness, lambert * ATTENUATION);
 	vec3 lit = mix(lit_color.rgb, warm_lit_color.rgb, warmth);
 	vec3 shade = mix(shade_color.rgb, warm_shade_color.rgb, warmth);
-	DIFFUSE_LIGHT = max(DIFFUSE_LIGHT, mix(shade, lit, band));
+	// The tint multiplies the LIT band only, exactly as cel_flat does. The shade
+	// band stays the palette colour it was chosen as -- Art Bible section 4.1,
+	// and also just what a winter dawn looks like: warm light, cold shadow.
+	DIFFUSE_LIGHT = max(DIFFUSE_LIGHT, mix(shade, lit * light_tint, band));
 }

@@ -357,28 +357,126 @@ func test_a_furnishing_name_the_building_does_not_have_is_reported() -> void:
 
 # --- where the band boundary falls ------------------------------------------
 
-func test_the_room_sets_its_own_band_boundary_on_every_surface() -> void:
+## WITH THE FIRE AT FULL, THE ROOM'S BAND IS THE FIRE'S AND NOT THE SUN'S.
+##
+## This is the answer to the design question inside the broadcast defect, and it
+## is the reason the fix is not "register the interior with CelPainter and let
+## the exterior's numbers land on it". They are the wrong numbers: at DEEP NIGHT
+## a wall bands at 0.42, and at 0.42 the boundary is a ring about two metres from
+## the stove with five-sixths of the floor outside it. **A room at night with a
+## fire lit is not DEEP NIGHT.** Nothing about the fire dims at three in the
+## morning, so nothing about the band it casts may either.
+func test_a_lit_room_holds_its_own_band_against_the_night() -> void:
 	var warmth := _build([&"FH_Room"], [&"FH_Table"])
+	warmth.apply_world_shading(0.42, 0.10, Color.WHITE)
+	warmth.apply_warmth(1.0)
 	for part_name in [&"FH_Room", &"FH_Table"]:
 		assert_almost_eq(
 			float(_material(part_name).get_shader_parameter("band_threshold")),
-			warmth.band_threshold, 0.0001,
-			"%s did not take the room's own threshold, so it bands like an outdoor wall" % part_name
+			warmth.fire_band_threshold, 0.0001,
+			("%s banded at the valley's boundary while the stove was burning." % part_name)
+				+ " Outdoors the sun weakens and more of the world falls into shade;"
+				+ " indoors the fire does not weaken, and the band must not move."
 		)
 		assert_almost_eq(
 			float(_material(part_name).get_shader_parameter("band_softness")),
-			warmth.band_softness, 0.0001,
-			"%s did not take the room's own softness" % part_name
+			warmth.fire_band_softness, 0.0001,
+			"%s did not take the fire's own softness" % part_name
 		)
 
 
+## AND WITH THE FIRE OUT, IT IS THE WORLD'S.
+##
+## `cel_interior.gdshader`'s own header promises that "`warmth` at 0 is this
+## shader being cel_flat exactly". It was not, and could not be: cel_flat's band
+## moves with the preset and the interior's was a constant. A cold room in DEEP
+## NIGHT banded like a wall at noon.
+##
+## The room going cold and the room rejoining the world are the same event.
+func test_a_cold_room_bands_like_every_other_wall_in_the_valley() -> void:
+	var warmth := _build([&"FH_Room"], [&"FH_Table"])
+	warmth.apply_world_shading(0.42, 0.10, Color.WHITE)
+	warmth.apply_warmth(0.0)
+	for part_name in [&"FH_Room", &"FH_Table"]:
+		assert_almost_eq(
+			float(_material(part_name).get_shader_parameter("band_threshold")),
+			0.42, 0.0001,
+			"%s did not take the world's band once its fire had gone out" % part_name
+		)
+		assert_almost_eq(
+			float(_material(part_name).get_shader_parameter("band_softness")),
+			0.10, 0.0001,
+			"%s did not take the world's softness once its fire had gone out" % part_name
+		)
+
+
+## And between them it travels, on the same 0.8 s the colour does.
+##
+## One blend, not two: a room whose colour and whose shading crossed over at
+## different moments would show the handover, and the handover is the thing that
+## has to be invisible.
+func test_the_band_travels_with_the_warmth_rather_than_switching() -> void:
+	var warmth := _build()
+	warmth.apply_world_shading(0.42, 0.10, Color.WHITE)
+	warmth.apply_warmth(0.5)
+	assert_almost_eq(
+		float(_material(&"FH_Room").get_shader_parameter("band_threshold")),
+		(0.42 + warmth.fire_band_threshold) * 0.5, 0.0001,
+		"the band jumped rather than travelling, so the handover is visible"
+	)
+	assert_almost_eq(
+		float(_material(&"FH_Room").get_shader_parameter("band_softness")),
+		(0.10 + warmth.fire_band_softness) * 0.5, 0.0001,
+		"the softness jumped rather than travelling"
+	)
+
+
+## THE WORLD'S LIGHT COLOUR REACHES A COLD ROOM AND NOT A BURNING ONE.
+##
+## `world_light_tint` is the hue the SUN lends the lit band -- SUNRISE's amber,
+## which is the only preset that carries any. A room lit by its own fire has no
+## business taking the sun's hue on top of the fire's: rule 3 of the UI document
+## states the law the whole project shares, that **a warm pixel means the presence
+## of heat and nothing else**, and the heat in that room is the stove. Stacking
+## dawn's amber on the stove's amber would make the room warmer for a reason that
+## is not heat.
+##
+## So the tint arrives in exact proportion to how far the fire has died -- which
+## is the same proportion the band arrives on, and for the same reason.
+func test_the_suns_hue_reaches_a_cold_room_and_not_a_burning_one() -> void:
+	var warmth := _build()
+	var dawn := Color(1.18, 0.98, 0.72)
+	warmth.apply_world_shading(0.30, 0.07, dawn)
+	warmth.apply_warmth(0.0)
+	var cold: Vector3 = _material(&"FH_Room").get_shader_parameter("light_tint")
+	assert_almost_eq(cold.x, dawn.r, 0.0001, "a cold room refused the sun's hue")
+	assert_almost_eq(cold.z, dawn.b, 0.0001, "a cold room refused the sun's hue")
+	warmth.apply_warmth(1.0)
+	var burning: Vector3 = _material(&"FH_Room").get_shader_parameter("light_tint")
+	assert_almost_eq(
+		burning.x, 1.0, 0.0001,
+		"the sun's amber was stacked on the stove's, so part of that room is warm for a reason that is not heat"
+	)
+	assert_almost_eq(burning.z, 1.0, 0.0001, "the sun's hue reached a room the sun does not light")
+
+
+## THE HATCH GUARD, NOW HELD ACROSS EVERY PRESET AND EVERY WARMTH.
+##
 ## The sun still reaches a revealed room, and it meets the inward face of the
 ## back wall at N.L = 0.129 -- see LightingDirector.sun_azimuth_degrees and
 ## sun_elevation_degrees, from which this number is derived below rather than
 ## typed. A band boundary anywhere near it puts the largest shape in the frame
 ## exactly ON the threshold, where the directional shadow's sampled penumbra is
-## quantised into a hatch. The boundary has to clear it.
-func test_the_band_boundary_clears_the_grazing_sun_on_a_back_wall() -> void:
+## quantised into a hatch across the whole wall. Art Bible rule 10's own
+## technical note is that **a cel band is a threshold, and a threshold cannot
+## consume a filtered shadow**; this is the arithmetic that keeps the boundary
+## off it.
+##
+## It used to check one number, because the room only had one. Now the room's
+## boundary travels between its own and the world's, so the guard has to hold at
+## both ends of that travel, at every preset -- and because `threshold - softness`
+## is linear in the blend, holding at both ends holds everywhere between.
+func test_the_band_boundary_clears_the_grazing_sun_at_every_preset() -> void:
 	var warmth := _build()
 	var elevation := deg_to_rad(21.5)
 	var azimuth := deg_to_rad(82.0)
@@ -388,10 +486,39 @@ func test_the_band_boundary_clears_the_grazing_sun_on_a_back_wall() -> void:
 	var grazing: float = maxf(to_sun.dot(Vector3(0.0, 0.0, 1.0)), 0.0)
 	assert_almost_eq(grazing, 0.1295, 0.002, "the wall's grazing lambert is not what the tuning assumed")
 	assert_true(
-		warmth.band_threshold - warmth.band_softness > grazing,
-		"the room's band boundary (%.3f - %.3f) sits on the sun's grazing hit (%.3f) on the back wall"
-			% [warmth.band_threshold, warmth.band_softness, grazing]
+		warmth.fire_band_threshold - warmth.fire_band_softness > grazing,
+		"the fire's band boundary (%.3f - %.3f) sits on the sun's grazing hit (%.3f) on the back wall"
+			% [warmth.fire_band_threshold, warmth.fire_band_softness, grazing]
 	)
+	var presets := _presets()
+	assert_true(presets.size() == 6, "Art Bible section 4.2 names six, and this gate read %d" % presets.size())
+	for look in presets:
+		var threshold: float = look.cel_band_threshold + CelPainter.SOLID_BAND_OFFSET
+		assert_true(
+			threshold - look.cel_band_softness > grazing,
+			("%s hands a cold room a boundary of %.3f - %.3f, which sits on the sun's"
+				% [look.id, threshold, look.cel_band_softness])
+				+ " grazing hit (%.3f) on the back wall -- Art Bible rule 10's hatch." % grazing
+		)
+
+
+## The six, off disk. Read rather than constructed, because the numbers that
+## matter here are the authored ones.
+func _presets() -> Array:
+	var found: Array = []
+	var dir := DirAccess.open("res://data/lighting")
+	if dir == null:
+		return found
+	for file in dir.get_files():
+		# `.import` and `.uid` sidecars are listed beside the resource
+		# (briefing trap 17); take the suffix wanted rather than excluding the
+		# suffixes known to be bad.
+		if not file.ends_with(".tres"):
+			continue
+		var look: LightingPreset = load("res://data/lighting/%s" % file)
+		if look != null:
+			found.append(look)
+	return found
 
 
 ## Perceived brightness, sRGB-weighted. Enough to rank three palette entries,

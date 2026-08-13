@@ -182,12 +182,44 @@ const SNOW_MASS_SHAPE := "snow_mass"
 ## is no frame at which the roof changes suddenly.
 const SNOW_MASS_ONSET := 0.06
 
+## ---------------------------------------------------------------------------
+## THE SECOND REGISTER, AND WHY A ROOM CANNOT JOIN THE FIRST ONE
+## ---------------------------------------------------------------------------
+## `assets/shaders/cel_interior.gdshader` carries the same two-band contract as
+## `cel_flat` and was on nobody's broadcast for three waves -- the farmhouse
+## interior sat at its authored boundary from PALE DAY to DEEP NIGHT while the
+## valley outside the door moved by 4.64x in luminance. See
+## `.superpowers/sdd/wave3/task-w3-lighting-audit-report.md` section 6.1, and
+## `tests/art/test_cel_band_broadcast.gd`, which is the gate that now enumerates
+## every cel-banded shader and proves each is actually receiving.
+##
+## The obvious repair is to append an interior material to `_register` above, and
+## it is wrong on two counts:
+##
+##   * **The numbers.** `_stamp()` writes the WALL's band -- the ground's plus
+##     SOLID_BAND_OFFSET, tuned against a 21.5-degree sun on flat snow. A room is
+##     lit by a point source standing IN it, so its band term is the angle to the
+##     fire and the distance from it. At DEEP NIGHT's 0.42 the boundary is a ring
+##     about two metres from the stove. A fire does not weaken at three in the
+##     morning and the band it casts must not either.
+##   * **The rest of the stamp.** `snow_cover` is meaningless on a floor, and the
+##     tint has to be gated on whether the fire is burning.
+##
+## So a room registers as an OBJECT and recomputes its own shading from the
+## world's, exactly as `_masses` does for a settled roof mass. `InteriorWarmth`
+## owns that arithmetic and `assets/shaders/cel_interior.gdshader` carries the
+## reasoning; this class's whole job here is to make sure the room is told.
+##
+## Weak, for the same reason both other registers are: a strong reference would
+## make this the reason a demolished building stayed in memory.
 static var _band_threshold := 0.30
 static var _band_softness := 0.07
 static var _light_tint := Vector3(1.0, 1.0, 1.0)
+static var _tint_color := Color.WHITE
 static var _snow_cover := 0.0
 static var _register: Array[WeakRef] = []
 static var _masses: Array[WeakRef] = []
+static var _rooms: Array[WeakRef] = []
 
 var _bible: ColorBible
 var _shader: Shader
@@ -205,6 +237,7 @@ static func set_world_shading(ground_threshold: float, softness: float, tint: Co
 	_band_threshold = ground_threshold + SOLID_BAND_OFFSET
 	_band_softness = softness
 	_light_tint = Vector3(tint.r, tint.g, tint.b)
+	_tint_color = tint
 	var living: Array[WeakRef] = []
 	for handle in _register:
 		var material := handle.get_ref() as ShaderMaterial
@@ -213,6 +246,85 @@ static func set_world_shading(ground_threshold: float, softness: float, tint: Co
 		_stamp(material)
 		living.append(handle)
 	_register = living
+
+	var standing: Array[WeakRef] = []
+	for handle in _rooms:
+		# Read untyped, check, then narrow (briefing trap 18): a statically
+		# Variant source is validated at the ASSIGNMENT, so `var room: Node =
+		# handle.get_ref()` would throw on a freed room one line before the guard
+		# that exists to catch it -- and take every room after it in this list.
+		var raw: Variant = handle.get_ref()
+		if raw == null or not is_instance_valid(raw):
+			continue
+		standing.append(handle)
+		raw.apply_world_shading(_band_threshold, _band_softness, _tint_color)
+	_rooms = standing
+
+
+## A room that wants the world's shading pushed to it.
+##
+## An EXPLICIT registration and not a sweep for whoever answers the method name.
+## Briefing trap 16 is the third instance in this project of a system that
+## discovers collaborators by method name having an API surface much larger than
+## its class, and the fix recorded there is exactly this: drive who registered,
+## not everyone who happens to look right.
+##
+## Idempotent, because `InteriorWarmth.resolve()` is.
+## Duck-typed rather than typed `InteriorWarmth`, and the shout is what pays for
+## it: this class is generic rendering and that one is a game entity, so naming
+## it here would point the dependency backwards. The check is at REGISTRATION and
+## not in the sweep, so a wiring mistake shouts once at the moment it is made
+## rather than sixty times a second for the rest of the run.
+static func register_room(room) -> void:
+	if room == null or not is_instance_valid(room):
+		return
+	if not room.has_method("apply_world_shading"):
+		push_error(
+			"cel_painter: %s registered as a room and cannot answer apply_world_shading(), "
+				% str(room)
+				+ "so it would sit at its shader's authored band for the whole run"
+		)
+		return
+	for handle in _rooms:
+		if handle.get_ref() == room:
+			return
+	_rooms.append(weakref(room))
+	# Stamped with whatever the light currently is, then registered so the next
+	# change finds it -- the same both-halves contract `material_for()` keeps. A
+	# building placed at midnight must not arrive lit for the boot frame, and it
+	# must not stay that way either.
+	room.apply_world_shading(_band_threshold, _band_softness, _tint_color)
+
+
+## How many rooms the broadcast would currently reach. Exists so a test can prove
+## the register drops what it no longer holds.
+static func live_room_count() -> int:
+	var alive := 0
+	for handle in _rooms:
+		if handle.get_ref() != null:
+			alive += 1
+	return alive
+
+
+## THE THREE VALUES A SOLID CURRENTLY TAKES FROM THE LIGHT.
+##
+## Published because a room resolving mid-run has to be able to ask what the
+## world is doing rather than start at a script default and wait for the next
+## preset change -- which, on a day with no weather, is up to ten minutes away
+## (lighting audit section 3).
+##
+## `world_band_threshold()` is the WALL's number, SOLID_BAND_OFFSET already
+## added, because the surfaces in a room are walls.
+static func world_band_threshold() -> float:
+	return _band_threshold
+
+
+static func world_band_softness() -> float:
+	return _band_softness
+
+
+static func world_light_tint() -> Color:
+	return _tint_color
 
 
 ## How much snow has settled on everything facing the sky, 0..1.

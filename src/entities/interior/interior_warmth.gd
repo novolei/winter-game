@@ -163,8 +163,11 @@ const INTERIOR_LAYER := 1 << 2
 ## the band into a vertical hatch across the largest shape in the frame. Above
 ## 0.155 the sun cannot reach the band at all on that face and the wall belongs
 ## entirely to the fire, which is the point of the room.
-@export var band_threshold := 0.18
-@export var band_softness := 0.025
+##
+## THESE ARE NOW THE FIRE'S END OF A TRAVEL, NOT THE ONLY VALUE. See the block
+## above `apply_world_shading()` for the other end and for why there are two.
+@export var fire_band_threshold := 0.18
+@export var fire_band_softness := 0.025
 
 ## How long the room takes to catch, and to go cold. Slower than the reveal's
 ## 0.30 s on purpose: a roof coming off is an edit, a fire taking hold is not.
@@ -185,6 +188,14 @@ var _materials: Array[ShaderMaterial] = []
 var _missing := PackedStringArray()
 var _tween: Tween = null
 var _fire = null
+
+## What the valley outside is currently doing, as a wall in it would take it.
+## Seeded from CelPainter's last broadcast rather than from a literal, so a room
+## resolved on day 5 does not start at the boot frame's light and wait up to ten
+## minutes for the next preset change to correct it.
+var _world_threshold := CelPainter.world_band_threshold()
+var _world_softness := CelPainter.world_band_softness()
+var _world_tint := CelPainter.world_light_tint()
 
 
 func _ready() -> void:
@@ -242,6 +253,10 @@ func resolve() -> void:
 			_parts.append(found)
 			found.layers |= INTERIOR_LAYER
 			_repaint(found, painter, bible, shader, drop)
+	# The room joins the lighting's broadcast. Idempotent on CelPainter's side,
+	# and it re-stamps on the way in, so a room resolved mid-run arrives carrying
+	# the light that is already outside rather than a script default.
+	CelPainter.register_room(self)
 	apply_warmth(_warmth)
 
 
@@ -283,8 +298,10 @@ func _repaint(
 		material.set_shader_parameter("shade_color", painter.shade_for(albedo))
 		material.set_shader_parameter("warm_lit_color", _warm_tone(bible, warm_lit_slot - rung))
 		material.set_shader_parameter("warm_shade_color", _warm_tone(bible, warm_shade_slot - rung))
-		material.set_shader_parameter("band_threshold", band_threshold)
-		material.set_shader_parameter("band_softness", band_softness)
+		# The band and the tint are NOT written here. Both are a function of the
+		# warmth and of the world, and both move; `_stamp_shading()` is the one
+		# place either is decided, and `apply_warmth()` at the end of resolve()
+		# calls it for every material this loop just built.
 		material.set_shader_parameter("emission_strength",
 			emission_strength if CelPainter._same(albedo, emissive) else 0.0)
 		instance.set_surface_override_material(surface, material)
@@ -350,6 +367,90 @@ func apply_warmth(value: float) -> void:
 		return
 	for material in _materials:
 		material.set_shader_parameter("warmth", _warmth)
+		# The band and the tint move WITH the warmth -- one blend, not two. A
+		# room whose colour and whose shading crossed over at different moments
+		# would show the handover, and the handover is the thing that has to be
+		# invisible.
+		_stamp_shading(material)
+
+
+## ---------------------------------------------------------------------------
+## WHAT THE ROOM DOES WHEN THE VALLEY OUTSIDE CHANGES
+## ---------------------------------------------------------------------------
+## Pushed by CelPainter on every preset write, and once on registration. The
+## three values are a WALL's, as the world currently draws one: the ground's
+## band plus CelPainter.SOLID_BAND_OFFSET, the preset's softness, and the hue the
+## sun lends the lit band.
+##
+## THE DEFECT THIS CLOSES. `assets/shaders/cel_interior.gdshader` was on nobody's
+## broadcast for three waves. Every other lit surface in the game followed the
+## six presets -- the audit measured 67 correct state changes across a seven-day
+## run and a 4.641x luminance spread -- and this room did not. It sat at whatever
+## band it was authored with while the world outside went from PALE DAY to DEEP
+## NIGHT. **A room whose light never changes is a room outside time**, and this
+## game's whole structure is seven days passing.
+##
+## AND WHY MERELY TRACKING WOULD HAVE BEEN THE WRONG FIX. Outdoors the band rises
+## as the world darkens -- 0.12 at PALE DAY through 0.24 at DEEP NIGHT to 0.35 in
+## the storm -- because the sun is weakening and more of the world falls into
+## shade. That reasoning does not survive a doorway. This room is lit by a fire
+## standing in it, and **nothing about the fire dims at three in the morning.**
+## At DEEP NIGHT's wall value of 0.42 the boundary is a ring about two metres
+## from the stove with five-sixths of the floor outside it -- a room with a torch
+## in it, on the night the room exists for.
+##
+## So the boundary TRAVELS, on `warmth`:
+##
+##     fire at full   the fire's own boundary, 0.18 / 0.025, measured against the
+##                    stove's geometry and against Art Bible rule 10's hatch
+##     fire out       the world's, whatever a wall in the valley currently takes
+##
+## which makes true a promise `cel_interior.gdshader` has always made in words
+## and never in fact -- that "`warmth` at 0 is this shader being cel_flat
+## exactly". **The room going cold and the room rejoining the valley are the same
+## event**, and that is the readout: come home on day 6 to a stove that burned
+## out while you were away and the room is not merely as blue as the snow, it is
+## shaded by the same night.
+##
+## THE TINT IS GATED THE SAME WAY, and that one is a rule rather than a taste.
+## `world_light_tint` is the hue the SUN lends -- SUNRISE is the only preset
+## carrying any. Rule 3 of the UI document states the law the whole project
+## shares: **a warm pixel means the presence of heat and nothing else.** The heat
+## in this room is the stove. Dawn outside is not heat in here, so stacking its
+## amber onto the fire's would make part of the room warm for a reason that is
+## not heat -- which is the one thing that rule forbids. It reaches a cold room
+## in full and a burning one not at all.
+##
+## WHAT IS NOT HERE, AND IS A FINDING RATHER THAN AN OMISSION.
+## `LightingPreset.warm_accent_energy` is authored on all six -- 0.5 at PALE DAY
+## rising to 2.2 at DEEP NIGHT -- and Art Bible section 4.2 lists it among a
+## preset's contents. It has NO consumer anywhere in the project. It is the
+## Art Bible's own answer to "what should a fire do as the world darkens", and
+## wiring it changes the warm-pixel share, which rule 12's own revision says must
+## be re-measured rather than assumed. Reported, not taken.
+func apply_world_shading(threshold: float, softness: float, tint: Color) -> void:
+	_world_threshold = threshold
+	_world_softness = softness
+	_world_tint = tint
+	for material in _materials:
+		_stamp_shading(material)
+
+
+## The boundary and the hue this material takes right now.
+##
+## Linear in `warmth`, which is load-bearing for the hatch guard: `threshold -
+## softness` is then linear too, so a boundary that clears the sun's grazing hit
+## on the back wall at both ends of the travel clears it everywhere between, and
+## `tests/unit/test_interior_warmth.gd` only has to check the ends.
+func _stamp_shading(material: ShaderMaterial) -> void:
+	material.set_shader_parameter(
+		"band_threshold", lerpf(_world_threshold, fire_band_threshold, _warmth)
+	)
+	material.set_shader_parameter(
+		"band_softness", lerpf(_world_softness, fire_band_softness, _warmth)
+	)
+	var tint := _world_tint.lerp(Color.WHITE, _warmth)
+	material.set_shader_parameter("light_tint", Vector3(tint.r, tint.g, tint.b))
 
 
 func warm_duration_to(target: float) -> float:
