@@ -34,16 +34,23 @@ extends CanvasLayer
 
 const TOKENS_PATH := "res://data/ui/tokens.tres"
 const PerformanceOverlayScript := preload("res://src/ui/performance_overlay.gd")
+const SettingsStoreScript := preload("res://src/ui/settings_store.gd")
 
 ## Below LightingDebugPanel's 100, which must stay on top of everything, and
 ## above the world.
 const LAYER_ORDER := 10
+
+## Registered so the pause menu can push accessibility changes without a
+## scene path. Same pattern as CameraRig's "camera_rig" entry.
+const SERVICE_KEY := &"ui_layer"
 
 var _tokens: UITokens = null
 var _fonts: UIFonts = null
 var _audio: UIAudio = null
 var _performance_overlay: Control = null
 var _time_scale := 1.0
+var _preference_scale := 1.0
+var _stroke_scale := 1.0
 
 ## One entry per element being driven: its control, its envelope, where it was
 ## put, and how far through it is.
@@ -52,6 +59,7 @@ var _live: Array = []
 func _ready() -> void:
 	if _tokens == null:
 		build()
+	register_with(get_node_or_null("/root/ServiceRegistry"))
 
 ## Loads the tokens, builds the fonts and the voice. Separate from _ready() so a
 ## test can have a layer without a SceneTree -- and idempotent, because _ready()
@@ -75,6 +83,7 @@ func build() -> void:
 		_performance_overlay.name = "PerformanceOverlay"
 		add_child(_performance_overlay)
 		_performance_overlay.attach(_tokens, _fonts)
+	apply_accessibility()
 
 func tokens() -> UITokens:
 	return _tokens
@@ -125,6 +134,49 @@ func dismiss(control: Control, exit := Breath.Exit.NORMAL) -> void:
 			_: breath.exit_seconds = _tokens.drift_seconds
 		return
 
+
+## Moves the resting point of an element the layer already drives without
+## stealing the Breath's current drift from it. World-projected controls call
+## this after every projection: changing `position` alone would last only until
+## advance() restored the home captured when the element was adopted.
+func rehome(control, home: Vector2) -> bool:
+	if control == null or not is_instance_valid(control) or not home.is_finite():
+		return false
+	for entry in _live:
+		var raw: Variant = entry["control"]
+		if raw == null or not is_instance_valid(raw) or raw != control:
+			continue
+		entry["home"] = home
+		var breath: Breath = entry["breath"]
+		control.position = home + breath.offset_at(float(entry["elapsed"]))
+		return true
+	return false
+
+
+## Restarts the readable hold of an existing transient without adopting it a
+## second time. Pickup receipts use this when another copy of the same item is
+## collected: one Control updates and remains long enough to read, while _live
+## still contains exactly one entry for it.
+func refresh_hold(control, hold := -1.0) -> bool:
+	if control == null or not is_instance_valid(control):
+		return false
+	for entry in _live:
+		var raw: Variant = entry["control"]
+		if raw == null or not is_instance_valid(raw) or raw != control:
+			continue
+		var breath: Breath = entry["breath"]
+		breath.hold_seconds = _tokens.hold_seconds if hold < 0.0 else maxf(hold, 0.0)
+		# The receipt itself may pulse the changed amount; the whole composition
+		# remains settled rather than replaying its entrance.
+		entry["elapsed"] = breath.bloom_seconds
+		control.modulate.a = breath.opacity_at(breath.bloom_seconds)
+		control.scale = Vector2.ONE * breath.scale_at(breath.bloom_seconds)
+		control.position = entry["home"] + breath.offset_at(breath.bloom_seconds)
+		if control.has_method("set_envelope"):
+			control.call("set_envelope", breath, breath.bloom_seconds)
+		return true
+	return false
+
 ## Section 5.6. Applied to elements ALREADY breathing as well as to new ones --
 ## a cold snap that only reached whatever appeared after the weather turned would
 ## be a rule about the future rather than about the air.
@@ -134,6 +186,23 @@ func set_time_scale(scale: float) -> void:
 
 func time_scale() -> float:
 	return _time_scale
+
+## Section 4.2's reading aids, re-read from the store. The prompt-hold
+## preference COMPOSES with the weather's time scale in advance(): neither
+## overwrites the other.
+func apply_accessibility() -> void:
+	_preference_scale = clampf(SettingsStoreScript.value(&"prompt_hold", 1.0), 0.5, 3.0)
+	_stroke_scale = 2.0 if SettingsStoreScript.value(&"stroke_bold", 0.0) >= 0.5 else 1.0
+
+func preference_scale() -> float:
+	return _preference_scale
+
+func stroke_scale() -> float:
+	return _stroke_scale
+
+func register_with(registry) -> void:
+	if registry != null:
+		registry.register(SERVICE_KEY, self)
 
 func live_count() -> int:
 	return _live.size()
@@ -158,7 +227,7 @@ func clear() -> void:
 func advance(delta: float) -> void:
 	if not is_finite(delta) or delta <= 0.0 or _live.is_empty():
 		return
-	var step := delta / _time_scale
+	var step := delta / (_time_scale * _preference_scale)
 	var finished: Array = []
 	for entry in _live:
 		# READ UNTYPED, CHECKED, THEN NARROWED -- briefing trap 18.
