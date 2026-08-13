@@ -77,6 +77,42 @@ func test_an_unset_run_seed_is_minted_once() -> void:
 	assert_eq(boot.current_run_seed(), first, "a fresh boot minted a second seed")
 
 
+## Unit subjects are deliberately detached.  Their lifecycle must not attempt
+## an absolute /root lookup, because Godot reports that as an engine error even
+## though this boot has no service registry to clean up.
+func test_a_detached_boot_can_ready_and_leave_without_a_tree_lookup() -> void:
+	var boot = _build_boot()
+	boot.auto_start = false
+	boot._ready()
+	boot._exit_tree()
+	assert_true(boot.current_run_seed() != 0, "detached boot did not retain its minted seed")
+
+
+## The complementary live path is load-bearing: SnowField resolves this
+## generic service rather than taking a direct dependency on RunBoot.
+func test_a_live_boot_registers_its_seed_and_releases_it_on_exit() -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	assert_not_null(tree, "the test runner must provide a live SceneTree")
+	if tree == null:
+		return
+	var registry := tree.root.get_node_or_null("ServiceRegistry")
+	assert_not_null(registry, "the live ServiceRegistry autoload is required for run seed ownership")
+	if registry == null:
+		return
+	var previous = registry.get_service(RunBootScript.RUN_SEED_SERVICE)
+	var boot = _build_boot()
+	boot.auto_start = false
+	boot.run_seed = 1729
+	tree.root.add_child(boot)
+	assert_eq(registry.get_service(RunBootScript.RUN_SEED_SERVICE), boot,
+		"a live boot did not expose its run seed through the generic registry")
+	tree.root.remove_child(boot)
+	assert_false(registry.has(RunBootScript.RUN_SEED_SERVICE),
+		"a removed boot left a stale run-seed owner in the registry")
+	if previous != null:
+		registry.register(RunBootScript.RUN_SEED_SERVICE, previous)
+
+
 # --- the clock starts ------------------------------------------------------
 
 func test_the_boot_loads_the_seven_days_and_starts_the_clock() -> void:

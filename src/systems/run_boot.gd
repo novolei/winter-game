@@ -80,6 +80,10 @@ func _ready() -> void:
 
 
 func _exit_tree() -> void:
+	# Unit subjects are detached. Absolute paths are valid only while this node
+	# is attached to the active SceneTree.
+	if not is_inside_tree():
+		return
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null and registry.get_service(RUN_SEED_SERVICE) == self:
 		registry.unregister(RUN_SEED_SERVICE)
@@ -104,6 +108,10 @@ func _ensure_run_seed() -> void:
 
 
 func _register_run_seed() -> void:
+	# Do not resolve /root from a detached test subject: Godot reports that as
+	# an engine error before the null guard could protect this lifecycle path.
+	if not is_inside_tree():
+		return
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null:
 		registry.register(RUN_SEED_SERVICE, self)
