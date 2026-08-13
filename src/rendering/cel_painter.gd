@@ -3,12 +3,11 @@ extends RefCounted
 
 ## Re-materials an imported model onto the world's two-band cel shader.
 ##
-## Every ordinary .glb in this project arrives painted in flat palette colour by
-## tools/palette_import_materials.gd. The approved Synty prop composites retain
-## one native albedo map instead; it becomes a cel-lit detail layer, not a Unity
-## PBR material. In both cases a StandardMaterial3D is lit by Godot's stock PBR:
-## a smooth Lambert ramp, plus the Environment's ambient, plus the exposure.
-## The snow beside it is lit by a two-band cel light() with ambient_light_disabled,
+## Every .glb in this project arrives painted in flat palette colour by
+## tools/palette_import_materials.gd. That is correct as *albedo* and it is what
+## the art gates judge, but a StandardMaterial3D is lit by Godot's stock PBR: a
+## smooth Lambert ramp, plus the Environment's ambient, plus the exposure. The
+## snow beside it is lit by a two-band cel light() with ambient_light_disabled,
 ## which picks a palette colour outright and is multiplied by nothing.
 ##
 ## Left alone, every solid in the frame is shaded by a different model from the
@@ -103,15 +102,6 @@ const SNOW_NOISE_STRENGTH := 0.30
 ## more slowly than the frame rate, so values inside one step cannot be seen
 ## but used to cause a full material and roof-mass broadcast every frame.
 const SNOW_COVER_BUCKET_STEPS := 255
-
-## Runtime survival props sit in the open and need a more generous crown of
-## snow than walls, trunks and the old utility meshes. This is still the same
-## global accumulation field -- a profile only changes how much of that field a
-## top-facing surface catches. The reduced thresholds preserve both shader
-## invariants above: bare cover cannot whiten anything and vertical faces stay
-## clear even in a whiteout.
-const EXPOSED_PROP_SNOW_RECEPTIVITY := 1.28
-const EXPOSED_PROP_SNOW_THRESHOLD_BIAS := -0.06
 
 ## ---------------------------------------------------------------------------
 ## HOW READILY EACH OF THE TWELVE TAKES SNOW, and why it is a palette rule
@@ -325,26 +315,6 @@ static func live_room_count() -> int:
 	return alive
 
 
-## Adds a bespoke world shader to the same lighting and accumulation broadcast
-## as the stock cel material. This is intentionally material-level rather than
-## entity-level: a MultiMesh field is one material and one draw, regardless of
-## how many grass crowns it contains.
-##
-## The shader must declare CelPainter's shared `band_threshold`,
-## `band_softness`, `light_tint` and `snow_cover` uniforms. Keeping that small
-## vocabulary is what lets a specialty surface participate without the lighting
-## and weather systems learning the noun that owns it.
-static func register_world_material(material: ShaderMaterial) -> void:
-	if material == null or material.shader == null:
-		push_error("cel_painter: a world material without a shader cannot receive the cel broadcast")
-		return
-	for handle in _register:
-		if handle.get_ref() == material:
-			return
-	_stamp(material)
-	_register.append(weakref(material))
-
-
 ## THE THREE VALUES A SOLID CURRENTLY TAKES FROM THE LIGHT.
 ##
 ## Published because a room resolving mid-run has to be able to ask what the
@@ -520,19 +490,13 @@ func _init(snow_shade_step := 3, structure_shade_step := 1) -> void:
 
 
 ## Every surface under `node` onto the cel shader, keeping the colour the
-## palette already resolved for it.  An approved Synty material additionally
-## hands its original albedo map to the shader, where it remains visible on
-## bare faces and goes under the same settled snow as the palette-only props.
+## palette already resolved for it.
 ##
 ## The lit band is read off the imported material's albedo rather than off its
 ## slot name, so this stays correct if a part is ever moved from one palette
 ## slot to another in Blender -- the name is the .glb's business, the colour is
 ## the palette's, and this only needs the colour.
-func paint(
-	node: Node,
-	snow_receptivity_scale := 1.0,
-	snow_threshold_bias := 0.0
-) -> void:
+func paint(node: Node) -> void:
 	if node is MeshInstance3D:
 		var instance := node as MeshInstance3D
 		var mesh := instance.mesh
@@ -540,24 +504,19 @@ func paint(
 			for surface in range(mesh.get_surface_count()):
 				var existing := mesh.surface_get_material(surface)
 				var albedo := Color(1.0, 0.0, 1.0)
-				var source_albedo: Texture2D = null
 				var bare := false
 				if existing is BaseMaterial3D:
 					albedo = (existing as BaseMaterial3D).albedo_color
-					source_albedo = (existing as BaseMaterial3D).albedo_texture
 				if existing != null:
 					# `contains` rather than `ends_with`: Godot's glTF importer
 					# appends `.001` to a duplicated material name, and the
 					# palette gate already matches these by prefix for the same
 					# reason.
 					bare = existing.resource_name.contains(BARE_SLOT_MARK)
-				instance.set_surface_override_material(
-					surface,
-					material_for(albedo, bare, source_albedo, snow_receptivity_scale, snow_threshold_bias)
-				)
+				instance.set_surface_override_material(surface, material_for(albedo, bare))
 		_adopt_mass(instance)
 	for child in node.get_children():
-		paint(child, snow_receptivity_scale, snow_threshold_bias)
+		paint(child)
 
 
 ## Take over any mesh that ships a settled mass, and set it to the weather that
@@ -581,30 +540,15 @@ func _adopt_mass(instance: MeshInstance3D) -> void:
 ## roof planes and the trees are the same colour and only one of them refuses
 ## snow, so they have to be two materials or the last surface painted would
 ## decide for both.
-func material_for(
-	lit: Color,
-	bare := false,
-	source_albedo: Texture2D = null,
-	snow_receptivity_scale := 1.0,
-	snow_threshold_bias := 0.0
-) -> ShaderMaterial:
-	var source_key := ""
-	if source_albedo != null:
-		source_key = source_albedo.resource_path
-		if source_key == "":
-			source_key = str(source_albedo.get_instance_id())
-	var key := "%s|%s|%s|%.3f|%.3f" % [
-		lit.to_html(false), bare, source_key, snow_receptivity_scale, snow_threshold_bias
-	]
+func material_for(lit: Color, bare := false) -> ShaderMaterial:
+	var key := "%s|%s" % [lit.to_html(false), bare]
 	if _materials.has(key):
 		return _materials[key]
 	var material := ShaderMaterial.new()
 	material.shader = _shader
 	material.set_shader_parameter("lit_color", lit)
 	material.set_shader_parameter("shade_color", shade_for(lit))
-	material.set_shader_parameter("source_albedo_texture", source_albedo)
-	material.set_shader_parameter("use_source_albedo", source_albedo != null)
-	_stamp_snow_profile(material, lit, bare, snow_receptivity_scale, snow_threshold_bias)
+	_stamp_snow_profile(material, lit, bare)
 	# Stamped with whatever the light and the weather currently are, then
 	# registered so the next change of either finds it. Both halves matter: a
 	# building placed at midnight in a blizzard must not arrive lit for noon and
@@ -618,21 +562,13 @@ func material_for(
 ## The shape of the snow, and which of the twelve refuses it. Written once at
 ## creation rather than on every broadcast: none of it moves, and the one thing
 ## that does -- the cover -- goes through _stamp().
-func _stamp_snow_profile(
-	material: ShaderMaterial,
-	lit: Color,
-	bare := false,
-	snow_receptivity_scale := 1.0,
-	snow_threshold_bias := 0.0
-) -> void:
+func _stamp_snow_profile(material: ShaderMaterial, lit: Color, bare := false) -> void:
 	if _bible != null and _bible.snow_tones.size() > 3:
 		material.set_shader_parameter("snow_lit", _bible.snow_tones[0])
 		material.set_shader_parameter("snow_shade", _bible.snow_tones[3])
-	var scale := maxf(snow_receptivity_scale, 0.0)
-	var bias := minf(snow_threshold_bias, 0.0)
-	material.set_shader_parameter("snow_receptivity", 0.0 if bare else receptivity_for(lit) * scale)
-	material.set_shader_parameter("snow_bare_threshold", SNOW_BARE_THRESHOLD + bias)
-	material.set_shader_parameter("snow_full_threshold", SNOW_FULL_THRESHOLD + bias)
+	material.set_shader_parameter("snow_receptivity", 0.0 if bare else receptivity_for(lit))
+	material.set_shader_parameter("snow_bare_threshold", SNOW_BARE_THRESHOLD)
+	material.set_shader_parameter("snow_full_threshold", SNOW_FULL_THRESHOLD)
 	material.set_shader_parameter("snow_edge_softness", SNOW_EDGE_SOFTNESS)
 	material.set_shader_parameter("snow_noise_scale", SNOW_NOISE_SCALE)
 	material.set_shader_parameter("snow_noise_strength", SNOW_NOISE_STRENGTH)
