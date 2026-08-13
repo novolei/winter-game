@@ -56,6 +56,20 @@ func test_asking_for_a_preset_that_does_not_exist_yields_nothing() -> void:
 	assert_true(director.preset(&"golden_hour") == null, "it invented a preset")
 	assert_false(director.apply_preset(&"golden_hour"), "it claimed to apply one that does not exist")
 
+
+## F3 now opens the developer performance slate. Deep-night inspection remains
+## available, but only with Shift so no two debug surfaces answer one key.
+func test_shift_f3_preserves_the_deep_night_lighting_preview() -> void:
+	var director := _build()
+	director.debug_controls_enabled = true
+	var event := InputEventKey.new()
+	event.keycode = KEY_F3
+	event.physical_keycode = KEY_F3
+	event.shift_pressed = true
+	event.pressed = true
+	director._unhandled_key_input(event)
+	assert_eq(director.active_preset().id, &"deep_night")
+
 ## The frame the game opens on. Day 1 is PALE DAY -- 无事挂心, nothing at stake --
 ## and it has to be on screen before the clock has said anything, or the first
 ## seconds of the run render with whatever the engine defaults to.

@@ -1054,7 +1054,6 @@ func _change_to(day: int, night: bool) -> void:
 const _HOTKEYS := {
 	KEY_BACKSPACE: &"flat",
 	KEY_F2: &"nightfall",
-	KEY_F3: &"deep_night",
 	KEY_F4: &"whiteout",
 	KEY_F5: &"sunrise",
 	KEY_F6: &"pale_day",
@@ -1070,6 +1069,19 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if key.keycode == KEY_F1:
 		_toggle_panel()
 		get_viewport().set_input_as_handled()
+		return
+	# Plain F3 belongs to the developer performance overlay. Requiring Shift
+	# here preserves the existing deep-night preview without letting two debug
+	# surfaces react to the same physical key.
+	if key.keycode == KEY_F3:
+		if not key.shift_pressed:
+			return
+		apply_preset(&"deep_night")
+		if _panel != null:
+			_panel.sync()
+		var viewport := get_viewport()
+		if viewport != null:
+			viewport.set_input_as_handled()
 		return
 	if not _HOTKEYS.has(key.keycode):
 		return

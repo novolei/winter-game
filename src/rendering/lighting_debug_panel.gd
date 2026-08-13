@@ -149,7 +149,7 @@ func _build() -> void:
 	column.add_child(note)
 
 	var keys := Label.new()
-	keys.text = "F1 panel   BKSP flat   F2 nightfall   F3 deep night\nF4 whiteout   F5 sunrise   F6 pale day"
+	keys.text = "F1 panel   BKSP flat   F2 nightfall   SHIFT+F3 deep night\nF4 whiteout   F5 sunrise   F6 pale day"
 	keys.add_theme_font_size_override("font_size", 10)
 	column.add_child(keys)
 

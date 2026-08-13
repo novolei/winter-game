@@ -33,6 +33,7 @@ extends CanvasLayer
 ## are section 5's, and they arrive as Controls somebody else built.
 
 const TOKENS_PATH := "res://data/ui/tokens.tres"
+const PerformanceOverlayScript := preload("res://src/ui/performance_overlay.gd")
 
 ## Below LightingDebugPanel's 100, which must stay on top of everything, and
 ## above the world.
@@ -41,6 +42,7 @@ const LAYER_ORDER := 10
 var _tokens: UITokens = null
 var _fonts: UIFonts = null
 var _audio: UIAudio = null
+var _performance_overlay: Control = null
 var _time_scale := 1.0
 
 ## One entry per element being driven: its control, its envelope, where it was
@@ -66,6 +68,13 @@ func build() -> void:
 		_audio.name = "Voice"
 		add_child(_audio)
 		_audio.load_map()
+	# Debug-only like LightingDebugPanel: a release build never instantiates the
+	# instrumentation, while a debug build keeps it asleep until F3 is pressed.
+	if _performance_overlay == null and OS.is_debug_build():
+		_performance_overlay = PerformanceOverlayScript.new()
+		_performance_overlay.name = "PerformanceOverlay"
+		add_child(_performance_overlay)
+		_performance_overlay.attach(_tokens, _fonts)
 
 func tokens() -> UITokens:
 	return _tokens
@@ -75,6 +84,12 @@ func fonts() -> UIFonts:
 
 func audio() -> UIAudio:
 	return _audio
+
+
+## Kept out of the transient surface() lifecycle: diagnostics are developer
+## instrumentation, not a diegetic message that should bloom and drift away.
+func performance_overlay() -> Control:
+	return _performance_overlay
 
 ## Section 2.3's breathing border, in screen pixels, off the short edge.
 func edge_pixels(viewport_size: Vector2) -> float:
