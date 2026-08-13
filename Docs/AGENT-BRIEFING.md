@@ -329,8 +329,10 @@ rm path/to/file.gd && git checkout -- path/to/file.gd
 Find them with:
 
 ```bash
-git ls-files -z -- '*.gd' '*.gdshader' '*.md' '*.tres' '*.tscn' | xargs -0 grep -lU $'\r'
+git ls-files --eol -- '*.gd' '*.gdshader' '*.md' '*.tres' '*.tscn'
 ```
+
+**Do not use `grep -U $'\r'` for this.** It was here until `2026-08-13` and it **fails open in this shell** — measured returning "no CRs" on a file that has them. A detector that reports clean on a dirty file is worse than no detector: it converts "I did not check" into "I checked and it was fine". `git ls-files --eol` reads the index and the working copy and prints both, so a mismatch is visible rather than inferred.
 
 Why it matters even though git hides it: an exact-string `Edit` against a CRLF file can fail to match a pattern written with LF, and the failure looks like the string being absent rather than the line endings differing. **When writing files from a script, write LF explicitly** (`newline="\n"` in Python's `open`) rather than relying on the platform default.
 
@@ -667,3 +669,25 @@ Two things make it worse than one lost reference:
 **任何从解释推导出来的行动方案，继承的是解释的可靠度，而不是测量的。**所以照着一条旧记录去修东西之前，先花几分钟把那个缺陷复现出来：如果它以你预期的方式发作，解释大概率成立；如果它以别的方式发作，或者根本不发作，你刚刚省下的是照着错误模型改代码的一整轮。
 
 同一时期还有一条正在被同样的方式检验（陷阱 14 的 RNG 偏置：**六个种子**的原始观测，对上 **2000 个发生器**的证伪）。**两条都不是当初写记录的人不认真**——他们都写下了自己真的看见的东西。可靠度的差别不在态度，在于测量被执行过，而解释只是被想出来。
+
+### 「值被设进去了」和「值起作用了」是两个不同的断言 — 本项目最高频的一类缺陷
+
+到 2026-08-13 为止，这个项目上**至少七次**栽在同一个形状：一个值被正确地写入、能被正确地读回、测试为它开绿灯，**而它从未对任何东西产生影响**。
+
+| 发作处 | 设进去了 | 起作用了吗 |
+|---|---|---|
+| `FontVariation.variation_opentype` | 字典键写入、读回一致 | **否。**它按**整数 tag 码**索引，字符串键被静默忽略——界面中文一直跑在 `Noto Sans SC 100 Thin` |
+| `AudioStreamPlayer.play()` | 连续 44 次返回 `true` | **否。**引擎一个音都没放 |
+| `probe_run_lighting.gd --seed` | 参数被解析 | **否。**从不应用，于是同种子两次运行不同，而差异会被读成「效果」 |
+| `WindSystem.set_wind()` | 方法被调用 | **看谁先声明了这个名字**——按方法名扫全树，任何人都可能无意中抢占 |
+| `vision:focus` | 事件被发布 | **否。**零消费者，口渴的读数根本不存在（已修） |
+| `visibility_multiplier = 0.25` | 数据被authored | **否。**`src/` 里没有任何消费者 |
+| `LightingPreset.warm_accent_energy` | authored 成 0.5→2.2 的阶梯，**还会被发布、被交叉淡化、被滑块驱动** | **否。**全游戏零消费者 |
+
+最后一条是这一类里最凶的形态：**它周围的一切基础设施都是真的**，所以从任何一个角度看它都像在工作。
+
+**为什么它总能骗过人：**写测试的人断言的是**自己刚做过的那个动作**——我设了值，值在那儿；我调了方法，它返回 true；我发了事件，事件发出去了。这些断言全部为真，而且它们全部与「有没有效果」无关。**测试重复了实现，而不是检查了结果。**
+
+**所以：断言那个下游的、可观察的量。**不是「字典里字重是 600」，而是**「这个字形的笔画拿到了多少墨」**；不是「`play()` 返回 true」，而是**「有声音在响」**；不是「事件发出去了」，而是**「画面变了」**。
+
+一条便宜的自检：**把那个值改成一个荒谬的数，然后看测试红不红。**如果把字重从 600 改成 100、把音量改成 −80 dB、把倍率改成 0，而套件依然全绿——那条测试从一开始就没在看它声称在看的东西。
