@@ -751,6 +751,7 @@ func _apply_setting(entry: AccessibilitySetting, index: int) -> void:
 		_spatial.set_row_value(entry.id, entry.format_value(
 			SettingsStore.value(entry.id, entry.default_value)),
 			entry.fraction_of(SettingsStore.value(entry.id, entry.default_value)))
+		_spatial.pulse_row_value(entry.id)
 
 
 func _resolve_ui_layer() -> void:
@@ -881,9 +882,13 @@ func _on_viewport_size_changed() -> void:
 
 func _on_choice_focus_entered(button: Button) -> void:
 	_set_choice_line(button, true)
+	var row_index := _settings_row_buttons.find(button)
+	if row_index >= 0:
+		# Canvas 侧焦点行加粗一档（非 spatial 模式可见；spatial 侧由 set_focus 处理）。
+		button.add_theme_font_override("font", _fonts.interface_at(
+			_tokens.interface_latin_weight + 100, _tokens.interface_cjk_weight + 100))
 	if _spatial != null:
 		var focus_id := _spatial_choice_id(button)
-		var row_index := _settings_row_buttons.find(button)
 		if row_index >= 0:
 			focus_id = StringName("row_%s" % _settings_row_settings[row_index].id)
 		_spatial.set_focus(focus_id)
@@ -894,6 +899,7 @@ func _on_choice_focus_entered(button: Button) -> void:
 func _on_choice_focus_exited(button: Button) -> void:
 	if not button.is_hovered():
 		_set_choice_line(button, false)
+	button.add_theme_font_override("font", _fonts.display)
 
 
 func _on_choice_mouse_entered(button: Button) -> void:

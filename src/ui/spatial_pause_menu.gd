@@ -15,6 +15,12 @@ const FOREGROUND_SURFACE_DEPTH_METRES := 3.2
 const LINE_RESPONSE := 12.0
 const PAUSE_TREATMENT_COMPENSATION := 1.75
 
+## 焦点三重反馈（设计规范 2.2）：字重 +100、上浮 -2px、其余降到 opacity_steps[2]。
+const FOCUS_WEIGHT_STEP := 100
+const FOCUS_LIFT_PIXELS := -2.0
+const PULSE_SCALE := 0.03
+const PULSE_RESPONSE := 12.0
+
 const STATUS := &"status"
 const CAPTION := &"caption"
 const TIME := &"time"
@@ -80,6 +86,9 @@ var _frame_scale := 1.0
 
 var _envelope_alpha: Dictionary = {}    # id -> 0..1 乘子（默认 1）
 var _envelope_offset: Dictionary = {}   # id -> y 像素偏移（默认 0）
+
+var _focus_lift: Dictionary = {}   # id -> 像素
+var _row_pulses: Dictionary = {}   # setting_id -> 0..1
 
 
 func setup(tokens: UITokens, fonts: UIFonts) -> void:
@@ -299,7 +308,31 @@ func set_focus(id: StringName) -> void:
 		var row_focused: bool = _row_ids[i] == id
 		_label_colours[_row_ids[i]] = _tokens.scrim_veil if row_focused else _tokens.line_deep
 		_label_colours[_row_value_ids[i]] = _tokens.scrim_veil if row_focused else _tokens.line_deep
+	var focusables := [CONTINUE, SETTINGS, EXIT, RETURN, CONFIRM] + _row_ids
+	for focusable in focusables:
+		var focused_now: bool = focusable == _focus
+		_focus_lift[focusable] = FOCUS_LIFT_PIXELS if focused_now else 0.0
+		var label := _labels.get(focusable) as Label3D
+		if label != null:
+			label.font = _focused_font_for(focusable, focused_now)
 	_apply_alpha()
+
+
+## The display font for a focusable, re-weighted one step up while it holds
+## focus. `_label_fonts` keeps the BASE font after the swap: measurement stays
+## on the base chain (the VF variants share advance widths across the weight
+## axis -- see the UIFonts doc-comment), so nothing here updates it.
+func _focused_font_for(id: StringName, focused: bool) -> Font:
+	var base := _label_fonts.get(id) as Font
+	if not focused:
+		return base
+	if base == _fonts.display:
+		return _fonts.display_at(_tokens.display_latin_weight + FOCUS_WEIGHT_STEP,
+			_tokens.display_cjk_weight + FOCUS_WEIGHT_STEP)
+	if base == _fonts.interface:
+		return _fonts.interface_at(_tokens.interface_latin_weight + FOCUS_WEIGHT_STEP,
+			_tokens.interface_cjk_weight + FOCUS_WEIGHT_STEP)
+	return base  # instrument 是静态字重：值字用颜色与脉冲表达焦点
 
 
 func set_alpha(amount: float) -> void:
@@ -309,6 +342,21 @@ func set_alpha(amount: float) -> void:
 
 func alpha() -> float:
 	return _alpha
+
+
+## The focused line's lift, in screen pixels (negative is up). Applied on top
+## of the envelope offset in _update_projection.
+func focus_lift_for(id: StringName) -> float:
+	return float(_focus_lift.get(id, 0.0))
+
+
+## A settings value just settled: start its value word's pulse at full.
+func pulse_row_value(setting_id: StringName) -> void:
+	_row_pulses[setting_id] = 1.0
+
+
+func row_pulse(setting_id: StringName) -> float:
+	return float(_row_pulses.get(setting_id, 0.0))
 
 
 ## The cascade's handle on one line. Alpha multiplies every colour channel the
@@ -358,6 +406,14 @@ func has_authored_tilt() -> bool:
 
 
 func _process(delta: float) -> void:
+	# The pulse decays even while hidden or camera-free: a settled value should
+	# be quiet by the time the surface returns, not frozen mid-pulse.
+	for setting_id in _row_pulses.keys():
+		var current := float(_row_pulses[setting_id])
+		if current <= 0.001:
+			_row_pulses[setting_id] = 0.0
+			continue
+		_row_pulses[setting_id] = lerpf(current, 0.0, 1.0 - exp(-PULSE_RESPONSE * maxf(delta, 0.0)))
 	if not visible or _camera == null:
 		return
 	for id in _line_amounts.keys():
@@ -506,12 +562,17 @@ func _apply_state_visibility() -> void:
 func _apply_alpha() -> void:
 	if _tokens == null:
 		return
+	var focusables := [CONTINUE, SETTINGS, EXIT, RETURN, CONFIRM] + _row_ids
 	for id in _labels.keys():
 		var label := _labels[id] as Label3D
 		var fill: Color = _label_colours[id]
 		# Keep the charcoal fill dark over snow. The paired snow edge below is the
 		# second contrast channel when a depth-composited word crosses scenery.
 		fill.a *= _alpha * _envelope_alpha_for(id)
+		# Unfocused choices recede to the third opacity step. The confirm page is
+		# exempt: its two buttons keep their colour contrast as the focus cue.
+		if id in focusables and id != _focus and _state != STATE_CONFIRM:
+			fill.a *= _tokens.opacity_steps[2]
 		label.modulate = fill
 		var outline := _tokens.ink_primary
 		outline.a *= _alpha * _envelope_alpha_for(id)
@@ -561,13 +622,19 @@ func _update_projection() -> void:
 		var measured := font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT,
 			-1, BASE_FONT_SIZE).x
 		label.width = maxi(int(ceilf(measured)), 1)
-		label.pixel_size = world_per_pixel * screen_size / float(BASE_FONT_SIZE)
+		var pulse := 1.0
+		var row_index := _row_value_ids.find(id)
+		if row_index >= 0:
+			var setting := _row_settings[row_index] as AccessibilitySetting
+			pulse = 1.0 + PULSE_SCALE * float(_row_pulses.get(setting.id, 0.0))
+		label.pixel_size = world_per_pixel * screen_size / float(BASE_FONT_SIZE) * pulse
 		# Label3D's LEFT alignment treats its origin as the left edge of the text
 		# box. Adding half the measured width here was a double-centering error and
 		# separated the visible glyphs from their accessible Canvas hit targets.
 		var label_transform := label.global_transform
 		label_transform.origin = _camera.project_position(
-			(_targets[id] as Vector2) + Vector2(0.0, _envelope_offset_for(id)), _depth)
+			(_targets[id] as Vector2) + Vector2(0.0,
+				_envelope_offset_for(id) + float(_focus_lift.get(id, 0.0))), _depth)
 		label_transform.basis = _camera.global_transform.basis.orthonormalized() \
 			* Basis.from_euler(_label_tilts[id] as Vector3)
 		label.global_transform = label_transform
