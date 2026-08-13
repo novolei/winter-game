@@ -99,12 +99,11 @@ const PROFILE_PATH := "res://data/weather/wind_valley.tres"
 const MAP_PATH := "res://data/weather/wind_map.tres"
 const LIGHTING_SERVICE := &"lighting"
 
-## The group `Snowfall` publishes its layers in. Spelled out rather than read off
-## `SnowfallLayer.GROUP`, so this file holds no reference to that one: deleting
-## the snowfall has to leave this compiling. Skipped in the sweep because those
-## layers already have a driver, and two writers to one property is the defect
-## this whole file exists to avoid making six of.
-const SNOWFALL_LAYER_GROUP := &"snowfall_layer"
+## A node must join this group before this system may drive its wind hooks.
+## Method names describe the quantity; the group is the explicit opt-in that
+## prevents an injector with an unfortunate name from becoming a consumer.
+## Scene membership keeps this decoupled: neither side holds a direct reference.
+const CONSUMER_GROUP := &"wind_consumer"
 
 const EVENT_GUST_STARTED := &"wind.gust_started"
 const EVENT_GUST_ENDED := &"wind.gust_ended"
@@ -150,10 +149,9 @@ const EVENT_DIRECTION_SHIFTED := &"wind.direction_shifted"
 ## this is generous by a factor of four and still far under the base strength.
 @export var passthrough_tolerance := 0.05
 
-## How often the tree is re-swept for consumers, in seconds. Consumers are found
-## by the hooks they publish rather than by path or by type, so a system that
-## grows a `set_wind()` next wave is driven with no edit here -- but a sweep every
-## frame would be paying for that convenience sixty times a second.
+## How often the explicit group registry is refreshed. Group membership is the
+## contract; this cadence only lets a consumer spawned after the wind join the
+## next delivery pass without a direct reference or tree walk.
 @export var rescan_seconds := 2.0
 
 var _profile: WindProfile = null
@@ -173,7 +171,7 @@ var _strength := 0.0
 var _heading := 0.0
 var _gale_multiplier := 1.0
 
-var _consumers: Array = []
+var _consumers: Array[Node] = []
 var _since_scan := 0.0
 ## instance id -> seconds a sky-fed consumer has disagreed with us.
 var _starved: Dictionary = {}
@@ -693,46 +691,46 @@ func _sky_is_feeding(consumer, delta: float) -> bool:
 func _drive_everything(delta: float) -> void:
 	if not is_inside_tree():
 		return
+	# The SceneTree owns group membership, including consumers spawned after the
+	# wind. Periodically refresh that explicit registry without ever interpreting
+	# a method name as consent.
 	_since_scan += delta
 	if _consumers.is_empty() or _since_scan >= rescan_seconds:
-		_rescan()
+		refresh_consumers()
+	drive_registered(delta)
+
+
+## Public for the registration seam's focused test. Production reaches this via
+## `_drive_everything`; callers that need to build a small graph may refresh it
+## once and prove exactly which registered nodes receive a frame.
+func drive_registered(delta: float) -> void:
 	for consumer in _consumers:
 		if is_instance_valid(consumer):
 			drive(consumer, delta)
 
 
-func _rescan() -> void:
-	var tree := get_tree()
-	refresh_consumers(null if tree == null else tree.get_root())
-
-
-## Public and taking the root, so a test can sweep a tree it built by hand -- see
-## `test_the_sweep_reaches_a_cue_parented_under_the_system_itself`, which is the
-## regression test for the `_collect` note below.
-func refresh_consumers(root: Node) -> void:
+## Explicit group discovery. Passing a root is a test seam for an unattached
+## graph; the running game asks SceneTree's group registry directly.
+func refresh_consumers(root: Node = null) -> void:
 	_since_scan = 0.0
 	_consumers.clear()
-	if root != null:
-		_collect(root)
+	if root == null:
+		var tree := get_tree()
+		if tree == null:
+			return
+		for node in tree.get_nodes_in_group(CONSUMER_GROUP):
+			_collect_registered(node)
+		return
+	_collect_registered(root)
 
 
-## RECURSION IS UNCONDITIONAL, and the two `if`s below decide only whether a node
-## is COLLECTED. Written the obvious way first -- `continue` on the skips -- and
-## that skipped the whole subtree with it, so the two cues parented under this
-## very node were never found and never driven. The wind ran perfectly and
-## nothing moved, which is precisely the failure this task exists to fix, arrived
-## at from the other direction.
-func _collect(node: Node) -> void:
+func _collect_registered(node: Node) -> void:
+	if node != self and node.is_in_group(CONSUMER_GROUP) \
+		and (node.has_method("set_wind") or node.has_method("set_wind_strength")) \
+		and not _consumers.has(node):
+		_consumers.append(node)
 	for child in node.get_children():
-		var collect := child != self
-		# Snow layers are driven by their own director, which pushes them the
-		# whole weather on the same frame. A second writer here would give them
-		# this frame's wind against last frame's framing.
-		if child.is_in_group(SNOWFALL_LAYER_GROUP):
-			collect = false
-		if collect and (child.has_method("set_wind") or child.has_method("set_wind_strength")):
-			_consumers.append(child)
-		_collect(child)
+		_collect_registered(child)
 
 
 func consumer_count() -> int:

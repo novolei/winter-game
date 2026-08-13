@@ -16,6 +16,7 @@
 [ext_resource type="PackedScene" path="res://scenes/effects/snow_near.tscn" id="3_near"]
 
 [node name="Snowfall" type="Node3D"]
+groups = ["wind_consumer"]
 script = ExtResource("1_snowfall")
 
 [node name="SnowDistant" parent="." instance=ExtResource("2_distant")]

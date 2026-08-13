@@ -58,9 +58,11 @@ size = Vector3(2.4, 3.2, 2.6)
 script = ExtResource("1_snowfield")
 
 [node name="TrackMask" type="Node" parent="." unique_id=967854499]
+groups = ["wind_consumer"]
 script = ExtResource("2_trackmask")
 
 [node name="SnowAccumulation" type="Node" parent="." unique_id=967854500]
+groups = ["wind_consumer"]
 script = ExtResource("29_accumulation")
 
 [node name="Player" type="CharacterBody3D" parent="." unique_id=1145769148]
@@ -229,12 +231,14 @@ from_fraction = 0.03
 to_fraction = 0.32
 
 [node name="Crows" type="Node3D" parent="." unique_id=637519530]
+groups = ["wind_consumer"]
 script = ExtResource("34_crows")
 
 [node name="Calls" type="Node3D" parent="Crows" unique_id=751981406]
 script = ExtResource("38_crow_calls")
 
 [node name="Pigeons" type="Node3D" parent="." unique_id=775386192]
+groups = ["wind_consumer"]
 script = ExtResource("40_pigeons")
 
 [node name="StartleShot" type="Node" parent="." unique_id=1321744002]

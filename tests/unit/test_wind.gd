@@ -71,6 +71,17 @@ class VelocityConsumer extends RefCounted:
 		last = velocity
 
 
+## A tree-resident consumer for the explicit-registration seam.  Both of these
+## nodes publish the same hook; the group is the only intentional distinction.
+class TreeStrengthConsumer extends Node:
+	var pushed := 0
+	var last := -1.0
+
+	func set_wind_strength(strength: float) -> void:
+		pushed += 1
+		last = strength
+
+
 ## A consumer that already has a driver: it takes its weather from the sky, and
 ## the wind reaches it through the sky rather than from here. SnowAccumulation is
 ## the live instance -- see WindSystem._is_fed_by_the_sky().
@@ -455,19 +466,17 @@ func test_a_sky_fed_consumer_the_sky_has_stopped_feeding_is_driven_anyway() -> v
 	assert_true(consumer.pushed > 0, "the sky stopped feeding it and nothing noticed")
 
 
-## REGRESSION. The sweep skips the system itself, and the obvious way to write
-## that skip -- `continue` -- skipped the whole SUBTREE with it. Both visible
-## cues are parented under the system, so both were silently never driven: the
-## wind ran perfectly, every number was right, and nothing moved. Which is the
-## exact failure this whole task exists to fix, arrived at from the other side.
-func test_the_sweep_reaches_a_cue_parented_under_the_system_itself() -> void:
+## Registration is independent of where a cue lives: a visible cue may remain a
+## child of the system, but only the scene's explicit group opts it in.
+func test_registered_cue_parented_under_the_system_is_collected() -> void:
 	var world := _keep(Node.new())
 	var wind := _system()
 	world.add_child(wind)
 	var cue = SpindriftScript.new()
+	cue.add_to_group(WindScript.CONSUMER_GROUP)
 	wind.add_child(cue)
 	wind.refresh_consumers(world)
-	assert_eq(wind.consumer_count(), 1, "a cue under the wind system was not found")
+	assert_eq(wind.consumer_count(), 1, "a registered cue under the wind system was not found")
 
 
 func test_the_sweep_does_not_collect_the_system_itself() -> void:
@@ -476,6 +485,29 @@ func test_the_sweep_does_not_collect_the_system_itself() -> void:
 	world.add_child(wind)
 	wind.refresh_consumers(world)
 	assert_eq(wind.consumer_count(), 0)
+
+
+## A hook is no longer consent.  This is the exact class of collision that
+## overwrote WeatherSystem and AmbienceDirector: the unregistered node has the
+## same method as the registered one, but receives no weather.
+func test_only_explicitly_registered_consumers_are_selected_and_driven() -> void:
+	var world := _keep(Node.new())
+	var wind := _system()
+	world.add_child(wind)
+	var registered := _keep(TreeStrengthConsumer.new())
+	registered.add_to_group(WindScript.CONSUMER_GROUP)
+	world.add_child(registered)
+	var unregistered := _keep(TreeStrengthConsumer.new())
+	world.add_child(unregistered)
+
+	wind.refresh_consumers(world)
+	assert_eq(wind.consumer_count(), 1,
+		"a hook without the explicit wind_consumer registration was selected")
+	wind.advance(3.0)
+	wind.drive_registered(FRAME)
+	assert_eq(registered.pushed, 1, "the registered consumer was not driven")
+	assert_eq(unregistered.pushed, 0,
+		"an unregistered set_wind_strength() hook was driven")
 
 
 # --- the events an audio system will subscribe to ----------------------------

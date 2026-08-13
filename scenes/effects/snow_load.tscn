@@ -23,4 +23,5 @@
 ; its parent now carries between footfalls for free.
 
 [node name="SnowLoad" type="Node3D"]
+groups = ["wind_consumer"]
 script = ExtResource("1_snowload")

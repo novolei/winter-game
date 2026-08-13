@@ -6,8 +6,9 @@
 ;
 ; Instance this anywhere in the world. Nothing here cares where it sits:
 ;
-;   * WindSystem finds its consumers by the hooks they publish, sweeping the
-;     tree on a timer, so it needs no paths and no ordering.
+;   * WindSystem reads the explicit `wind_consumer` group. A hook describes the
+;     quantity; the group is the opt-in, so an unrelated injector is never
+;     driven merely because it shares a method name.
 ;   * Spindrift places itself on the ground under whatever the camera is looking
 ;     at, every frame, the same way the snowfall layers do.
 ;   * WireSway, TireSwing and Branches each drive a GROUP. Farmstead is the only
@@ -20,8 +21,8 @@
 ; the whole difference between a pendulum and a sine.
 ;
 ; Every cue is a CHILD of the system rather than a sibling only because they
-; belong together in the inspector. WindSystem's sweep does not treat them
-; specially and would find them anywhere in the tree.
+; belong together in the inspector. Their `wind_consumer` memberships, not
+; their parentage, are what connect them to WindSystem.
 
 [ext_resource type="Script" path="res://src/systems/wind_system.gd" id="1_wind"]
 [ext_resource type="Script" path="res://src/rendering/spindrift.gd" id="2_spindrift"]
@@ -32,9 +33,11 @@
 script = ExtResource("1_wind")
 
 [node name="Spindrift" type="GPUParticles3D" parent="."]
+groups = ["wind_consumer"]
 script = ExtResource("2_spindrift")
 
 [node name="WireSway" type="Node" parent="."]
+groups = ["wind_consumer"]
 script = ExtResource("3_sway")
 
 ; The tyre swing. Period DERIVED from the rope -- 1.74 m to the middle of the
@@ -42,6 +45,7 @@ script = ExtResource("3_sway")
 ; gust that started it has passed. That is the cue: not that it moves, but that
 ; it is late and then keeps going.
 [node name="TireSwing" type="Node" parent="."]
+groups = ["wind_consumer"]
 script = ExtResource("4_pendulum")
 group = &"wind_swing"
 hangs = true
@@ -55,6 +59,7 @@ max_degrees = 24.0
 ; tiny -- 1.6 degrees holds the crown of a 7 m tree inside 0.2 m and leaves the
 ; trunk visually still, which is what frozen wood does.
 [node name="Branches" type="Node" parent="."]
+groups = ["wind_consumer"]
 script = ExtResource("4_pendulum")
 group = &"wind_branches"
 hangs = false

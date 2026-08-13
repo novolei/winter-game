@@ -168,6 +168,9 @@ var _process_material: ParticleProcessMaterial
 
 
 func _ready() -> void:
+	# Built dynamically by PlayerController, so its scene cannot carry the
+	# explicit registration that static wind consumers declare in `.tscn`.
+	add_to_group(&"wind_consumer")
 	_build()
 	_apply()
 

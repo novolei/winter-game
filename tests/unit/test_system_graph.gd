@@ -8,12 +8,9 @@ extends TestCase
 ## ---------------------------------------------------------------------------
 ## `WeatherSystem`'s injector for the wind was called `set_wind()`.
 ##
-## `WindSystem._collect()` sweeps the WHOLE TREE for any node publishing
-## `set_wind()` or `set_wind_strength()` and pushes the weather into it. That
-## duck-typed discovery is how a consumer gets driven with no wiring, and it is
-## the pattern this codebase uses everywhere -- tree sweeps, `has_method()`
-## guards, services resolved by name. It means a METHOD NAME is a project-wide
-## contract.
+## At the time, `WindSystem._collect()` swept the WHOLE TREE for any node
+## publishing `set_wind()` or `set_wind_strength()` and pushed the weather into
+## it. A method name was accidentally being treated as consent.
 ##
 ## So on the first frame of the real scene the sweep found the injector and
 ## handed it a `Vector3`, replacing the weather system's reference to the wind
@@ -24,6 +21,10 @@ extends TestCase
 ## **All 37 of that system's unit tests passed.** Nothing in the suite built a
 ## `WindSystem` that swept a tree, so both systems were correct in isolation and
 ## disagreed the moment they shared one. It was found by running a capture.
+##
+## The production contract is now explicit: only nodes in `wind_consumer` are
+## driven. A hook without that group is harmless, and the focused wind test
+## proves both the registered and unregistered halves of the rule.
 ##
 ## The five false-PASS classes `tools/run_tests.sh` already guards against are
 ## all single tests deceiving themselves. This one is different in kind, and the
@@ -58,14 +59,13 @@ extends TestCase
 ##
 ##   FAITHFUL   tree order, process_priority, per-frame delta, `_ready()` (real
 ##              -- `add_child()` on a live tree fires it synchronously), service
-##              registration, EventBus dispatch, and the tree sweeps, which walk
-##              the real `/root`.
+##              registration, EventBus dispatch, and SceneTree group discovery.
 ##   NOT        `_physics_process`, input, rendering, `set_process(false)`, and
 ##              anything that needs a frame boundary to happen between two
 ##              calls.
 ##
-## The bug this exists for lived in `_process` and in a tree sweep, which is the
-## faithful half. Anything that needs a real frame boundary is out of scope and
+## The historical bug lived in `_process` and group discovery now runs in that
+## same faithful half. Anything that needs a real frame boundary is out of scope and
 ## should say so rather than be faked.
 ##
 ## ---------------------------------------------------------------------------
@@ -112,16 +112,14 @@ const GRAPH_SERVICES: Array[StringName] = [
 ]
 
 ## ---------------------------------------------------------------------------
-## THE VOCABULARY ALLOWLISTS -- the general form of the bug
+## THE VOCABULARY INVENTORIES
 ## ---------------------------------------------------------------------------
-## A hook name in this project is a contract between systems that never mention
-## each other. These lists say WHO IS ALLOWED TO ANSWER each vocabulary, by
-## script path, and `test_no_system_answers_a_vocabulary_it_did_not_mean_to`
-## fails any node in the graph that answers one without being on the list.
+## These lists record WHO IMPLEMENTS each inter-system vocabulary, by script
+## path. They keep the shared terms auditable, but for wind a method name no
+## longer authorises delivery: the scene's `wind_consumer` group does.
 ##
-## Adding a line here must be a deliberate act. That is the whole mechanism: an
-## injector, a setter or a debug helper that happens to pick a name another
-## system sweeps for goes red until somebody confirms it meant to.
+## Adding a line here must still be deliberate: an injector and a setter should
+## not silently share a name without the distinction being documented.
 
 ## `WindSystem.drive()` pushes into these: `set_wind(Vector3)` -- an
 ## acceleration in m/s^2 -- and `set_wind_strength(float)` -- 0..1.
@@ -150,13 +148,11 @@ const WILDLIFE_VOCABULARY := ["scatter", "available_perches"]
 const WILDLIFE_CONSUMERS: Array[String] = []
 
 ## ---------------------------------------------------------------------------
-## THE SAME RULE, WIDENED FROM THE GRAPH TO THE PROJECT
+## THE SAME INVENTORY, WIDENED FROM THE GRAPH TO THE PROJECT
 ## ---------------------------------------------------------------------------
-## The three lists above govern the SEVEN systems this file boots. That is where
-## the runtime check can reach, and it is not where the defect lives: the sweep
-## in `WindSystem._collect()` walks the WHOLE tree, so a stray `set_wind()` on
-## any of the ten-odd systems outside this graph is driven exactly the same way
-## and is invisible to every assertion above.
+## The three lists above govern the SEVEN systems this file boots. The source
+## inventory includes the rest, so a shared hook remains visible even when no
+## graph test instantiates its owner.
 ##
 ## That is not a hypothetical either. This defect has now fired TWICE -- once on
 ## `WeatherSystem`, which this graph was built to catch, and once on the ambience
@@ -173,12 +169,11 @@ const WILDLIFE_CONSUMERS: Array[String] = []
 ## this list is a deliberate act by somebody who read it; installing a driven
 ## hook at runtime is not something this project does anywhere.
 ##
-## ADDING A LINE HERE IS A PERSON DECIDING -- the same act as adding one to the
-## three lists above, and for the same reason. If a name lands here without
-## somebody meaning it, `WindSystem` will drive it sixty times a second forever.
+## ADDING A LINE HERE IS A PERSON DECIDING. It documents the shared vocabulary;
+## adding a `wind_consumer` group is the separate act that enables delivery.
 
 ## Every script under `res://src` that declares `set_wind()` or
-## `set_wind_strength()`, and therefore gets driven by `WindSystem`'s sweep.
+## `set_wind_strength()`; only registered scene instances are driven.
 const PROJECT_WIND_CONSUMERS := [
 	"res://src/entities/player/breath_fog.gd",
 	"res://src/entities/snow_load.gd",
@@ -237,9 +232,8 @@ var _weather: Node = null
 
 
 ## The real systems, in `scenes/main.tscn`'s own order, under a throwaway root
-## that is a child of the LIVE `/root` -- which it must be, because
-## `WindSystem._rescan()` sweeps from `get_tree().get_root()` and a graph parked
-## anywhere else would never be found by the very mechanism under test.
+## that is a child of the LIVE `/root`. It must be live because WindSystem reads
+## SceneTree's group registry, not an arbitrary unattached object graph.
 func before_each() -> void:
 	var tree := Engine.get_main_loop() as SceneTree
 	if tree == null or tree.get_root() == null:
@@ -265,6 +259,10 @@ func before_each() -> void:
 	_snowfall = _system(SnowfallScript, "Snowfall")
 	_wind = _system(WindSystemScript, "Wind")
 	_weather = _system(WeatherSystemScript, "Weather")
+	# Group membership is the wind contract. A hook alone is deliberately not
+	# enough: WeatherSystem and AmbienceDirector both once collided with it.
+	for consumer in [_mask, _accumulation, _snowfall]:
+		consumer.add_to_group(WindSystemScript.CONSUMER_GROUP)
 
 	# The graph's OWN clock, handed over before the first tick. `attach()` would
 	# otherwise resolve the live `/root/WorldClock` autoload, and this test would
@@ -431,8 +429,8 @@ func test_the_real_system_graph_boots_and_runs_a_weather_without_a_word_on_the_c
 	assert_not_null(_root, "the graph should have been built")
 	if _root == null:
 		return
-	# Idle first, so the wind completes at least two sweeps (`rescan_seconds` is
-	# 2.0) and has certainly seen every node in the tree.
+	# Idle first, so all registered consumers have received several real graph
+	# frames before the weather begins.
 	_step(150)
 	assert_true(_wind.consumer_count() > 0,
 		"the wind found nothing to drive, so this graph proves nothing")
@@ -449,16 +447,15 @@ func test_the_real_system_graph_boots_and_runs_a_weather_without_a_word_on_the_c
 
 ## THE REGRESSION TEST, WRITTEN AS THE RULE RATHER THAN AS THE INSTANCE.
 ##
-## A hook name is a contract between systems that never mention each other. Any
-## node answering one of those vocabularies is going to be swept up and driven,
-## whether it meant to be or not -- so every node that answers must be on the
-## list of nodes that mean to.
+## A hook name is shared vocabulary between systems that never mention each
+## other. The inventory keeps those shared terms intentional; explicit group
+## membership, tested in `test_wind.gd`, decides whether WindSystem delivers.
 ##
 ## Re-introducing the original bug -- renaming `WeatherSystem.set_wind_system()`
 ## back to `set_wind()` -- turns this red with the offending script named, which
 ## is the whole point: the failure says what to fix rather than only that
 ## something is wrong.
-func test_no_system_answers_a_vocabulary_it_did_not_mean_to() -> void:
+func test_system_vocabulary_is_documented() -> void:
 	assert_not_null(_root, "the graph should have been built")
 	if _root == null:
 		return
@@ -469,9 +466,8 @@ func test_no_system_answers_a_vocabulary_it_did_not_mean_to() -> void:
 			if node.has_method(hook):
 				checked += 1
 				assert_true(WIND_CONSUMERS.has(path),
-					"%s answers %s(), so WindSystem's sweep will drive it. Rename it,"
-						% [path, hook]
-						+ " or add it to WIND_CONSUMERS and mean it.")
+					"%s answers %s() but is absent from the wind vocabulary inventory"
+						% [path, hook])
 		for hook in SNOWFALL_VOCABULARY:
 			if node.has_method(hook):
 				checked += 1
@@ -482,22 +478,20 @@ func test_no_system_answers_a_vocabulary_it_did_not_mean_to() -> void:
 			assert_true(WILDLIFE_CONSUMERS.has(path),
 				"%s looks like a flock to WeatherSystem's tell" % path)
 	assert_true(checked >= 3,
-		"the sweep found %d hook(s) in the graph, which is too few to have"
+		"the graph found %d hook(s), which is too few to have"
 			% checked + " checked anything -- did the graph fail to build?")
 
 
 ## THE SAME RULE AGAINST THE WHOLE PROJECT, AND THE REASON IT HAD TO BE WIDENED.
 ##
-## The test above can only judge nodes this file builds. `WindSystem` sweeps the
-## whole tree, so the rule has to be checked wherever a hook can be DECLARED --
-## which is every `.gd` under `res://src`, whether a test ever instantiates it or
-## not. The ambience director, which took `set_wind()` as an injector and had a
-## `Vector3` pushed into it, is outside this graph and would still be invisible
-## to the runtime check above.
+## The test above can only judge nodes this file builds. The full source
+## inventory sees every declaration under `res://src`, whether or not a test
+## instantiates it, including the ambience injector involved in the second
+## historical collision.
 ##
-## Re-introducing that bug -- adding `func set_wind(system)` to any script not on
-## PROJECT_WIND_CONSUMERS -- turns this red with the script named.
-func test_no_script_in_the_project_declares_a_vocabulary_it_did_not_mean_to() -> void:
+## Adding `func set_wind(system)` to a script outside PROJECT_WIND_CONSUMERS
+## turns this red with the script named.
+func test_project_vocabulary_is_documented() -> void:
 	var scripts := _project_scripts()
 	var found := 0
 	for path in scripts:
@@ -507,10 +501,8 @@ func test_no_script_in_the_project_declares_a_vocabulary_it_did_not_mean_to() ->
 				continue
 			found += 1
 			assert_true(PROJECT_WIND_CONSUMERS.has(path),
-				("%s declares %s(), so WindSystem's tree sweep will drive it with a" % [path, hook])
-					+ " Vector3 sixty times a second. Rename it -- an injector is named"
-					+ " after the thing, set_wind_system(), not after the quantity --"
-					+ " or add it to PROJECT_WIND_CONSUMERS and mean it.")
+				"%s declares %s() but is absent from the wind vocabulary inventory"
+					% [path, hook])
 		for hook in SNOWFALL_VOCABULARY:
 			if not _declares(code, hook):
 				continue
