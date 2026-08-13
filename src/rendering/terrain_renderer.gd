@@ -10,7 +10,9 @@ extends MeshInstance3D
 ## is built in code instead of saved as a .tres beside the scene.
 
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
-const SHADER_PATH := "res://assets/shaders/snow_ground.gdshader"
+## Renderer source rather than an asset: this is executable game logic and has
+## to remain versioned even when local art packs are intentionally ignored.
+const SHADER_PATH := "res://src/rendering/snow_ground.gdshader"
 
 ## Wider than the 120 m heightfield on purpose: the drawn plane has to run past
 ## the top of the frame or the shot contains the field's own edge and the
@@ -21,17 +23,35 @@ const SHADER_PATH := "res://assets/shaders/snow_ground.gdshader"
 ## The dense terrain plane is deliberately finite: it needs 44 cm quads while
 ## the player is nearby, but carrying that density all the way to the horizon
 ## would spend triangles on snow the shader already makes perfectly flat. The
-## horizon skirt is a separate eight-triangle ring, made from the very same
-## material. It starts where the dense plane has already reached the shader's
-## flat outside-window result, so there is neither a geometric step nor a second
-## snow colour, and it carries that flat field well past the widest shipped
-## framing.
+## horizon is a regular, normalled mesh ring made from the same material. It
+## begins only after the visible field has settled to its flat continuation, so
+## there is neither a geometric step nor a second snow colour. A former version
+## used eight enormous triangles here; even when their shared border was exact,
+## the triangles themselves could read as a map boundary in a wide shot.
 ##
 ## 640 m is not a world-map boundary: the Terrain node follows the player. It
 ## is enough clearance for the 100 m art capture that previously exposed the
 ## finite 140 m plane as a hard diamond, while the only added geometry is eight
 ## triangles rather than a larger high-density heightfield.
 @export var horizon_size := 640.0
+
+## The moving SnowField raster is deliberately square -- that is how a compact
+## world-anchored image is updated without a full-map rebuild -- but its data
+## edge is not a world feature. The rendered terrain therefore settles over a
+## broad radial range. The shader adds a small world-space warp, so the visual
+## transition cannot make a circle either; these pure values remain here for
+## inspectors and tests to pin the size and continuity of the underlying ramp.
+@export var visual_field_fade_start := 0.32
+@export var visual_field_fade_end := 0.72
+@export var visual_field_warp_scale := 0.018
+@export var visual_field_warp_amount := 0.045
+
+## The continuation carries only already-flat snow, but it still needs a
+## regular topology and explicit upward normals. A handful of giant triangles
+## gives the shadow/depth paths enough interpolation room to make visible
+## diagonal fields if any future feature touches the horizon.
+@export var horizon_edge_segments := 32
+@export var horizon_radial_segments := 4
 
 ## 140 m at 320 subdivisions is a 44 cm quad. That is set by the terrain, which
 ## is what the mesh draws: swells 28 m across need roughly half-metre quads
@@ -89,7 +109,7 @@ const SHADER_PATH := "res://assets/shaders/snow_ground.gdshader"
 ## variation the document's example shows rather than speckle.
 @export var grain_threshold := 0.345
 @export var grain_softness := 0.03
-@export var grain_amount := 0.05
+@export var grain_amount := 0.02
 @export var grain_scale := 0.14
 
 ## How deep a print dents the *normal*. Never the mesh -- see the shader. This
@@ -225,6 +245,7 @@ func _ready() -> void:
 	_material.set_shader_parameter("field_extent", SnowField.EXTENT_M)
 	_material.set_shader_parameter("track_extent", TrackMask.EXTENT_M)
 	_material.set_shader_parameter("static_extent", TrackMask.STATIC_EXTENT_M)
+	_stamp_visual_field_continuity()
 	material_override = _material
 	_build_horizon_skirt()
 
@@ -237,8 +258,8 @@ func _ready() -> void:
 
 ## A low-density continuation of the terrain mesh, with a hole where the dense
 ## plane already draws. A second full plane would z-fight with the dense terrain;
-## this ring shares its inner four vertices exactly and therefore has no overlap
-## and no drawable rectangle seam.
+## this ring shares the inner perimeter exactly, carries its own upward normals,
+## and contains no screen-sized triangle that could become a diagonal seam.
 func _build_horizon_skirt() -> void:
 	var existing := get_node_or_null("HorizonSkirt") as MeshInstance3D
 	if existing != null:
@@ -259,35 +280,88 @@ func _build_horizon_skirt() -> void:
 
 ## The ring is intentionally exposed as pure mesh construction so the visual
 ## no-edge contract has a deterministic regression test without pretending a
-## headless unit test can judge a rendered photograph.
+## headless unit test can judge a rendered photograph. It is tessellated around
+## the perimeter rather than as four trapezoids: a flat continuation should be
+## boring topology, not four giant diagonal lighting candidates.
 func horizon_skirt_mesh(inner_size: float, outer_size: float) -> ArrayMesh:
 	var inner_half := maxf(inner_size, 0.0) * 0.5
 	var outer_half := maxf(outer_size, inner_size + 0.001) * 0.5
-	var vertices := PackedVector3Array([
-		Vector3(-inner_half, 0.0, -inner_half),
-		Vector3(inner_half, 0.0, -inner_half),
-		Vector3(inner_half, 0.0, inner_half),
-		Vector3(-inner_half, 0.0, inner_half),
-		Vector3(-outer_half, 0.0, -outer_half),
-		Vector3(outer_half, 0.0, -outer_half),
-		Vector3(outer_half, 0.0, outer_half),
-		Vector3(-outer_half, 0.0, outer_half),
-	])
-	# Four counter-clockwise strips when viewed from above: bottom, right, top,
-	# left. The front faces are all upward, exactly like PlaneMesh.
-	var indices := PackedInt32Array([
-		0, 1, 5, 0, 5, 4,
-		1, 2, 6, 1, 6, 5,
-		2, 3, 7, 2, 7, 6,
-		3, 0, 4, 3, 4, 7,
-	])
+	var edge_segments := maxi(horizon_edge_segments, 1)
+	var radial_segments := maxi(horizon_radial_segments, 1)
+	var perimeter_points := edge_segments * 4
+	var vertices := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var indices := PackedInt32Array()
+	for radial in range(radial_segments + 1):
+		var half := lerpf(inner_half, outer_half, float(radial) / float(radial_segments))
+		for edge in range(perimeter_points):
+			vertices.append(_square_perimeter_point(half, edge, edge_segments))
+			normals.append(Vector3.UP)
+	for radial in range(radial_segments):
+		var inner_row := radial * perimeter_points
+		var outer_row := (radial + 1) * perimeter_points
+		for edge in range(perimeter_points):
+			var next := (edge + 1) % perimeter_points
+			var inner_a := inner_row + edge
+			var inner_b := inner_row + next
+			var outer_b := outer_row + next
+			var outer_a := outer_row + edge
+			# Godot's PlaneMesh front faces carry a negative signed Y cross product
+			# in XZ. Keep this exact winding: the positive-Y order culls every
+			# horizon face and exposes the sky as a giant diamond.
+			indices.append_array(PackedInt32Array([
+				inner_a, outer_b, inner_b,
+				inner_a, outer_a, outer_b,
+			]))
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_NORMAL] = normals
 	arrays[Mesh.ARRAY_INDEX] = indices
 	var skirt := ArrayMesh.new()
 	skirt.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	return skirt
+
+
+## One clockwise walk around a square in XZ. The index order above is deliberate
+## and is pinned against PlaneMesh's actual front-face winding in the tests.
+func _square_perimeter_point(half: float, edge_index: int, edge_segments: int) -> Vector3:
+	var side := edge_index / edge_segments
+	var t := float(edge_index % edge_segments) / float(edge_segments)
+	match side:
+		0:
+			return Vector3(lerpf(-half, half, t), 0.0, -half)
+		1:
+			return Vector3(half, 0.0, lerpf(-half, half, t))
+		2:
+			return Vector3(lerpf(half, -half, t), 0.0, half)
+		_:
+			return Vector3(-half, 0.0, lerpf(half, -half, t))
+
+
+## The testable, unwarped part of the shader's visual settling profile. It is
+## intentionally radial, not `min(uv, 1 - uv)`: the raster can be square
+## without projecting a square or diamond into the snow. The shader adds only a
+## stable, low-frequency world warp to this result; the interactive centre stays
+## exactly one and the dense mesh's edge lands exactly zero.
+func visual_field_weight(uv: Vector2) -> float:
+	var radial_distance := (uv - Vector2(0.5, 0.5)).length() * sqrt(2.0)
+	return 1.0 - _smoothstep(visual_field_fade_start, visual_field_fade_end, radial_distance)
+
+
+func _smoothstep(low: float, high: float, value: float) -> float:
+	var width := maxf(high - low, 0.000001)
+	var t := clampf((value - low) / width, 0.0, 1.0)
+	return t * t * (3.0 - 2.0 * t)
+
+
+func _stamp_visual_field_continuity() -> void:
+	if _material == null:
+		return
+	_material.set_shader_parameter("visual_field_fade_start", visual_field_fade_start)
+	_material.set_shader_parameter("visual_field_fade_end", visual_field_fade_end)
+	_material.set_shader_parameter("visual_field_warp_scale", visual_field_warp_scale)
+	_material.set_shader_parameter("visual_field_warp_amount", visual_field_warp_amount)
 
 
 ## How a mark in the snow is SHAPED -- how deep, how tinted, the rim around it,
@@ -397,6 +471,7 @@ func _process(_delta: float) -> void:
 	_material.set_shader_parameter("scour_hollow", _snow.scour_hollow)
 	_material.set_shader_parameter("scour_crest", _snow.scour_crest)
 	_stamp_marks()
+	_stamp_visual_field_continuity()
 	# The plane is centred on the window; the window is described by its corner.
 	global_position = Vector3(
 		field_origin.x + SnowField.EXTENT_M * 0.5,

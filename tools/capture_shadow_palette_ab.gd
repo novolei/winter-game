@@ -12,7 +12,7 @@ extends "res://tools/capture_frame.gd"
 
 const DEFAULT_CANDIDATE := &"control"
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
-const GROUND_SHADER := "res://assets/shaders/snow_ground.gdshader"
+const GROUND_SHADER := "res://src/rendering/snow_ground.gdshader"
 const CEL_SHADER := "res://assets/shaders/cel_flat.gdshader"
 
 ## These are complete temporary palette entries, not post-process multipliers.

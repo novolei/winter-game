@@ -32,6 +32,9 @@ extends TestCase
 
 const TerrainRendererScript := preload("res://src/rendering/terrain_renderer.gd")
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
+const SNOW_SHADER_PATH := "res://src/rendering/snow_ground.gdshader"
+const SEAM_CAPTURE_PATH := "res://tools/capture_snow_seam.tscn"
+const SEAM_CAPTURE_SCRIPT_PATH := "res://tools/capture_snow_seam.gd"
 
 var _renderer: TerrainRenderer
 
@@ -152,7 +155,7 @@ func test_the_grain_is_patches_rather_than_speckle() -> void:
 # roofs is what does it, because it is the same snow.
 
 
-## The formula in assets/shaders/snow_ground.gdshader, mirrored, so the shape of
+## The formula in src/rendering/snow_ground.gdshader, mirrored, so the shape of
 ## the burial can be asserted without a frame. `burial` is what the terrain
 ## pushes: cover * static_burial_share.
 func _buried(value: float, burial: float, power: float) -> float:
@@ -374,9 +377,28 @@ func test_the_horizon_skirt_is_a_continuous_shared_material_extension() -> void:
 		return
 	var arrays := skirt.mesh.surface_get_arrays(0)
 	var vertices = arrays[Mesh.ARRAY_VERTEX]
+	var normals = arrays[Mesh.ARRAY_NORMAL]
 	var indices = arrays[Mesh.ARRAY_INDEX]
-	assert_eq(vertices.size(), 8, "the skirt should use the four inner and four outer ring corners")
-	assert_eq(indices.size(), 24, "four closed ring sides need eight triangles; a missing side exposes the world background")
+	var perimeter := _renderer.horizon_edge_segments * 4
+	var rings := _renderer.horizon_radial_segments
+	assert_eq(
+		vertices.size(), perimeter * (rings + 1),
+		"the horizon must be a regular ring, not four screen-sized trapezoids"
+	)
+	assert_eq(normals.size(), vertices.size(), "every horizon vertex needs an explicit upward normal")
+	assert_eq(
+		indices.size(), perimeter * rings * 6,
+		"every horizon quad needs two upward-facing triangles; a missing band exposes the world background"
+	)
+	assert_true(indices.size() > 24, "eight giant horizon triangles can become visible diagonal fields")
+	for triangle in range(0, indices.size(), 3):
+		var a: Vector3 = vertices[indices[triangle]]
+		var b: Vector3 = vertices[indices[triangle + 1]]
+		var c: Vector3 = vertices[indices[triangle + 2]]
+		assert_true(
+			(b - a).cross(c - a).y < 0.0,
+			"horizon triangle %d is back-facing under Godot's PlaneMesh winding, exposing the sky as a diamond" % (triangle / 3)
+		)
 
 
 ## This pins the geometry rather than a screenshot: the first ring is exactly
@@ -406,4 +428,109 @@ func test_the_horizon_skirt_begins_at_the_flat_dense_mesh_edge_and_reaches_far_b
 	assert_true(
 		float(_renderer.get("horizon_size")) >= _renderer.ground_size * 4.0,
 		"the horizon is too close to protect the widest capture/gameplay framing from the terrain edge"
+	)
+
+
+## The raster field is square because it is an efficient moving data window;
+## that must never become a square in the picture. The old shader faded with
+## `min(uv, 1 - uv)`, so two positions on the same x coordinate received the
+## identical fade regardless of z. Under the orthographic camera that became
+## the unmistakable diamond in the main-scene capture.
+func test_the_visual_field_fade_is_not_an_axis_aligned_square() -> void:
+	assert_true(
+		_renderer.has_method("visual_field_weight"),
+		"TerrainRenderer needs a testable visual field profile so a square raster boundary cannot ship as a square snow boundary"
+	)
+	if not _renderer.has_method("visual_field_weight"):
+		return
+	var side: float = float(_renderer.visual_field_weight(Vector2(0.95, 0.50)))
+	var cornerward: float = float(_renderer.visual_field_weight(Vector2(0.95, 0.75)))
+	assert_true(
+		absf(side - cornerward) > 0.05,
+		"two points with the same x have the same %.3f visual weight, so the field still fades on a straight square edge" % side
+	)
+	var shader_code := FileAccess.get_file_as_string(SNOW_SHADER_PATH)
+	assert_false(shader_code.is_empty(), "the versioned runtime snow shader is missing: %s" % SNOW_SHADER_PATH)
+	assert_true(
+		shader_code.contains("length(uv - vec2(0.5))"),
+		"the runtime shader is not using the radial visual profile this test measured"
+	)
+	assert_false(
+		shader_code.contains("min(to_edge.x, to_edge.y)"),
+		"the runtime shader still derives its falloff from a square edge distance"
+	)
+	assert_true(
+		shader_code.contains("vec2 bent = p + (warp - 0.5) * 2.4"),
+		"the snow grain still samples a bare axis-aligned value-noise grid, so broad captures can expose square texture cells"
+	)
+	assert_true(
+		shader_code.contains("grain_value_noise(rotated * 1.73"),
+		"the snow grain needs a rotated secondary octave; a single warped square lattice can still read as a map grid"
+	)
+
+
+## The continuation must leave the playable centre untouched, then settle over
+## tens of metres rather than forming a narrow height ramp that reads as a
+## texture seam. These samples are on a radius where the pure profile is
+## monotonic, avoiding any claim about the deliberately irregular world warp.
+func test_the_visual_field_fade_is_broad_and_c1_at_its_flat_horizon() -> void:
+	assert_true(
+		_renderer.has_method("visual_field_weight"),
+		"TerrainRenderer needs a testable visual field profile so a square raster boundary cannot ship as a square snow boundary"
+	)
+	if not _renderer.has_method("visual_field_weight"):
+		return
+	var centre := Vector2(0.5, 0.5)
+	assert_almost_eq(
+		_renderer.visual_field_weight(centre), 1.0, 0.000001,
+		"the snow field is already visually altered at the player's centre"
+	)
+	var largest_step := 0.0
+	var previous: float = float(_renderer.visual_field_weight(Vector2(0.50, 0.50)))
+	for index in range(1, 51):
+		var uv := Vector2(0.50 + float(index) * 0.01, 0.50)
+		var current: float = float(_renderer.visual_field_weight(uv))
+		largest_step = maxf(largest_step, absf(current - previous))
+		previous = current
+	assert_true(
+		largest_step < 0.06,
+		"the visual field loses %.3f weight in one percent of its width, which is a visible terrain edge rather than a broad settling" % largest_step
+	)
+	var dense_edge := Vector2(
+		0.5 + _renderer.ground_size / (2.0 * SnowField.EXTENT_M),
+		0.5
+	)
+	assert_almost_eq(
+		_renderer.visual_field_weight(dense_edge), 0.0, 0.000001,
+		"the dense mesh reaches its shared horizon edge with live displacement, so the skirt can form a geometric seam"
+	)
+
+
+## A camera at the normal 10.5 m gameplay stop cannot see the 120 m data
+## boundary, which is why this defect escaped despite regular captures. Keep a
+## real-main-scene 100 m shutter in the project and make its framing independent
+## of command-line memory. This fixture did not exist at c34aa92, so checking it
+## in together with the radial profile makes that former regression red.
+func test_the_main_scene_has_a_deterministic_wide_snow_seam_capture() -> void:
+	assert_true(
+		FileAccess.file_exists(SEAM_CAPTURE_PATH),
+		"missing the real-main-scene seam capture: %s" % SEAM_CAPTURE_PATH
+	)
+	assert_true(
+		FileAccess.file_exists(SEAM_CAPTURE_SCRIPT_PATH),
+		"missing the seam capture script: %s" % SEAM_CAPTURE_SCRIPT_PATH
+	)
+	var scene_code := FileAccess.get_file_as_string(SEAM_CAPTURE_PATH)
+	var script_code := FileAccess.get_file_as_string(SEAM_CAPTURE_SCRIPT_PATH)
+	assert_true(
+		scene_code.contains("res://scenes/main.tscn"),
+		"the seam capture must instance the actual main scene rather than a snow-only mock"
+	)
+	assert_true(
+		script_code.contains("extends \"res://tools/capture_frame.gd\""),
+		"the seam capture must exercise the shared real-route and real-shutter harness"
+	)
+	assert_true(
+		script_code.contains("SEAM_PROBE_ORTHO := 100.0"),
+		"the seam capture must force the wide view that exposed the old square field boundary"
 	)

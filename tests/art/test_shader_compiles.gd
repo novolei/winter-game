@@ -95,6 +95,14 @@ const AssetScannerScript := preload("res://tests/framework/asset_scanner.gd")
 ## untidy one. Today all nine are in `assets/shaders/`.
 const SHADER_ROOTS: Array[String] = ["res://assets", "res://src", "res://scenes"]
 
+## Local art packs are ignored, but `snow_ground.gdshader` used to live beside
+## them. The versioned renderer copy is the only authoritative snow shader now;
+## keeping this local compatibility copy out of the walk prevents a stale,
+## ignored file from satisfying (or failing) a shipping-code gate.
+const EXCLUDED_LOCAL_SHADER_PATHS: Array[String] = [
+	"res://assets/shaders/snow_ground.gdshader",
+]
+
 ## The floor for how many shaders must be found.
 ##
 ## RAISE THIS WHEN A SHADER IS ADDED. It is a tripwire, not a target, and it is
@@ -117,6 +125,8 @@ func _project_shaders() -> Array[String]:
 	var found: Array[String] = []
 	for root in SHADER_ROOTS:
 		for path in AssetScannerScript.find_files(root, [".gdshader"] as Array[String]):
+			if EXCLUDED_LOCAL_SHADER_PATHS.has(path):
+				continue
 			if not found.has(path):
 				found.append(path)
 	found.sort()

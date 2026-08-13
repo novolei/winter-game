@@ -67,6 +67,14 @@ const EventBusScript := preload("res://src/core/event_bus.gd")
 ## deliberately absent -- a vendored shader is not ours to wire.
 const SHADER_ROOTS: Array[String] = ["res://assets", "res://src", "res://scenes"]
 
+## See the matching compiler-gate exclusion. The local asset-pack copy is not
+## a shipping shader after TerrainRenderer moved the executable source under
+## `src/rendering/`; scanning it would make a stale file look like a live cel
+## consumer.
+const EXCLUDED_LOCAL_SHADER_PATHS: Array[String] = [
+	"res://assets/shaders/snow_ground.gdshader",
+]
+
 ## The marker uniform. See the header.
 const BAND_UNIFORM := "band_threshold"
 
@@ -78,7 +86,7 @@ const BAND_UNIFORM := "band_threshold"
 const DRIVEN_BY := {
 	"res://assets/shaders/cel_flat.gdshader": "CelPainter.set_world_shading()",
 	"res://assets/shaders/cel_interior.gdshader": "InteriorWarmth.apply_world_shading()",
-	"res://assets/shaders/snow_ground.gdshader": "TerrainRenderer.apply_world_shading()",
+	"res://src/rendering/snow_ground.gdshader": "TerrainRenderer.apply_world_shading()",
 }
 
 ## A preset far from every shader's authored default, so a uniform that did not
@@ -116,6 +124,8 @@ func _cel_banded_shaders() -> Array[String]:
 	var found: Array[String] = []
 	for root in SHADER_ROOTS:
 		for path in AssetScannerScript.find_files(root, [".gdshader"] as Array[String]):
+			if EXCLUDED_LOCAL_SHADER_PATHS.has(path):
+				continue
 			if found.has(path):
 				continue
 			for raw_line in FileAccess.get_file_as_string(path).split("\n"):

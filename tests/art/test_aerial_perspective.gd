@@ -137,7 +137,7 @@ func test_a_preset_that_fogs_at_all_fogs_visibly() -> void:
 ## fails.
 func test_both_cel_shaders_take_the_light_the_preset_gives_them() -> void:
 	for path in [
-		"%s/snow_ground.gdshader" % SHADER_ROOT,
+		"res://src/rendering/snow_ground.gdshader",
 		"%s/cel_flat.gdshader" % SHADER_ROOT,
 	]:
 		var text := FileAccess.get_file_as_string(path)
@@ -172,7 +172,7 @@ func _code(path: String) -> String:
 ## is to borrow the render_mode line with it.
 func test_neither_cel_shader_has_grown_a_specular_highlight() -> void:
 	for path in [
-		"%s/snow_ground.gdshader" % SHADER_ROOT,
+		"res://src/rendering/snow_ground.gdshader",
 		"%s/cel_flat.gdshader" % SHADER_ROOT,
 	]:
 		var code := _code(path)

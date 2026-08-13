@@ -24,7 +24,10 @@ const AssetScannerScript := preload("res://tests/framework/asset_scanner.gd")
 const LightingDirectorScript := preload("res://src/rendering/lighting_director.gd")
 const PlayerControllerScript := preload("res://src/entities/player/player_controller.gd")
 const SCHEME_PATH := "res://data/characters/wanderer_pale.tres"
-const SHADER_ROOT := "res://assets/shaders"
+const SHADER_ROOTS: Array[String] = ["res://assets", "res://src", "res://scenes"]
+const EXCLUDED_LOCAL_SHADER_PATHS: Array[String] = [
+	"res://assets/shaders/snow_ground.gdshader",
+]
 
 
 ## The fill the Environment is ACTUALLY built with, read off the Environment.
@@ -74,7 +77,11 @@ func _fill() -> Color:
 ## the spatial set fall to zero unnoticed while the total stayed healthy, which
 ## is exactly the shape of silent-skip this project has closed four times.
 func test_every_shader_in_the_project_still_disables_ambient() -> void:
-	var shaders := AssetScannerScript.find_files(SHADER_ROOT, [".gdshader"])
+	var shaders: Array[String] = []
+	for root in SHADER_ROOTS:
+		for path in AssetScannerScript.find_files(root, [".gdshader"] as Array[String]):
+			if not EXCLUDED_LOCAL_SHADER_PATHS.has(path):
+				shaders.append(path)
 	var spatial: Array[String] = []
 	for path in shaders:
 		if FileAccess.get_file_as_string(path).contains("shader_type spatial"):
@@ -82,7 +89,7 @@ func test_every_shader_in_the_project_still_disables_ambient() -> void:
 	assert_true(
 		spatial.size() >= 2,
 		"found %d spatial shaders among %d under %s; this gate means nothing if it inspected none"
-			% [spatial.size(), shaders.size(), SHADER_ROOT]
+			% [spatial.size(), shaders.size(), str(SHADER_ROOTS)]
 	)
 	for path in spatial:
 		var text := FileAccess.get_file_as_string(path)
