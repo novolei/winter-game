@@ -17,6 +17,23 @@ const MAX_PERSISTED_TILES := 8192
 var _tiles: Dictionary = {}
 var _tick := 0
 
+## The sparse-store cap is reached only after a long run, so it must not turn
+## the newest 64--96 writes into a fresh scan across every remembered tile.
+## This binary heap keeps the exact former eviction order: lower touched tick
+## first, then world X and Z.  `_age_positions` lets a touched or removed tile
+## update the same index instead of leaving historical heap entries behind.
+var _age_heap: Array[Dictionary] = []
+var _age_positions: Dictionary = {}
+
+## Runtime instrumentation for the performance HUD and the regression below.
+## It counts heap probes/swaps performed by the latest trim, never tile-map
+## scans.  At the persisted maximum of 8,192 tiles the heap height is 13, so a
+## root removal takes no more than one pop plus three operations per level.
+const MAX_TRIM_HEAP_WORK_PER_EVICTION := 40
+var _last_trim_work := 0
+var _last_trim_full_tile_scans := 0
+var _measuring_trim_work := false
+
 
 func begin_tick() -> void:
 	_tick += 1
@@ -55,6 +72,7 @@ func add_at_key(key: Vector2i, amount_m: float, cap_m: float) -> void:
 	record["depth"] = clampf(float(record.get("depth", 0.0)) + amount_m, 0.0, cap_m)
 	record["touched"] = _tick
 	_tiles[key] = record
+	_update_age_index(key, _tick)
 
 
 ## Wind transport stages all source and receiver deltas before it commits any
@@ -79,26 +97,125 @@ func apply_depth_deltas(deltas: Dictionary, cap_m: float) -> void:
 		var next := maxf(depth_at_key(key) + delta, 0.0)
 		if next <= 0.0000001:
 			_tiles.erase(key)
+			_remove_age_index(key)
 			continue
 		_tiles[key] = {"depth": next, "touched": _tick}
+		_update_age_index(key, _tick)
 
 
 func trim_to_limit() -> void:
+	_last_trim_work = 0
+	_last_trim_full_tile_scans = 0
+	_measuring_trim_work = true
 	while _tiles.size() > maximum_tiles:
-		var candidate := Vector2i.ZERO
-		var candidate_tick := INF
-		var found := false
-		for raw_key in _tiles:
-			var key := raw_key as Vector2i
-			var record: Dictionary = _tiles[key]
-			var touched := int(record.get("touched", 0))
-			if not found or touched < candidate_tick \
-					or (touched == candidate_tick and _comes_before(key, candidate)):
-				candidate = key
-				candidate_tick = touched
-				found = true
-		if found:
-			_tiles.erase(candidate)
+		var raw_candidate = _pop_oldest_age_key()
+		if not (raw_candidate is Vector2i):
+			break
+		_tiles.erase(raw_candidate as Vector2i)
+	_measuring_trim_work = false
+
+
+func last_trim_work() -> int:
+	return _last_trim_work
+
+
+func last_trim_full_tile_scans() -> int:
+	return _last_trim_full_tile_scans
+
+
+func _update_age_index(key: Vector2i, touched: int) -> void:
+	var index := int(_age_positions.get(key, -1))
+	if index < 0 or index >= _age_heap.size():
+		_age_heap.append({"key": key, "touched": touched})
+		index = _age_heap.size() - 1
+		_age_positions[key] = index
+		_sift_age_up(index)
+		return
+	var entry: Dictionary = _age_heap[index]
+	entry["touched"] = touched
+	_age_heap[index] = entry
+	_rebalance_age_index(index)
+
+
+func _remove_age_index(key: Vector2i) -> void:
+	var index := int(_age_positions.get(key, -1))
+	if index < 0 or index >= _age_heap.size():
+		_age_positions.erase(key)
+		return
+	var last: Dictionary = _age_heap.pop_back()
+	_age_positions.erase(key)
+	if index >= _age_heap.size():
+		return
+	_age_heap[index] = last
+	_age_positions[last["key"] as Vector2i] = index
+	_rebalance_age_index(index)
+
+
+func _pop_oldest_age_key():
+	if _age_heap.is_empty():
+		return null
+	_count_trim_work()
+	var entry: Dictionary = _age_heap[0]
+	var key := entry["key"] as Vector2i
+	_remove_age_index(key)
+	return key
+
+
+func _rebalance_age_index(index: int) -> void:
+	if index > 0 and _age_entry_comes_before(_age_heap[index], _age_heap[(index - 1) / 2]):
+		_sift_age_up(index)
+	else:
+		_sift_age_down(index)
+
+
+func _sift_age_up(index: int) -> void:
+	var current := index
+	while current > 0:
+		var parent := (current - 1) / 2
+		if not _age_entry_comes_before(_age_heap[current], _age_heap[parent]):
+			return
+		_swap_age_entries(current, parent)
+		current = parent
+
+
+func _sift_age_down(index: int) -> void:
+	var current := index
+	while true:
+		var left := current * 2 + 1
+		if left >= _age_heap.size():
+			return
+		var smallest := left
+		var right := left + 1
+		if right < _age_heap.size() and _age_entry_comes_before(_age_heap[right], _age_heap[left]):
+			smallest = right
+		if not _age_entry_comes_before(_age_heap[smallest], _age_heap[current]):
+			return
+		_swap_age_entries(current, smallest)
+		current = smallest
+
+
+func _swap_age_entries(left_index: int, right_index: int) -> void:
+	_count_trim_work()
+	var left: Dictionary = _age_heap[left_index]
+	var right: Dictionary = _age_heap[right_index]
+	_age_heap[left_index] = right
+	_age_heap[right_index] = left
+	_age_positions[right["key"] as Vector2i] = left_index
+	_age_positions[left["key"] as Vector2i] = right_index
+
+
+func _age_entry_comes_before(left: Dictionary, right: Dictionary) -> bool:
+	_count_trim_work()
+	var left_tick := int(left["touched"])
+	var right_tick := int(right["touched"])
+	if left_tick != right_tick:
+		return left_tick < right_tick
+	return _comes_before(left["key"] as Vector2i, right["key"] as Vector2i)
+
+
+func _count_trim_work() -> void:
+	if _measuring_trim_work:
+		_last_trim_work += 1
 
 
 func tile_count() -> int:
@@ -191,11 +308,23 @@ func restore_persistence_snapshot(snapshot: Dictionary) -> bool:
 		restored[key] = {"depth": depth, "touched": touched}
 	_tiles = restored
 	_tick = snapshot_tick
+	_rebuild_age_index()
 	return true
 
 
 func persisted_tile_count() -> int:
 	return _tiles.size()
+
+
+func _rebuild_age_index() -> void:
+	_age_heap.clear()
+	_age_positions.clear()
+	for raw_key in _tiles:
+		if not (raw_key is Vector2i):
+			continue
+		var key := raw_key as Vector2i
+		var record: Dictionary = _tiles[key]
+		_update_age_index(key, int(record.get("touched", 0)))
 
 
 static func _is_finite_number(value) -> bool:
