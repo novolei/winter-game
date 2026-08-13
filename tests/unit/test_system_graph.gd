@@ -69,27 +69,28 @@ extends TestCase
 ## should say so rather than be faked.
 ##
 ## ---------------------------------------------------------------------------
-## THE GAP THIS DOES NOT CLOSE, MEASURED AND NAMED
+## THE SHADER GAP THIS FILE ONCE OWNED -- NOW CLOSED, AND FOR A DIFFERENT REASON
 ## ---------------------------------------------------------------------------
-## **Shaders are compiled by the rendering server on a later frame, and the whole
-## suite lives inside one.** So a `.gdshader` that does not compile is invisible
-## to this graph, to the console gate, and to every test in the project.
+## This header used to record that shaders are compiled on a later frame, that
+## the suite lives inside the first one, and that `RenderingServer.force_draw()`
+## would close it. **The first claim was measured again on 4.7.1 and is wrong,
+## and the third does not follow.**
 ##
-## That is not hypothetical. A throwaway probe that built this same graph and
-## ticked past the first frame printed, once per build:
+## A shader is compiled SYNCHRONOUSLY when its resource loads --
+## `Shader.set_code()` -> `RenderingServer.shader_set_code()`, which parses and
+## fails loudly even under the dummy driver. No frame is involved. Re-breaking
+## `aurora_sky.gdshader` with the historical fault turned the suite RED at HEAD
+## with no framework change at all, because this file's own `_lighting_director()`
+## loads it. `force_draw()` runs silently headless and adds nothing.
 ##
-##     SHADER ERROR: Using 'return' in the 'sky' processor function is incorrect.
-##     ERROR: Shader compilation failed.
+## What was actually invisible: a shader NO TEST LOADS is never handed to the
+## rendering server, so it is never parsed. Two of the nine were in that state,
+## and `assets/shaders/chimney_smoke.gdshader` was proven dead with the suite
+## still reporting 1842 passed, 0 failed, console clean.
 ##
-## and the suite -- with this file in it -- was clean, because the runner quits
-## inside frame one. A bare `ProceduralSkyMaterial` built the same way is silent,
-## so it is a project shader and not the engine.
-##
-## `RenderingServer.force_draw()` would close it: one synchronous frame, and a
-## broken shader becomes console dirt like everything else. It is NOT done here,
-## deliberately, because the first thing it would do is turn another agent's
-## in-flight shader into this file's red suite. It is a gate change and belongs
-## to whoever owns the gate. See the report for this task.
+## `tests/art/test_shader_compiles.gd` now loads every project shader, which is
+## what closes it. The full measurement is in
+## `.superpowers/sdd/wave3/task-w3-shader-gate-report.md`.
 
 const EventBusScript := preload("res://src/core/event_bus.gd")
 const WorldClockScript := preload("res://src/systems/world_clock.gd")
@@ -99,6 +100,9 @@ const LightingDirectorScript := preload("res://src/rendering/lighting_director.g
 const SnowfallScript := preload("res://src/rendering/snowfall.gd")
 const WindSystemScript := preload("res://src/systems/wind_system.gd")
 const WeatherSystemScript := preload("res://src/systems/weather_system.gd")
+
+## For the static, project-wide half of the vocabulary rule below.
+const AssetScannerScript := preload("res://tests/framework/asset_scanner.gd")
 
 ## Services the graph registers in the LIVE ServiceRegistry, because that is how
 ## the game resolves them and a stand-in registry would not be this test. Cleared
@@ -144,6 +148,79 @@ const SNOWFALL_CONSUMERS := [
 ## Nothing in this graph is a flock, so the expected answer is nobody.
 const WILDLIFE_VOCABULARY := ["scatter", "available_perches"]
 const WILDLIFE_CONSUMERS: Array[String] = []
+
+## ---------------------------------------------------------------------------
+## THE SAME RULE, WIDENED FROM THE GRAPH TO THE PROJECT
+## ---------------------------------------------------------------------------
+## The three lists above govern the SEVEN systems this file boots. That is where
+## the runtime check can reach, and it is not where the defect lives: the sweep
+## in `WindSystem._collect()` walks the WHOLE tree, so a stray `set_wind()` on
+## any of the ten-odd systems outside this graph is driven exactly the same way
+## and is invisible to every assertion above.
+##
+## That is not a hypothetical either. This defect has now fired TWICE -- once on
+## `WeatherSystem`, which this graph was built to catch, and once on the ambience
+## director, which is NOT in this graph and which the graph therefore did not
+## catch. The gate built after the first occurrence did not stop the second.
+##
+## So the lists below are read against the SOURCE, not against the tree: every
+## `.gd` under `res://src` that DECLARES one of these hooks must be named here.
+## A static scan sees a script whether or not any test ever instantiates it,
+## which is the only way to cover the systems this graph does not build.
+##
+## What it cannot see, said plainly: a hook inherited from a base class rather
+## than declared, and a method installed at runtime. Inheriting from a script on
+## this list is a deliberate act by somebody who read it; installing a driven
+## hook at runtime is not something this project does anywhere.
+##
+## ADDING A LINE HERE IS A PERSON DECIDING -- the same act as adding one to the
+## three lists above, and for the same reason. If a name lands here without
+## somebody meaning it, `WindSystem` will drive it sixty times a second forever.
+
+## Every script under `res://src` that declares `set_wind()` or
+## `set_wind_strength()`, and therefore gets driven by `WindSystem`'s sweep.
+const PROJECT_WIND_CONSUMERS := [
+	"res://src/entities/player/breath_fog.gd",
+	"res://src/entities/snow_load.gd",
+	"res://src/entities/wildlife/bird_flock.gd",
+	"res://src/rendering/chimney_smoke.gd",
+	"res://src/rendering/snowfall.gd",
+	"res://src/rendering/snowfall_layer.gd",
+	"res://src/rendering/spindrift.gd",
+	"res://src/rendering/wind_pendulum.gd",
+	"res://src/rendering/wind_sway.gd",
+	"res://src/systems/snow_accumulation.gd",
+	"res://src/systems/track_mask.gd",
+]
+
+## Every script under `res://src` that declares `set_snowfall_rate()`.
+const PROJECT_SNOWFALL_CONSUMERS := [
+	"res://src/entities/snow_load.gd",
+	"res://src/rendering/snowfall.gd",
+	"res://src/rendering/snowfall_layer.gd",
+	"res://src/systems/snow_accumulation.gd",
+	"res://src/systems/track_mask.gd",
+]
+
+## Every script under `res://src` that declares BOTH wildlife hooks and so looks
+## like a flock to `WeatherSystem._find_wildlife()`. `bird.gd` and
+## `src/ui/breath.gd` each declare `scatter()` alone -- the sweep needs both, so
+## neither is picked up, and neither belongs here.
+const PROJECT_WILDLIFE_CONSUMERS := [
+	"res://src/entities/wildlife/bird_flock.gd",
+]
+
+## Where the static scan looks. `res://tests` is deliberately out: a test double
+## declaring `set_snowfall_rate()` is the point of the double, and no sweep can
+## reach it.
+const VOCABULARY_SCAN_ROOT := "res://src"
+
+## The floor for how many declarations the scan must find, for the same reason
+## `test_runner.gd` has MINIMUM_TESTS: every assertion below judges a
+## declaration it found, and none of them can see one the scan stopped
+## returning. Sixteen wind hooks, five snowfall hooks and one flock at the time
+## of writing.
+const MINIMUM_VOCABULARY_DECLARATIONS := 20
 
 var _root: Node = null
 var _bus: Node = null
@@ -407,6 +484,95 @@ func test_no_system_answers_a_vocabulary_it_did_not_mean_to() -> void:
 	assert_true(checked >= 3,
 		"the sweep found %d hook(s) in the graph, which is too few to have"
 			% checked + " checked anything -- did the graph fail to build?")
+
+
+## THE SAME RULE AGAINST THE WHOLE PROJECT, AND THE REASON IT HAD TO BE WIDENED.
+##
+## The test above can only judge nodes this file builds. `WindSystem` sweeps the
+## whole tree, so the rule has to be checked wherever a hook can be DECLARED --
+## which is every `.gd` under `res://src`, whether a test ever instantiates it or
+## not. The ambience director, which took `set_wind()` as an injector and had a
+## `Vector3` pushed into it, is outside this graph and would still be invisible
+## to the runtime check above.
+##
+## Re-introducing that bug -- adding `func set_wind(system)` to any script not on
+## PROJECT_WIND_CONSUMERS -- turns this red with the script named.
+func test_no_script_in_the_project_declares_a_vocabulary_it_did_not_mean_to() -> void:
+	var scripts := _project_scripts()
+	var found := 0
+	for path in scripts:
+		var code := FileAccess.get_file_as_string(path)
+		for hook in WIND_VOCABULARY:
+			if not _declares(code, hook):
+				continue
+			found += 1
+			assert_true(PROJECT_WIND_CONSUMERS.has(path),
+				("%s declares %s(), so WindSystem's tree sweep will drive it with a" % [path, hook])
+					+ " Vector3 sixty times a second. Rename it -- an injector is named"
+					+ " after the thing, set_wind_system(), not after the quantity --"
+					+ " or add it to PROJECT_WIND_CONSUMERS and mean it.")
+		for hook in SNOWFALL_VOCABULARY:
+			if not _declares(code, hook):
+				continue
+			found += 1
+			assert_true(PROJECT_SNOWFALL_CONSUMERS.has(path),
+				"%s declares %s(), so the sky will drive it" % [path, hook])
+		var flock := true
+		for hook in WILDLIFE_VOCABULARY:
+			if not _declares(code, hook):
+				flock = false
+				break
+		if flock:
+			found += 1
+			assert_true(PROJECT_WILDLIFE_CONSUMERS.has(path),
+				"%s declares every wildlife hook, so it looks like a flock to WeatherSystem's tell" % path)
+	assert_true(found >= MINIMUM_VOCABULARY_DECLARATIONS,
+		("the scan found %d declaration(s) across %d script(s) under %s, expected at least %d --"
+			% [found, scripts.size(), VOCABULARY_SCAN_ROOT, MINIMUM_VOCABULARY_DECLARATIONS])
+			+ " a scan that stopped seeing the source passes over everything")
+
+
+## The two scopes cannot drift apart. Anything the graph names as a consumer is
+## by definition a script that declares the hook, so it must also be on the
+## project-wide list -- otherwise the widened rule would contradict the narrow
+## one and whichever ran second would look like the bug.
+func test_the_graph_allowlists_are_a_subset_of_the_project_allowlists() -> void:
+	for path in WIND_CONSUMERS:
+		assert_true(PROJECT_WIND_CONSUMERS.has(path),
+			"%s is a graph wind consumer but is missing from PROJECT_WIND_CONSUMERS" % path)
+	for path in SNOWFALL_CONSUMERS:
+		assert_true(PROJECT_SNOWFALL_CONSUMERS.has(path),
+			"%s is a graph snowfall consumer but is missing from PROJECT_SNOWFALL_CONSUMERS" % path)
+	for path in WILDLIFE_CONSUMERS:
+		assert_true(PROJECT_WILDLIFE_CONSUMERS.has(path),
+			"%s is a graph wildlife consumer but is missing from PROJECT_WILDLIFE_CONSUMERS" % path)
+	# Anti-vacuity: three empty lists would satisfy every loop above.
+	assert_true(WIND_CONSUMERS.size() + SNOWFALL_CONSUMERS.size() >= 6,
+		"the graph allowlists have shrunk to nothing, so this comparison proves nothing")
+
+
+## Every `.gd` under the scan root. `AssetScanner` is reused rather than a second
+## walk written here, so the two cannot disagree about what a folder contains.
+## `.gdshader` and `.gd.uid` do not end in `.gd`, so neither is swept in.
+func _project_scripts() -> Array[String]:
+	var found: Array[String] = []
+	for path in AssetScannerScript.find_files(VOCABULARY_SCAN_ROOT, [".gd"] as Array[String]):
+		found.append(path)
+	found.sort()
+	return found
+
+
+## True when `code` declares `hook` as a method of its own.
+##
+## Anchored at the start of the statement, so a CALL to the hook -- and the whole
+## point of these vocabularies is that other systems call them -- is not mistaken
+## for a declaration.
+func _declares(code: String, hook: String) -> bool:
+	for raw_line in code.split("\n"):
+		var line := raw_line.strip_edges()
+		if line.begins_with("func %s(" % hook) or line.begins_with("static func %s(" % hook):
+			return true
+	return false
 
 
 # --- the values that actually travel ------------------------------------------

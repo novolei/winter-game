@@ -178,7 +178,33 @@ a 45-degree camera, not a broken take.
 
 ## 框架 — 第七类假通过：整个套件看不见坏掉的着色器
 
-由集成覆盖那轮（`ac7183d`）发现，**不是假想的**。
+> **已关闭。门禁是 `tests/art/test_shader_compiles.gd`，四次运行的证据在
+> `.superpowers/sdd/wave3/task-w3-shader-gate-report.md`。**
+>
+> **但下面记的机制是错的，而按那个机制写的那一行修法什么也修不上。**在 4.7.1 上重新量过：
+>
+> - **着色器是在资源加载时同步编译的**（`Shader.set_code()` → `RenderingServer.shader_set_code()`，
+>   连 dummy 驱动也在那里解析并报错，`servers/rendering/dummy/storage/material_storage.cpp:192`）。
+>   **不牵涉任何一帧。**把 `aurora_sky.gdshader` 按当初那个 `return` 重新弄坏，**在 HEAD 上、
+>   不动框架一个字，套件直接就红了**——因为 `test_system_graph.gd` 自己会加载它。
+> - `RenderingServer.force_draw()` 在 `--headless` 下能跑、且是安静的；在一个已经加载了的坏
+>   着色器旁边调用它，**不多打印一个字**。所以它**没有被加进去**：一条无法演示自己会响的
+>   门禁代码，正是这道门禁存在的理由所要终结的东西。
+>
+> **真正看不见的比"着色器"这个词窄，也更糟：没有任何测试加载过的着色器，从来没有被交给
+> 渲染服务器，因此从来没有被解析过。**在 HEAD 上把九个项目着色器全部弄坏量了一次：七个报错，
+> 两个一声不吭——`chimney_smoke.gdshader` 和 `montage_film.gdshader`。而只把
+> `chimney_smoke.gdshader` 弄成语法死的，套件报 **1842 passed / 0 failed、退出 0、控制台干净**。
+> 它就是每一帧画在农舍上的那道烟。
+>
+> 顺带量到的一件事值得单独记住：**九个着色器全坏的那一次，runner 自己的计数仍然是
+> 1842 passed / 0 failed。**那七个报错**全部**是 `tools/run_tests.sh` 读控制台抓到的，
+> 没有任何一条来自测试的断言。
+>
+> 门禁上线后对全项目跑了一遍：**九个项目着色器全部编译通过，零个被点名**；两个 addon 着色器
+> 另行单独验过，也通过（它们被刻意排除在门禁之外，理由写在文件里）。
+
+由集成覆盖那轮（`ac7183d`）发现，**不是假想的**。以下是当时的原始记录，保留以存档。
 
 **着色器在更晚的一帧编译，而整个测试套件活在第一帧之内。**所以一个语法上已经死掉的 `.gdshader` 可以：每一次真实运行都在控制台报 `SHADER ERROR`、把画面画错或画不出来，**而套件停在 1324 passed / 0 failed，控制台门禁也一个字都抓不到**。
 
@@ -199,6 +225,22 @@ SHADER ERROR: Using 'return' in the 'sky' processor function
 **执行条件**：等着色器工作线全部落地、工作区安静时加。加完之后必须验证它真的会红——把一个已知的坏着色器放回去，确认套件失败并指名文件。**一个复现不了它所要防的缺陷的门禁，本身就是下一类。**
 
 **同轮记录的两条较小缺口**：词汇规则检查的是那七个系统组成的**图**，不是整个**项目**——那十个在图外的系统上若出现一个走神的 `set_wind()`，仍然看不见；以及 `_step()` 是对引擎 tick 的模拟，会和真实 tick 漂移。
+
+> **第一条已关闭。**`test_system_graph.gd` 增加了一条**对着源码**的全项目检查：`res://src` 下
+> 每一个**声明**了 `set_wind` / `set_wind_strength` / `set_snowfall_rate`，或同时声明了两个
+> wildlife 钩子的 `.gd`，都必须出现在 `PROJECT_*_CONSUMERS` 上。静态扫描能看见一个**从来没有
+> 被任何测试实例化过**的脚本，这正是运行时图检查够不到的那一半——环境音那次就在图外。
+>
+> 量出来的实况：全项目有 **11 个脚本声明风词汇**（16 处声明），图里只列了 3 个；**8 个在图外**，
+> 其中包括 `chimney_smoke.gd`、`spindrift.gd`、`wind_sway.gd`、`wind_pendulum.gd`、
+> `snowfall_layer.gd`、`breath_fog.gd`、`snow_load.gd`、`bird_flock.gd`。把项目名单临时缩回图
+> 的三个，这条检查**红了 13 次并逐个点名文件**——这是它的 RED 证据。
+>
+> 它看不见的（写明而非假装覆盖）：从基类**继承**而非声明的钩子，以及运行时装上去的方法。
+>
+> **第二条（`_step()` 漂移）没有做，而且不便宜。**要让它不再是模拟，就得让套件在测试之间真的
+> 过帧；而整个套件跑在 runner 的**一次** `_process()` 里（见 `test_runner.gd` 的注释，那个位置
+> 本身是承重的）。那是对 runner 结构的改造，不是一条断言，应当单独排期。
 
 ---
 
