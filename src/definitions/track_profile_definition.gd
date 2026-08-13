@@ -49,6 +49,15 @@ extends Resource
 ## without taking the torn edge away from medium and deep prints.
 @export_range(0.0, 1.0, 0.01) var dust_irregularity_scale := 1.0
 
+@export_group("Dusting pressure")
+## Powder too thin to hold a boot-shaped pocket records the two load-bearing
+## contacts instead: a restrained heel and a stronger forefoot.  These values
+## are blended in by `scuff`, so a deep print keeps the complete sole above.
+@export_range(0.0, 1.0, 0.01) var dust_waist_influence := 1.0
+@export_range(0.5, 1.0, 0.01) var dust_lobe_length_scale := 1.0
+@export_range(0.05, 1.0, 0.01) var dust_heel_weight := 1.0
+@export_range(0.05, 1.0, 0.01) var dust_forefoot_weight := 1.0
+
 
 func sole_definition_at(wade: float) -> float:
 	var depth := clampf(wade, 0.0, 1.0)

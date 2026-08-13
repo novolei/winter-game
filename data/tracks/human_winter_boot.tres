@@ -29,3 +29,7 @@ dust_width_scale = 1.08
 dust_core = 0.72
 dust_break = 0.03
 dust_irregularity_scale = 0.2
+dust_waist_influence = 0.0
+dust_lobe_length_scale = 0.82
+dust_heel_weight = 0.18
+dust_forefoot_weight = 0.25

@@ -36,6 +36,15 @@ func _initialize() -> void:
 	profile.dust_core = 0.72
 	profile.dust_break = 0.03
 	profile.dust_irregularity_scale = 0.20
+	# The reference read is two shallow contacts, not a miniature shoe mould:
+	# the heel takes less load, the forefoot takes more, and untouched powder
+	# remains between them. At the shipped 0.22 dust strength and 0.16 m terrain
+	# response these weights resolve to about 8.6 mm and 10.9 mm respectively
+	# after the dust band's restrained 8% blend back toward the generic pocket.
+	profile.dust_waist_influence = 0.0
+	profile.dust_lobe_length_scale = 0.82
+	profile.dust_heel_weight = 0.18
+	profile.dust_forefoot_weight = 0.25
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://data/tracks"))
 	var error := ResourceSaver.save(profile, OUTPUT_PATH)
 	if error != OK:

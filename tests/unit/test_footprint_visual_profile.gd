@@ -154,3 +154,65 @@ func test_a_thin_boot_keeps_a_clear_gap_at_the_shipped_stride() -> void:
 		float(profile.sole_definition_dust) >= 0.90,
 		"the dusting does not preserve enough of the authored heel/waist/forefoot silhouette"
 	)
+
+
+## The approved dusting reference is not a complete miniature sole. It is two
+## pressure contacts: a paler heel and a darker forefoot with original snow
+## between them. This exercises the actual CPU raster contract without asking a
+## camera, light or post-process to manufacture that separation.
+func test_a_thin_boot_is_two_shallow_pressure_lobes_with_a_low_bridge() -> void:
+	var profile = load(PROFILE_PATH)
+	var mask: TrackMask = TrackMaskScript.new()
+	mask.build_at(Vector3.ZERO)
+	assert_not_null(profile)
+	if profile == null:
+		mask.free()
+		return
+
+	var radius := 0.28 * 0.74
+	var strength := 0.22
+	mask.call(&"stamp_profiled", Vector3.ZERO, radius, strength, Vector2.RIGHT, 1.5,
+		0.74, 0.0, 17.0, Vector2.ZERO, 1.0, 1.0, profile)
+	var along_scale: float = radius * float(profile.dust_length_scale)
+	var heel_x: float = along_scale * float(profile.heel_centre_x)
+	var forefoot_x: float = along_scale * float(profile.forefoot_centre_x)
+	var heel_edge: float = along_scale * (
+		float(profile.heel_centre_x)
+		+ float(profile.heel_half_length) * float(profile.dust_lobe_length_scale)
+	)
+	var forefoot_edge: float = along_scale * (
+		float(profile.forefoot_centre_x)
+		- float(profile.forefoot_half_length) * float(profile.dust_lobe_length_scale)
+	)
+	var bridge_x := 0.5 * (heel_edge + forefoot_edge)
+	var heel: float = mask.value_at(Vector3(heel_x, 0.0, 0.0))
+	var forefoot: float = mask.value_at(Vector3(forefoot_x, 0.0, 0.0))
+	var bridge: float = mask.value_at(Vector3(bridge_x, 0.0, 0.0))
+
+	assert_true(heel > 0.0, "the shallow heel pressure lobe disappeared")
+	assert_true(forefoot > heel * 1.15,
+		"forefoot %.4f is not visibly stronger than heel %.4f" % [forefoot, heel])
+	assert_true(bridge <= heel * 0.20,
+		"bridge %.4f joins heel %.4f to forefoot %.4f into a complete sole"
+			% [bridge, heel, forefoot])
+
+	# TerrainRenderer's shipped 0.16 m response turns these dimensionless peaks
+	# into the physical indentation. Both must stay a shallow 7--11 mm record.
+	assert_true(heel * 0.16 >= 0.007 and heel * 0.16 <= 0.011,
+		"heel indentation %.4f m is outside the thin-snow band" % (heel * 0.16))
+	assert_true(forefoot * 0.16 >= 0.007 and forefoot * 0.16 <= 0.011,
+		"forefoot indentation %.4f m is outside the thin-snow band" % (forefoot * 0.16))
+	# Both peaks are far below the shader's 0.30 rim gate. No positive halo can
+	# be generated around either lobe even before the shared-rim inequality test.
+	assert_true(maxf(heel, forefoot) < 0.30,
+		"a dust lobe reached the positive-rim gate")
+	mask.free()
+
+
+func test_dust_lobe_language_fades_out_completely_in_deep_snow() -> void:
+	var source := FileAccess.get_file_as_string("res://src/systems/track_mask.gd")
+	assert_true(source.contains(
+		"var dust_separation := scrape * (1.0 - dust_waist_influence)"
+	), "dust lobe separation is not gated by the continuous thin-snow fact")
+	assert_true(source.contains("weight = lerpf(weight, dust_weight, scrape)"),
+		"dust pressure weights can leak into the approved deep footprint")

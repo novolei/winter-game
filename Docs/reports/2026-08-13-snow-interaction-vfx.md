@@ -90,3 +90,31 @@ for this correction. The focused CPU-only suite completed in 1.3 seconds with
 stop the currently running play session and start it again so the new resource is
 actually loaded, then judge a newly walked, non-retraced line (old persistent
 marks and turn-overlap are expected to remain in the mask).
+
+## Thin-snow two-pressure-lobe correction
+
+The next owner reference clarified that a dusting must not preserve the complete
+boot mould above. It must show two separate contacts: a paler heel and a darker
+forefoot with original snow between them. The remaining bridge was the authored
+waist ellipse in the three-lobe union, not the cadence or footprint spacing.
+
+The winter-boot profile now owns four dust-only values: zero waist influence,
+`0.82` lobe length, `0.18` heel load and `0.25` forefoot load. TrackMask blends
+those values in with the existing continuous `scuff` fact. At `scuff = 0`, the
+deep profile uses the original three-lobe distance and original heel/forefoot
+weights exactly; the furrow and anonymous stamps are untouched.
+
+At the shipped thin strength `0.22`, sole definition `0.92`, and terrain response
+`0.16 m`, the two load peaks resolve analytically to **8.645 mm at the heel** and
+**10.912 mm at the forefoot**. Their closest authored edges leave a normalized
+gap from `-0.1520` to `-0.0356`; the midpoint's final distance is `1.1297`, outside
+the mark. Both mask peaks (`0.0540`, `0.0682`) remain far below the shader's `0.30`
+positive-rim gate.
+
+A non-GPU unit contract was authored against the actual TrackMask raster to pin
+the low bridge, stronger forefoot, 7--11 mm physical depth band, and disabled
+positive rim. The prior complete-waist assertion was replaced because it encoded
+the superseded owner direction. **No Godot process of any kind was started and no
+test was run for this correction**, per the hardware-safety instruction. Validation
+is therefore static arithmetic plus `git diff --check`; runtime/visual acceptance
+remains explicitly unverified.

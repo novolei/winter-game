@@ -294,12 +294,11 @@ func test_two_prints_a_stride_apart_do_not_run_together() -> void:
 		)
 
 
-## A DUSTING RECORDS A LIGHT BOOT, NOT A LONG SMEAR.  The previous snow-depth
-## language stretched a thin print by 70%, narrowed it and removed its floor;
-## in the gameplay camera that read as a foot dragged through paint.  Thin snow
-## may chip the outline, but heel, waist and forefoot still belong to one planted
-## sole and its reach stays close to the deeper print.
-func test_a_profiled_thin_print_is_a_light_complete_boot_not_a_long_scuff() -> void:
+## A DUSTING RECORDS TWO PLANTED PRESSURE POINTS, NOT A LONG SMEAR. The previous
+## revision correctly removed the skate-like reach but left heel, waist and
+## forefoot joined into a miniature shoe mould. Thin powder cannot hold that
+## wall: it keeps a lighter heel and stronger forefoot with snow between them.
+func test_a_profiled_thin_print_is_two_pressure_points_not_a_long_scuff() -> void:
 	var profile: TrackProfileDefinition = _mask.profile_for_subject(&"player")
 	assert_not_null(profile, "the player boot profile did not load")
 	if profile == null:
@@ -317,11 +316,9 @@ func test_a_profiled_thin_print_is_a_light_complete_boot_not_a_long_scuff() -> v
 		"the dusting narrowed to %.3f m against the boot's %.3f; the sole disappeared"
 			% [dust.y, hole.y]
 	)
-	assert_true(
-		dust.z >= 0.10 and dust.z < 0.24,
-		"the thin sole reads %.3f at the waist; it must be light but anatomically whole"
-			% dust.z
-	)
+	assert_true(dust.z < 0.02,
+		"the thin sole still reads %.3f at the waist; its two pressure lobes are joined"
+			% dust.z)
 
 
 ## (reach along the walk, reach across it, the depth a third of the way out) for

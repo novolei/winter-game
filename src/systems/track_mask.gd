@@ -490,6 +490,8 @@ func _compile_profile(profile: TrackProfileDefinition) -> PackedFloat32Array:
 		profile.forefoot_centre_x, profile.forefoot_half_length, profile.forefoot_half_width,
 		profile.heel_weight, profile.forefoot_weight,
 		profile.weight_transition_from_x, profile.weight_transition_to_x,
+		profile.dust_waist_influence, profile.dust_lobe_length_scale,
+		profile.dust_heel_weight, profile.dust_forefoot_weight,
 	])
 
 
@@ -804,6 +806,10 @@ func _blob(
 	var forefoot_weight := 1.0
 	var weight_transition_from_x := 0.0
 	var weight_transition_to_x := 1.0
+	var dust_waist_influence := 1.0
+	var dust_lobe_length_scale := 1.0
+	var dust_heel_weight := 1.0
+	var dust_forefoot_weight := 1.0
 	var heel_inv_length := 1.0
 	var heel_inv_width := 1.0
 	var waist_inv_length := 1.0
@@ -826,6 +832,10 @@ func _blob(
 		forefoot_weight = compiled[10]
 		weight_transition_from_x = compiled[11]
 		weight_transition_to_x = compiled[12]
+		dust_waist_influence = compiled[13]
+		dust_lobe_length_scale = compiled[14]
+		dust_heel_weight = compiled[15]
+		dust_forefoot_weight = compiled[16]
 		heel_inv_length = 1.0 / heel_half_length
 		heel_inv_width = 1.0 / heel_half_width
 		waist_inv_length = 1.0 / waist_half_length
@@ -858,23 +868,36 @@ func _blob(
 				# toward the legacy pocket according to the authored snow band.
 				var waist_x := (local.x - waist_centre_x) * waist_inv_length
 				var waist_y := local.y * waist_inv_width
-				var sole_distance_squared := waist_x * waist_x + waist_y * waist_y
+				var waist_distance_squared := waist_x * waist_x + waist_y * waist_y
+				var end_distance_squared := 0.0
+				var dust_end_distance_squared := 0.0
 				# The waist is the overlap seam. On either side only the adjacent
 				# lobe can own the union, so evaluating the distant end buys nothing
 				# except two multiplies per footprint texel.
 				if local.x < waist_centre_x:
 					var heel_x := (local.x - heel_centre_x) * heel_inv_length
 					var heel_y := local.y * heel_inv_width
-					sole_distance_squared = minf(
-						sole_distance_squared, heel_x * heel_x + heel_y * heel_y
-					)
+					end_distance_squared = heel_x * heel_x + heel_y * heel_y
+					var dust_heel_x := heel_x / maxf(dust_lobe_length_scale, 0.001)
+					dust_end_distance_squared = dust_heel_x * dust_heel_x + heel_y * heel_y
 				else:
 					var forefoot_x := (local.x - forefoot_centre_x) * forefoot_inv_length
 					var forefoot_y := local.y * forefoot_inv_width
-					sole_distance_squared = minf(
-						sole_distance_squared,
-						forefoot_x * forefoot_x + forefoot_y * forefoot_y
+					end_distance_squared = forefoot_x * forefoot_x + forefoot_y * forefoot_y
+					var dust_forefoot_x := forefoot_x / maxf(dust_lobe_length_scale, 0.001)
+					dust_end_distance_squared = (
+						dust_forefoot_x * dust_forefoot_x + forefoot_y * forefoot_y
 					)
+				var sole_distance_squared := minf(
+					waist_distance_squared, end_distance_squared
+				)
+				# A dusting shows two pressure contacts rather than the complete sole.
+				# Removing the waist only as `scrape` approaches one leaves medium and
+				# deep snow byte-for-byte on the original three-lobe distance field.
+				var dust_separation := scrape * (1.0 - dust_waist_influence)
+				sole_distance_squared = lerpf(
+					sole_distance_squared, dust_end_distance_squared, dust_separation
+				)
 				# Morph squared fields and take one root. Apart from avoiding a second
 				# sqrt per texel this keeps every authored 1.0 contour pinned exactly.
 				distance = sqrt(lerpf(
@@ -950,10 +973,17 @@ func _blob(
 				)
 			var compression := 1.0
 			if profiled and sole_definition > 0.0:
+				var load_blend := smoothstep(
+					weight_transition_from_x, weight_transition_to_x, local.x
+				)
 				var weight := lerpf(
 					heel_weight, forefoot_weight,
-					smoothstep(weight_transition_from_x, weight_transition_to_x, local.x)
+					load_blend
 				)
+				var dust_weight := lerpf(
+					dust_heel_weight, dust_forefoot_weight, load_blend
+				)
+				weight = lerpf(weight, dust_weight, scrape)
 				compression = lerpf(
 					1.0, weight, sole_definition
 				)
