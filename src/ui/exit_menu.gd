@@ -924,6 +924,9 @@ func _enable_spatial_mode() -> void:
 	var consequence := _confirmation_label.get_parent().get_node_or_null("Consequence") as Label
 	if consequence != null:
 		consequence.modulate.a = 0.0
+	var settings_heading := _settings_panel.get_node_or_null("Heading") as Label
+	if settings_heading != null:
+		settings_heading.modulate.a = 0.0
 	var transparent := _tokens.ink_primary
 	transparent.a = 0.0
 	for button in _choice_lines.keys():

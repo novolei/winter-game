@@ -73,8 +73,10 @@ var _row_ids: Array[StringName] = []          # 名称 label id
 var _row_value_ids: Array[StringName] = []    # 值 label id
 var _row_fractions: Dictionary = {}           # id -> 0..1
 var _tracks: Dictionary = {}                  # id -> MeshInstance3D（轨道/游标/刻度共用）
+var _track_materials: Dictionary = {}         # id -> StandardMaterial3D
 var _track_layouts: Dictionary = {}           # id -> Rect2（屏幕像素）
 var _state: StringName = STATE_MENU
+var _frame_scale := 1.0
 
 
 func setup(tokens: UITokens, fonts: UIFonts) -> void:
@@ -160,6 +162,7 @@ func set_context(status: String, caption: String, time_text: String) -> void:
 
 func layout(content: Rect2, frame_scale: float, compact: bool, state_y: float) -> void:
 	_compact = compact
+	_frame_scale = frame_scale
 	var title_size := maxf(34.0 * frame_scale, 22.0)
 	var body_size := maxf(17.0 * frame_scale, 14.0)
 	var time_size := maxf(20.0 * frame_scale, 15.0)
@@ -258,10 +261,20 @@ func track_quads() -> Array[MeshInstance3D]:
 
 
 ## The menu pushed a new value: refresh the value word and slide the marker.
+## Only the marker rect is recomputed -- a full layout() would reset every
+## target on the surface for the sake of one 2.5 px quad.
 func set_row_value(setting_id: StringName, formatted: String, fraction: float) -> void:
 	var value_id := StringName("row_%s_value" % setting_id)
 	_set_text(value_id, formatted)
 	_row_fractions[setting_id] = clampf(fraction, 0.0, 1.0)
+	var row_id := StringName("row_%s" % setting_id)
+	var track_rect := _track_layouts.get(row_id, Rect2()) as Rect2
+	var marker_width := MARKER_WIDTH * _frame_scale
+	_track_layouts[value_id] = Rect2(
+		track_rect.position.x + track_rect.size.x * _row_fractions[setting_id] - marker_width * 0.5,
+		track_rect.position.y - (MARKER_HEIGHT - 1.0) * 0.5 * _frame_scale,
+		marker_width, MARKER_HEIGHT * _frame_scale)
+	_update_projection()
 
 
 func set_focus(id: StringName) -> void:
@@ -386,6 +399,7 @@ func _make_track(id: StringName) -> void:
 	quad.material_override = material
 	add_child(quad)
 	_tracks[id] = quad
+	_track_materials[id] = material
 	_track_layouts[id] = Rect2()
 
 
@@ -481,6 +495,14 @@ func _apply_alpha() -> void:
 		ornament_colour.b *= PAUSE_TREATMENT_COMPENSATION
 		ornament_colour.a *= _tokens.opacity_steps[1] * _alpha
 		ornament_material.albedo_color = ornament_colour
+	for id in _track_materials.keys():
+		var track_material := _track_materials[id] as StandardMaterial3D
+		var track_colour := _tokens.line_hairline
+		track_colour.r *= PAUSE_TREATMENT_COMPENSATION
+		track_colour.g *= PAUSE_TREATMENT_COMPENSATION
+		track_colour.b *= PAUSE_TREATMENT_COMPENSATION
+		track_colour.a *= _alpha
+		track_material.albedo_color = track_colour
 
 
 func _update_projection() -> void:

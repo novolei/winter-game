@@ -38,10 +38,26 @@ func test_rows_hide_outside_the_settings_state() -> void:
 	var visibility := {}
 	for label in _spatial.labels():
 		visibility[label.name] = label.visible
+	for label in _spatial.labels():
+		if String(label.name).begins_with("Row"):
+			assert_true(visibility[label.name],
+				"%s was hidden in the settings state" % label.name)
 	_spatial.set_state(&"menu")
 	for label in _spatial.labels():
 		if String(label.name).begins_with("Row"):
 			assert_false(label.visible, "%s stayed visible in the menu state" % label.name)
+
+func test_set_row_value_updates_the_word_and_slides_the_marker() -> void:
+	_spatial.layout(Rect2(24.0, 100.0, 384.0, 420.0), 1.0, false, 144.0)
+	var value_id := &"row_prompt_hold_value"
+	var marker_before := (_spatial._track_layouts[value_id] as Rect2).position.x
+	_spatial.set_row_value(&"prompt_hold", "3×", 1.0)
+	for label in _spatial.labels():
+		if label.name == "RowPromptHoldValue":
+			assert_eq(label.text, "3×", "the value word did not update")
+	var marker_after := (_spatial._track_layouts[value_id] as Rect2).position.x
+	assert_true(marker_after > marker_before,
+		"the marker rect did not slide when the fraction changed")
 
 func test_tracks_and_ticks_are_depth_composited_quads() -> void:
 	var quads := _spatial.track_quads()
