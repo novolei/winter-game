@@ -73,6 +73,12 @@ var _home := Vector2.ZERO
 var _viewport := Vector2(1920.0, 1080.0)
 var _track_px := 0.0
 
+## How bright the frame behind this stroke is, 0..1. See UIInk: the light half of
+## this palette IS the snow, so which entry a reading is drawn in depends on what
+## it is standing on. Set by whoever owns the stroke, at the moment it goes on
+## screen.
+var _ground := UIInk.UNKNOWN_GROUND
+
 
 func build(tokens: UITokens, row: VitalReadout, seed := 0.0) -> bool:
 	_tokens = tokens
@@ -112,8 +118,23 @@ func state() -> int:
 
 ## The colour this reading is being drawn in, so the icon beside it is tinted
 ## with exactly what the arc is using and the two cannot disagree.
+##
+## VitalTone says what the value MEANS; UIInk says which of the twelve carries
+## that meaning on the ground this stroke is standing on. Both, in that order,
+## and neither is the other's job.
 func reading_colour() -> Color:
-	return VitalTone.colour_for(_tokens, _state)
+	return UIInk.for_state(_tokens, _state, _ground)
+
+
+## How bright the frame behind this stroke is, 0..1.
+func set_ground(value: float) -> void:
+	_ground = clampf(value, 0.0, 1.0)
+	_apply_reading_colour()
+	queue_redraw()
+
+
+func ground() -> float:
+	return _ground
 
 
 ## Where this stroke stands and how long it is, in SCREEN pixels. The caller owns
@@ -323,10 +344,12 @@ func centre() -> Vector2:
 func _apply_reading_colour() -> void:
 	if _paint == null:
 		return
-	# The TOKEN says what the reading means, and that is all it says. The world's
-	# brightness used to come in here too, lifting the mark's lightness on a dark
-	# frame -- that existed for a readout that was on screen at every hour, and it
-	# went with it. See the note at the foot of VitalTone.
+	# The TOKEN says what the reading means; the ground says which of the twelve
+	# can carry it here. What used to be in this line was a different thing and is
+	# not coming back: a continuous solve that bisected HSV value to LIFT the
+	# mark's lightness on a dark frame, producing a thirteenth colour, for a
+	# readout that was on screen at every hour. See the note at the foot of
+	# VitalTone, and UIInk's header for the line between them.
 	_paint.set_reserve_colour(reading_colour())
 
 

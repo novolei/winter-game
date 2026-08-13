@@ -25,6 +25,35 @@ extends Control
 ## would be two sets of thresholds waiting to disagree.
 ##
 ## ---------------------------------------------------------------------------
+## ONE INK, AND THE GROUND CHOOSES IT
+## ---------------------------------------------------------------------------
+## Section 5.2's own table gives this element `ink/primary` for the icon and the
+## arc and `ink/secondary` for the copy. `ink/primary` IS `snow_tones[0]` --
+## literally the palette entry the snow is made of -- and captured through
+## tools/capture_threshold_note.tscn in the real scene it measures:
+##
+##   bright day snow  ground 0.5766   ink 0.4185 (#8FB0D8, the authored hex)  1.34 : 1
+##   the shade band   ground 0.3851   ink 0.4185                              1.12 : 1
+##
+## and the shade band is WORSE, because `ink/primary` sits INSIDE the snow's own
+## tonal range rather than above or below it. There is no snow at any hour that
+## it separates from, and the first capture of this element on `pale_day` shows
+## exactly that: an icon, an arc and a line of copy that are not there.
+##
+## So the ink is CHOSEN between palette entries by how bright the frame is --
+## UIInk, which the time prompt found first and which is one file rather than two
+## so that two elements cannot drift into disagreeing about what a dark scene is.
+##
+## THE COPY IS THE SAME INK AS THE MARK, at full strength, and that is the one
+## place this departs from section 5.2's table. 说后果，不说数字 makes the
+## SENTENCE the element -- the icon says which reading and the arc says how far
+## gone, but a player who cannot read 手指不听使唤了 has been told nothing. The
+## hierarchy 5.2 asks for survives in size and weight (24 px icon and a 3-4 px
+## stroke against Body 17), which is where rule 3 puts emphasis anyway. Spending
+## a second palette step on it cost the copy 1.4x of its contrast on every ground
+## and put it under 2 : 1 at night.
+##
+## ---------------------------------------------------------------------------
 ## THE ICON AND THE WORDS ARE NOT FROSTED, AND THAT IS DELIBERATE
 ## ---------------------------------------------------------------------------
 ## A CanvasItem carries ONE material, so anything drawn on this node would go
@@ -63,6 +92,14 @@ var _icon: Texture2D = null
 var _body: FontVariation = null
 var _viewport := Vector2(1920.0, 1080.0)
 var _elapsed := 0.0
+
+## How bright the frame behind this note is, 0..1. See the header, and UIInk.
+## Taken ONCE, when the note is surfaced, rather than followed: a note lives
+## about three and a half seconds and the lighting director crossfades over
+## eight, so a note that tracked the ground could change colour halfway through
+## being read. Rule 4 -- it appears, it dies -- makes that unnecessary as well as
+## unwanted.
+var _ground := UIInk.UNKNOWN_GROUND
 
 
 ## `text` may be empty. Section 5.2's 恢复 row specifies only the arc collapsing
@@ -123,6 +160,37 @@ func state() -> int:
 
 func arc() -> VitalStroke:
 	return _arc
+
+
+## How bright the frame behind this note is, 0..1. Pushed straight through to the
+## arc, so the icon and the stroke beside it can never be two colours.
+func set_ground(value: float) -> void:
+	_ground = clampf(value, 0.0, 1.0)
+	if _arc != null:
+		_arc.set_ground(_ground)
+	queue_redraw()
+
+
+func ground() -> float:
+	return _ground
+
+
+## The ink the mark is drawn in: the icon, and the arc under it.
+func ink() -> Color:
+	if _tokens == null:
+		return Color.MAGENTA
+	if _state == VitalTone.State.EMPTY:
+		# Section 6.1's 已归零 -- 弧变成一段 1px 的空槽，不是红色，是空的 -- is about
+		# the ARC, and an empty reading sweeps no arc at all. The ICON is how the
+		# player knows WHICH reading has gone, so it takes the mark's own ink; an
+		# empty reading nobody can identify is not information.
+		return UIInk.mark_for(_tokens, _ground)
+	return UIInk.for_state(_tokens, _state, _ground)
+
+
+## The copy's ink. The same one, at full strength -- see the header.
+func words_ink() -> Color:
+	return ink()
 
 
 ## Sizes the note and puts the arc in it. Returns the size, because the caller
@@ -191,29 +259,25 @@ func _draw() -> void:
 	var pad := _px(VitalStroke.PAD_DESIGN_PX)
 	var arc_px := _px(ARC_DESIGN_PX)
 
-	# Section 5.2: 恶化 -- 图标与弧 ink/primary, 文案 ink/secondary. 濒危 -- the lot
-	# turns alarm/blood. Never warm: rule 3 gives warmth one meaning and "this is
-	# urgent" is not it.
-	var ink := VitalTone.colour_for(_tokens, _state)
-	if _state == VitalTone.State.EMPTY:
-		# Section 6.1's 已归零 -- 弧变成一段 1px 的空槽，不是红色，是空的 -- is about
-		# the ARC. The icon is how the player knows WHICH reading has gone, so it
-		# keeps its ink; an empty reading nobody can identify is not information.
-		ink = _tokens.ink_primary
+	# Section 5.2: 恶化 -- 图标与弧 ink/primary. 濒危 -- 转 alarm/blood. Both hold on
+	# any ground that can show them; where one cannot be seen, UIInk swaps the
+	# palette entry and never the meaning. Never warm: rule 3 gives warmth one
+	# meaning and "this is urgent" is not it.
+	var mark := ink()
 	if _icon != null:
 		draw_texture_rect(
 			_icon,
 			Rect2(Vector2(0.0, (size.y - icon_px) * 0.5), Vector2(icon_px, icon_px)),
 			false,
-			ink
+			mark
 		)
 
 	if _text == "" or _body == null:
 		return
 	var font_px := _text_px()
-	var words := _tokens.ink_secondary
-	if _state == VitalTone.State.ALARM or _state == VitalTone.State.CRITICAL:
-		words = _tokens.alarm_blood
+	# The same ink, at full strength. See the header: the sentence IS the element,
+	# and a second palette step spent on hierarchy came out of its legibility.
+	var words := words_ink()
 	var baseline := size.y * 0.5 + _body.get_ascent(int(font_px)) * 0.5
 	draw_string(
 		_body,

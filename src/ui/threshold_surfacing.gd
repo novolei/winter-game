@@ -77,6 +77,12 @@ var _layer = null
 var _bus = null
 var _copy: ThresholdCopyMap = null
 
+## LightingDirector, resolved lazily through ServiceRegistry. A note stands on
+## the snow and has to be legible against it -- see UIInk for the measurement
+## that made this necessary, and for why it is a choice between two palette
+## entries rather than a colour worked out at runtime.
+var _lighting = null
+
 ## The seam. Values and threshold states come from here rather than from a poll
 ## written out again in this file -- see VitalReadings, and the note in its
 ## header about two readers disagreeing about what "in trouble" means.
@@ -137,6 +143,31 @@ func set_event_bus(bus) -> void:
 	_unsubscribe()
 	_bus = bus
 	_subscribe()
+
+
+## How bright the snow behind a note would be, 0..1.
+##
+## The LIGHTING, not the clock. They mostly agree and sometimes do not, and the
+## exception is not hypothetical: day 6 is authored `nightfall -> whiteout`, so
+## its DAY is the darker of its two phases and its NIGHT is the brighter. A note
+## that took its ink from the phase would be wrong on exactly the day GDD section
+## 4 calls the emotional peak.
+##
+## active_preset() returns the BLEND while a crossfade runs, so a note born
+## mid-fade inherits the director's own eight seconds with nothing to engineer.
+func ground_value() -> float:
+	if _lighting == null and is_inside_tree():
+		var registry := get_node_or_null("/root/ServiceRegistry")
+		if registry != null:
+			_lighting = registry.get_service(&"lighting")
+	if _lighting == null or not _lighting.has_method("active_preset"):
+		return UIInk.UNKNOWN_GROUND
+	return UIInk.ground_for(_lighting.call("active_preset"))
+
+
+## For a test or a harness with no ServiceRegistry to resolve through.
+func set_lighting(lighting) -> void:
+	_lighting = lighting
 
 
 func pending_count() -> int:
@@ -262,6 +293,12 @@ func _release(note) -> void:
 		return
 	var tokens := _tokens()
 	var viewport := _canvas_size()
+	# ASKED HERE, at the moment it goes on screen, rather than when it was built:
+	# a note can wait out up to 160 ms x N of section 5.2's stagger, and the light
+	# it is read in is the light it is born into. Asked ONCE, too -- a note that
+	# followed the ground could change colour halfway through being read, and rule
+	# 4 gives it three and a half seconds to live either way.
+	note.set_ground(ground_value())
 	var note_size: Vector2 = note.layout_for(viewport)
 	var gap := 0.0 if tokens == null else tokens.design_px(STACK_GAP_DESIGN_PX, viewport)
 	# Section 5.2, exactly as written: 左侧呼吸边界内，垂直 38% 高度.

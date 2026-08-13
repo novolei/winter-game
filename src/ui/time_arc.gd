@@ -81,15 +81,15 @@ const ARC_SEGMENTS := 48
 ## off-token colours by bisecting HSV value, and it existed because a PERMANENT
 ## readout had to survive every hour. This is a choice between two of the twelve,
 ## with the groove drawn as the same ink on section 2.1's opacity ladder.
-const GROUND_TO_LUMINANCE := 0.2524
-const GROUND_LUMINANCE_OFFSET := -0.2306
-
-## Where the two inks are equally legible: below this a light ink wins, above it a
-## dark one does. Set above the crossover the contrast arithmetic alone gives
-## (0.141), because on a dark frame a near-black stroke competes with every shadow
-## in the picture while a pale one competes with nothing. Of the six presets only
-## `deep_night` (0.148) falls below it; `nightfall` is already at 0.350.
-const DARK_GROUND_BELOW := 0.25
+##
+## THE RULE ITSELF NOW LIVES IN UIInk, and these are aliases onto it. Section
+## 5.2's note turned out to have the identical problem for the identical reason,
+## and two copies of a crossover are two elements that agree until the day one of
+## them is edited -- which is the failure this project has recorded three times.
+## The numbers below have not changed; only their address has.
+const GROUND_TO_LUMINANCE := UIInk.GROUND_TO_LUMINANCE
+const GROUND_LUMINANCE_OFFSET := UIInk.GROUND_LUMINANCE_OFFSET
+const DARK_GROUND_BELOW := UIInk.DARK_GROUND_BELOW
 
 ## Section 2.1's opacity ladder: 100 / 72 / 48 / 24 / 12, and no values between the
 ## rungs. One ink at four strengths is what keeps this one material.
@@ -165,19 +165,14 @@ func ground() -> float:
 
 ## The one ink this element is drawn in, at full strength. See the header.
 func ink() -> Color:
-	if _tokens == null:
-		return Color.MAGENTA
-	return _tokens.ink_primary if _ground < DARK_GROUND_BELOW else _tokens.line_deep
+	return UIInk.mark_for(_tokens, _ground)
 
 
 ## A lighting preset's ambient energy as the relative luminance of the ground it
 ## produces. Empirical and re-measurable: re-run the two captures named in the
 ## header and refit if a preset is retuned.
 static func ground_for(preset) -> float:
-	if preset == null:
-		return 0.5
-	return clampf(
-		float(preset.ambient_energy) * GROUND_TO_LUMINANCE + GROUND_LUMINANCE_OFFSET, 0.0, 1.0)
+	return UIInk.ground_for(preset)
 
 
 func is_night() -> bool:
