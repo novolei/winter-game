@@ -168,6 +168,14 @@ func test_a_thin_boot_is_two_shallow_pressure_lobes_with_a_low_bridge() -> void:
 	if profile == null:
 		mask.free()
 		return
+	var dust_readability_gain = profile.get("dust_readability_gain")
+	assert_not_null(
+		dust_readability_gain,
+		"the dusting has no data-owned readability gain independent of deep prints"
+	)
+	if dust_readability_gain == null:
+		mask.free()
+		return
 
 	var radius := 0.28 * 0.74
 	var strength := 0.22
@@ -190,17 +198,19 @@ func test_a_thin_boot_is_two_shallow_pressure_lobes_with_a_low_bridge() -> void:
 	var bridge: float = mask.value_at(Vector3(bridge_x, 0.0, 0.0))
 
 	assert_true(heel > 0.0, "the shallow heel pressure lobe disappeared")
-	assert_true(forefoot > heel * 1.15,
+	assert_true(forefoot >= heel * 1.20,
 		"forefoot %.4f is not visibly stronger than heel %.4f" % [forefoot, heel])
 	assert_true(bridge <= heel * 0.20,
 		"bridge %.4f joins heel %.4f to forefoot %.4f into a complete sole"
 			% [bridge, heel, forefoot])
 
 	# TerrainRenderer's shipped 0.16 m response turns these dimensionless peaks
-	# into the physical indentation. Both must stay a shallow 7--11 mm record.
-	assert_true(heel * 0.16 >= 0.007 and heel * 0.16 <= 0.011,
+	# into the physical indentation. The owner found 7--11 mm too faint at the
+	# game camera; retain a shallow depression but give both contacts enough
+	# normal slope to read without a colour decal or a positive halo.
+	assert_true(heel * 0.16 >= 0.012 and heel * 0.16 <= 0.014,
 		"heel indentation %.4f m is outside the thin-snow band" % (heel * 0.16))
-	assert_true(forefoot * 0.16 >= 0.007 and forefoot * 0.16 <= 0.011,
+	assert_true(forefoot * 0.16 >= 0.015 and forefoot * 0.16 <= 0.018,
 		"forefoot indentation %.4f m is outside the thin-snow band" % (forefoot * 0.16))
 	# Both peaks are far below the shader's 0.30 rim gate. No positive halo can
 	# be generated around either lobe even before the shared-rim inequality test.
@@ -216,3 +226,36 @@ func test_dust_lobe_language_fades_out_completely_in_deep_snow() -> void:
 	), "dust lobe separation is not gated by the continuous thin-snow fact")
 	assert_true(source.contains("weight = lerpf(weight, dust_weight, scrape)"),
 		"dust pressure weights can leak into the approved deep footprint")
+	assert_true(source.contains(
+		"var dust_readability := lerpf(1.0, dust_readability_gain, scrape)"
+	), "dust readability is not gated to the continuous thin-snow endpoint")
+
+
+func test_dust_readability_gain_leaves_a_deep_stamp_identical() -> void:
+	var shipped: TrackProfileDefinition = load(PROFILE_PATH)
+	assert_not_null(shipped)
+	if shipped == null:
+		return
+	var neutral: TrackProfileDefinition = shipped.duplicate(true)
+	neutral.dust_readability_gain = 1.0
+	var shipped_mask: TrackMask = TrackMaskScript.new()
+	var neutral_mask: TrackMask = TrackMaskScript.new()
+	shipped_mask.build_at(Vector3.ZERO)
+	neutral_mask.build_at(Vector3.ZERO)
+	shipped_mask.call(
+		&"stamp_profiled", Vector3.ZERO, 0.28, 1.0, Vector2.RIGHT, 1.5,
+		0.66, 0.34, 31.0, Vector2.ZERO, 1.0, 0.0, shipped
+	)
+	neutral_mask.call(
+		&"stamp_profiled", Vector3.ZERO, 0.28, 1.0, Vector2.RIGHT, 1.5,
+		0.66, 0.34, 31.0, Vector2.ZERO, 1.0, 0.0, neutral
+	)
+	for ix in range(-5, 6):
+		for iz in range(-5, 6):
+			var point := Vector3(float(ix) * 0.04, 0.0, float(iz) * 0.04)
+			assert_almost_eq(
+				shipped_mask.value_at(point), neutral_mask.value_at(point), 0.000001,
+				"dust readability altered deep-snow sample (%d, %d)" % [ix, iz]
+			)
+	shipped_mask.free()
+	neutral_mask.free()

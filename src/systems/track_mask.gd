@@ -492,6 +492,7 @@ func _compile_profile(profile: TrackProfileDefinition) -> PackedFloat32Array:
 		profile.weight_transition_from_x, profile.weight_transition_to_x,
 		profile.dust_waist_influence, profile.dust_lobe_length_scale,
 		profile.dust_heel_weight, profile.dust_forefoot_weight,
+		profile.dust_readability_gain,
 	])
 
 
@@ -810,6 +811,7 @@ func _blob(
 	var dust_lobe_length_scale := 1.0
 	var dust_heel_weight := 1.0
 	var dust_forefoot_weight := 1.0
+	var dust_readability_gain := 1.0
 	var heel_inv_length := 1.0
 	var heel_inv_width := 1.0
 	var waist_inv_length := 1.0
@@ -836,12 +838,18 @@ func _blob(
 		dust_lobe_length_scale = compiled[14]
 		dust_heel_weight = compiled[15]
 		dust_forefoot_weight = compiled[16]
+		dust_readability_gain = compiled[17]
 		heel_inv_length = 1.0 / heel_half_length
 		heel_inv_width = 1.0 / heel_half_width
 		waist_inv_length = 1.0 / waist_half_length
 		waist_inv_width = 1.0 / waist_half_width
 		forefoot_inv_length = 1.0 / forefoot_half_length
 		forefoot_inv_width = 1.0 / forefoot_half_width
+
+	# One scalar per stamp, not one branch per texel. At the deep endpoint this
+	# is exactly 1.0, preserving the approved pocket, furrow and body marks.
+	var dust_readability := lerpf(1.0, dust_readability_gain, scrape)
+	var effective_strength := clamped * dust_readability
 
 	for y in range(min_y, max_y + 1):
 		for x in range(min_x, max_x + 1):
@@ -987,7 +995,7 @@ func _blob(
 				compression = lerpf(
 					1.0, weight, sole_definition
 				)
-			var value := clamped * compression * clampf(profile, 0.0, 1.0)
+			var value := effective_strength * compression * clampf(profile, 0.0, 1.0)
 			var current := image.get_pixel(x, y).r
 			if value > current:
 				image.set_pixel(x, y, Color(value, 0.0, 0.0, 1.0))

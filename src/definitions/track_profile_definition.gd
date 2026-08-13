@@ -57,6 +57,10 @@ extends Resource
 @export_range(0.5, 1.0, 0.01) var dust_lobe_length_scale := 1.0
 @export_range(0.05, 1.0, 0.01) var dust_heel_weight := 1.0
 @export_range(0.05, 1.0, 0.01) var dust_forefoot_weight := 1.0
+## Camera-scale readability for the two shallow pressure contacts. It is
+## interpolated by the same continuous `scuff` fact as the dust silhouette, so
+## 1.0 means no change and a deep footprint remains byte-identical.
+@export_range(1.0, 2.0, 0.01) var dust_readability_gain := 1.0
 
 
 func sole_definition_at(wade: float) -> float:
