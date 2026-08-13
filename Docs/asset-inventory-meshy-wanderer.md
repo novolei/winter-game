@@ -54,10 +54,13 @@ worst height delta across shared bones: 0.0192
    hip height every 0.233 s: 0.98 0.98 0.98 1.01 1.02 1.01 1.00 0.97 0.85 0.42 0.18 0.20 0.18 0.17 0.15 0.16
 ```
 
-**It moves.** Every one of the 24 bones is driven; the worst is the left arm at 1.79 rad.
-This was checked before anything else, because a take that arrives with no armature
-binding leaves the mesh in its bind pose, imports with zero errors, and is worse than a
-missing clip — the crow's pack shipped exactly that, 121 nulls and no skeleton.
+**It moves.** 25 tracks over the rig's 24 bones, and sampling the whole skeleton at six
+points across the take finds the left arm 1.79 rad from where it started. This was checked
+before anything else, because a take that arrives with no armature binding leaves the mesh
+in its bind pose, imports with zero errors, and is worse than a missing clip — the crow's
+pack shipped exactly that, 121 nulls and no skeleton. (25 rather than 48 is not a
+shortfall: `animation/remove_immutable_tracks` drops the tracks that never change, and the
+merged take comes out with 48.)
 
 **What the body does**, off the hip timeline rather than off the name: he stands for about
 1.6 s, straightens slightly (0.98 → 1.02 m, a flinch), starts down at 1.87 s, is on the
@@ -168,9 +171,10 @@ yes, and it is the right take — with one condition and one caveat.**
   where the body *finishes*, not at the character's transform when the fall starts. A
   naive implementation puts the mark a metre and a half from the man, and nothing will
   error.
-- **The caveat: he lands 15 cm too high** (§2.3). An impression is stamped under a body
-  that is not touching the snow. That is fixable in the fall's own handling — clamp or
-  offset the model for the grounded third — but it is work, and it is not zero.
+- **The caveat: he lands too high** (§2.3) — 15 cm at the hip and 16–19 cm at the head,
+  against the two backward falls measured in the same file. An impression would be stamped
+  under a body that is not touching the snow. That is fixable in the fall's own handling —
+  clamp or offset the model for the grounded third — but it is work, and it is not zero.
 
 **For a death ending: usable, and not the best thing we have today.**
 
