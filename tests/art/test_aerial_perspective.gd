@@ -182,3 +182,104 @@ func test_neither_cel_shader_has_grown_a_specular_highlight() -> void:
 				code.contains(banned),
 				"%s uses %s, which Art Bible rule 8 forbids" % [path, banned]
 			)
+
+
+## ---------------------------------------------------------------------------
+## THE FOOTPRINT LEGIBILITY FLOOR -- the depth fog, read where the player stands
+## ---------------------------------------------------------------------------
+## A depth fog blends every pixel toward the fog colour, so whatever fraction of
+## fog sits at a depth is the fraction of CONTRAST thrown away at that depth --
+## for a footprint exactly as much as for a tree. And the player is always at
+## the boom, because the rig is built around him.
+##
+## That makes `fog at the boom` the number the tracking mechanic lives or dies
+## on. GDD section 8 puts footprints at the centre of the game: the bear and the
+## scavenger read the same `track_mask` the terrain shader reads, and
+## 风大 -> 足迹速消 -> 你安全; 风停 -> 足迹留存 -> 你被跟上. A preset that fogs
+## the ground under his feet away deletes that, and nothing else in the suite
+## would notice -- the presets' own gates measure luminance and palette, not
+## whether a mark in the snow survives.
+##
+## MEASURED, at 8f2043f, in a real blizzard with the player walking through it
+## (harness and frames in .superpowers/sdd/wave3/whiteout/):
+##
+##   preset      fog at boom   freshest 2 m of trail   trail in frame
+##   pale_day       0.165           36.3 / 255         followable
+##   whiteout       0.615           30.1 / 255         followable, ~10 prints
+##
+## So WHITEOUT throws away 61.5 % of every mark under his feet and the trail is
+## still there. The ceiling is set just above what was photographed, NOT at some
+## principled limit: past 0.615 nobody has looked.
+##
+## THE RAMP IS A SMOOTHSTEP, and that was settled by measurement rather than by
+## reading `fog_depth_curve = 1.0` (lighting_director.gd:292) and assuming it
+## meant linear. Three shots of one patch of open snow at a known depth, under
+## TONE_MAPPER_LINEAR so the sRGB transfer can be undone exactly:
+##
+##   ramp position t   measured fog   smoothstep(t)   linear t
+##             0.20        0.0928         0.104         0.200
+##             0.50        0.4841         0.500         0.500
+##             0.60        0.6327         0.648         0.600
+##
+## The lighting audit reported this ramp as linear. It is not, and the difference
+## is 11 % of the whiteout's own opacity, so the gate uses the measured curve.
+const FOG_AT_BOOM_CEILING := 0.70
+
+## The other half of the same ruling, and it exists so that nobody buys the line
+## above by softening the storm. 保留，但不删脚印 -- the whiteout keeps striking
+## on any day and keeps taking the world; what it may not do is take the ground
+## underfoot. A whiteout the player can see through is not a whiteout.
+const WHITEOUT_FAR_EDGE_FLOOR := 0.65
+
+
+## Godot's depth fog, as measured on 4.7.1 -- see the block above.
+func _fog_at(preset, distance: float) -> float:
+	if not preset.fog_enabled:
+		return 0.0
+	var span: float = maxf(preset.fog_depth_end - preset.fog_depth_begin, 0.0001)
+	var t: float = clampf((distance - preset.fog_depth_begin) / span, 0.0, 1.0)
+	return t * t * (3.0 - 2.0 * t) * preset.fog_density
+
+
+func test_no_preset_fogs_away_the_ground_the_player_is_standing_on() -> void:
+	var rig := CameraRig.new()
+	var boom: float = rig.boom_length
+	rig.free()
+	var presets := _load_presets()
+	assert_false(presets.is_empty(), "no presets loaded, so this gate inspected nothing")
+	for name in presets:
+		var here := _fog_at(presets[name], boom)
+		assert_true(
+			here <= FOG_AT_BOOM_CEILING,
+			"%s puts %.3f of fog on the %.0f m boom -- the depth the player always "
+				% [name, here, boom]
+				+ "stands at -- so it throws away that much of every footprint under his "
+				+ "feet. The ceiling is %.2f because %.3f is the thickest fog a trail has "
+					% [FOG_AT_BOOM_CEILING, 0.615]
+				+ "actually been photographed followable through. Past it, re-shoot the "
+				+ "trail before moving this number."
+		)
+
+
+func test_the_whiteout_still_takes_the_far_field() -> void:
+	var rig := CameraRig.new()
+	var boom: float = rig.boom_length
+	# The gameplay frame is pitched 45 degrees, so a metre up the screen is a
+	# metre further from the camera: the frame's depth span IS its height.
+	var far_edge: float = boom + rig.orthographic_size * 0.5
+	rig.free()
+	var presets := _load_presets()
+	if not presets.has("whiteout"):
+		assert_true(false, "no res://data/lighting/whiteout.tres to gate")
+		return
+	var there := _fog_at(presets["whiteout"], far_edge)
+	assert_true(
+		there >= WHITEOUT_FAR_EDGE_FLOOR,
+		"the whiteout leaves %.3f of fog at %.1f m, the far edge of the gameplay frame. "
+			% [there, far_edge]
+			+ "Below %.2f the storm stops taking the distance, and the storm taking the "
+				% WHITEOUT_FAR_EDGE_FLOOR
+			+ "distance is the whole of 能见度归零. If this went red buying footprint "
+			+ "legibility, the trade is the wrong way round: the near field is the floor, "
+			+ "the far field is the storm."
+	)
