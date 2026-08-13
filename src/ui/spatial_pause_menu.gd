@@ -256,6 +256,15 @@ func row_label_ids() -> Array[StringName]:
 	return _row_ids.duplicate()
 
 
+## Every track-quad id: each row's rail, the marker riding its value id, and
+## its tick marks. The settings cascade breathes these with the row labels.
+func track_ids() -> Array[StringName]:
+	var ids: Array[StringName] = []
+	for key in _tracks.keys():
+		ids.append(key)
+	return ids
+
+
 func track_quads() -> Array[MeshInstance3D]:
 	var result: Array[MeshInstance3D] = []
 	for raw in _tracks.values():
@@ -529,7 +538,7 @@ func _apply_alpha() -> void:
 		track_colour.r *= PAUSE_TREATMENT_COMPENSATION
 		track_colour.g *= PAUSE_TREATMENT_COMPENSATION
 		track_colour.b *= PAUSE_TREATMENT_COMPENSATION
-		track_colour.a *= _alpha
+		track_colour.a *= _alpha * _envelope_alpha_for(id)
 		track_material.albedo_color = track_colour
 
 

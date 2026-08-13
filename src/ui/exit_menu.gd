@@ -77,6 +77,7 @@ var _ui_layer = null
 
 var _quit_action: Callable
 var _animation: Tween = null
+var _transition: Tween = null
 var _frame_scale := 1.0
 var _content_home := Vector2.ZERO
 var _paused_by_menu := false
@@ -407,6 +408,7 @@ func close(play_back_sound := false) -> void:
 		_finish_close()
 		return
 	_kill_animation()
+	_kill_transition()
 	_choreography = PauseChoreography.closing(_tokens, _cascade_ids())
 	_animation = create_tween()
 	_animation.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
@@ -669,11 +671,12 @@ func _show_confirmation(show: bool, animate: bool) -> void:
 	if _spatial != null:
 		_spatial.set_state(STATE_CONFIRM if show else STATE_MENU)
 	if animate and is_inside_tree():
+		_kill_transition()
 		_choreography = PauseChoreography.opening(_tokens, _cascade_ids())
 		_apply_choreography(0.0)
-		var transition := create_tween()
-		transition.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
-		transition.tween_method(_apply_choreography, 0.0,
+		_transition = create_tween()
+		_transition.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+		_transition.tween_method(_apply_choreography, 0.0,
 			_choreography.total_seconds(), _choreography.total_seconds())
 	else:
 		_choreography = PauseChoreography.opening(_tokens, _cascade_ids())
@@ -696,11 +699,12 @@ func _show_settings(show: bool, animate: bool) -> void:
 	if _spatial != null:
 		_spatial.set_state(STATE_SETTINGS if show else STATE_MENU)
 	if animate and is_inside_tree():
+		_kill_transition()
 		_choreography = PauseChoreography.opening(_tokens, _cascade_ids())
 		_apply_choreography(0.0)
-		var transition := create_tween()
-		transition.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
-		transition.tween_method(_apply_choreography, 0.0,
+		_transition = create_tween()
+		_transition.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+		_transition.tween_method(_apply_choreography, 0.0,
 			_choreography.total_seconds(), _choreography.total_seconds())
 	else:
 		_choreography = PauseChoreography.opening(_tokens, _cascade_ids())
@@ -770,9 +774,9 @@ func _cascade_ids() -> Array[StringName]:
 		SpatialPauseMenu.CAPTION, SpatialPauseMenu.TIME,
 	]
 	if _state == STATE_SETTINGS:
-		var row_ids: Array[StringName] = _spatial.row_label_ids() if _spatial != null else []
-		for row_id in row_ids:
-			ids.append(row_id)
+		if _spatial != null:
+			ids.append_array(_spatial.row_label_ids())
+			ids.append_array(_spatial.track_ids())
 	elif _state == STATE_CONFIRM:
 		ids.append_array([SpatialPauseMenu.QUESTION, SpatialPauseMenu.CONSEQUENCE,
 			SpatialPauseMenu.RETURN, SpatialPauseMenu.CONFIRM])
@@ -847,6 +851,12 @@ func _animate_open() -> void:
 func _finish_close() -> void:
 	if _is_open:
 		return
+	# Capture the ids the cascade was actually driving BEFORE the state reset
+	# below swaps _cascade_ids() back to the menu set -- closing from settings
+	# or confirmation must reset those rows' envelopes, not the menu's.
+	var cascade_ids: Array[StringName] = []
+	if _choreography != null:
+		cascade_ids = _choreography.lines.duplicate()
 	visible = false
 	_show_confirmation(false, false)
 	_set_cinematic_factor(1.0)
@@ -855,7 +865,9 @@ func _finish_close() -> void:
 	_content.position = _content_home
 	_choreography = null
 	if _spatial != null:
-		_spatial.reset_envelopes(_cascade_ids())
+		if cascade_ids.is_empty():
+			cascade_ids = _cascade_ids()
+		_spatial.reset_envelopes(cascade_ids)
 		_spatial.visible = false
 		_spatial.set_alpha(1.0)
 	_resume_game()
@@ -945,6 +957,12 @@ func _kill_animation() -> void:
 	if _animation != null and _animation.is_valid():
 		_animation.kill()
 	_animation = null
+
+
+func _kill_transition() -> void:
+	if _transition != null and _transition.is_valid():
+		_transition.kill()
+	_transition = null
 
 
 func _resolve_camera_presentation() -> void:
@@ -1052,6 +1070,7 @@ func _quit_game() -> void:
 
 func _exit_tree() -> void:
 	_kill_animation()
+	_kill_transition()
 	_set_cinematic_factor(1.0)
 	_release_camera_push()
 	_resume_game()
