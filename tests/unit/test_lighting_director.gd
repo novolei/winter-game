@@ -110,39 +110,253 @@ func test_every_preset_agrees_with_the_tuned_elevation() -> void:
 			"preset '%s' disagrees with the director's tuned elevation" % id
 		)
 
-## THE AZIMUTH, WHICH WAS SOLVED AND HAD NOTHING DEFENDING IT.
+# --- the arc ----------------------------------------------------------------
+#
+# WHAT THIS SECTION REPLACED, AND WHY IT IS NOT THE SAME TEST WITH A NEW NUMBER.
+#
+# There used to be one test here --
+# `test_the_sun_keeps_the_azimuth_the_reference_painting_was_solved_for` -- and
+# it asserted `director.sun_azimuth_degrees == 82.0` plus "the sun is aimed at
+# whatever that export says". Its own comment gave the reason: *"the sun rises in
+# one place over this valley, and a preset that moved it would be a different
+# location rather than a different hour."*
+#
+# THE REASONING WAS RIGHT AND IT DID NOT DEFEND THE NUMBER IT PINNED. It argues
+# the azimuth is not a PRESET's business, which is still true and still enforced
+# -- no preset carries an azimuth field and none may. It says nothing about
+# whether the azimuth may move with the HOUR, which is the one thing 82 was never
+# asked about: 82 was a director export default, unchanged since the day the
+# project started, specified by no design document, and describing an hour nobody
+# chose. **A test asserting an accidental constant is asserting an implementation
+# detail.** (Director's ruling, recorded in the sun-arc task brief.)
+#
+# Worse, and this is the part that decided it: with the arc implemented, the OLD
+# TEST STILL PASSES UNCHANGED. It builds a director with no clock, and a director
+# with no clock sits at the arc's centre -- which is 82. The test could not see
+# the feature at all, in either direction. It was pinning the resting value of a
+# thing whose whole subject is that it moves.
+#
+# So the spirit survives and the instrument changes. The sun's direction is still
+# deliberate and still must not drift by accident; what is pinned now is the ARC
+# -- its centre, its span, and the fact that the light actually travels it.
+# Anyone moving the centre still trips a red test, and the test still names whose
+# decision that is.
+
+
+## The two questions the director asks a clock, and nothing else. RefCounted, so
+## it frees itself (briefing constraint 2), and duck-typed, so this file names no
+## system's type.
+class StubClock extends RefCounted:
+	var elapsed := 0.0
+	var duration := 600.0
+	var night := false
+
+	func phase_elapsed() -> float:
+		return elapsed
+
+	func phase_duration() -> float:
+		return duration
+
+	func is_night() -> bool:
+		return night
+
+
+## A director with a sun under it and a clock in its hand. The sun has to be a
+## real child named "Sun" because that is how _resolve_sun() finds it.
+func _build_with_sun() -> Array:
+	var director := _build()
+	var sun := DirectionalLight3D.new()
+	sun.name = "Sun"
+	director.add_child(sun)
+	director._ready()
+	var clock := StubClock.new()
+	director.set_world_clock(clock)
+	director.apply_preset(&"pale_day")
+	return [director, sun, clock]
+
+
+## Aims the sun at a moment in the phase and reports where it actually ended up,
+## read off the LIGHT rather than off any number the director holds.
+func _sun_azimuth_at(director, sun: DirectionalLight3D, clock, at: float, night: bool) -> float:
+	clock.elapsed = at * clock.duration
+	clock.night = night
+	director._process(0.0)
+	return rad_to_deg(sun.rotation.y)
+
+
+## THE ARC IS CENTRED ON THE SOLVED VALUE AND THIS IS WHOSE DECISION THAT IS.
 ##
-## Elevation decides how LONG a shadow is; azimuth decides which way it runs
-## across the screen, and the camera never rotates, so a ground direction has
-## exactly one screen direction. 82 degrees was derived from the rake measured
-## off `Refs/game ref/level.jpg` -- the farmhouse throws its shadow left and 16
-## degrees down, the well house left and 13 -- and verified by screenshot against
-## the painting. At the previous 118 the rake came out at 54 degrees: shadows
-## that fall DOWN the frame instead of across it.
+## 82 degrees was derived from the rake measured off `Refs/game ref/level.jpg` --
+## the farmhouse throws its shadow left and 16 degrees down, the well house left
+## and 13 -- and verified by screenshot against the painting. At the previous 118
+## the rake came out at 54 degrees: shadows that fall DOWN the frame instead of
+## across it. That solved value is now the MIDDLE OF THE DAY rather than the whole
+## day, and it is still the only azimuth in this project anybody solved for
+## anything.
 ##
-## It is pinned here because nothing pinned it. A value that took a screenshot
-## comparison to find, and that no test defends, is one careless merge from being
-## lost silently -- and a 36-degree swing in every shadow in the game is the kind
-## of regression a reviewer reads as "the art changed" rather than as a defect.
+## 13 degrees of half-span is narrow deliberately: the reference's shadows rake
+## 13-20 degrees below horizontal, so the arc keeps the approved look at midday
+## and spends its budget at the two ends.
 ##
-## It stays on the director rather than on the six presets deliberately: the sun
-## rises in one place over this valley, and a preset that moved it would be a
-## different location rather than a different hour.
-func test_the_sun_keeps_the_azimuth_the_reference_painting_was_solved_for() -> void:
+## **Both numbers are the Director's, not an implementer's.** Widening the arc is
+## a taste call somebody may well make -- the 40-degree and 125-degree captures in
+## `.superpowers/sdd/wave3/living-light/` are what that would look like -- but it
+## is a call, and it goes red here first so that it is made rather than drifted
+## into. Moving the CENTRE is a bigger claim than that: it says the valley is
+## somewhere else.
+func test_the_suns_arc_is_centred_on_the_azimuth_the_reference_painting_was_solved_for() -> void:
 	var director := _build()
 	assert_almost_eq(
 		director.sun_azimuth_degrees, 82.0, 0.001,
-		"the azimuth was solved against Refs/game ref/level.jpg; at 118 the shadows "
-			+ "rake 54 degrees down the screen instead of 20"
+		"the arc's centre was solved against Refs/game ref/level.jpg; at 118 the "
+			+ "shadows rake 54 degrees down the screen instead of 20"
 	)
+	assert_almost_eq(
+		director.sun_azimuth_arc_degrees, 13.0, 0.001,
+		"the arc's half-span is 13 degrees, so the sun travels 69 -> 95 across a "
+			+ "phase. Widening it is a Director's taste call, not an edit."
+	)
+	assert_almost_eq(
+		LightingDirectorScript.azimuth_at(82.0, 13.0, 0.0), 69.0, 0.001, "the arc's morning end")
+	assert_almost_eq(
+		LightingDirectorScript.azimuth_at(82.0, 13.0, 0.5), 82.0, 0.001, "the arc's middle")
+	assert_almost_eq(
+		LightingDirectorScript.azimuth_at(82.0, 13.0, 1.0), 95.0, 0.001, "the arc's evening end")
+
+
+## A DIRECTOR WITH NO CLOCK SITS AT THE SOLVED CENTRE.
+##
+## Which is what keeps every capture that forces a preset, and every other test
+## in this file, looking at exactly the frame they were written against. The arc
+## is what a RUN adds; it is not a new resting place.
+func test_a_director_with_no_clock_aims_at_the_solved_centre() -> void:
+	var director := _build()
 	var sun := DirectionalLight3D.new()
 	sun.name = "Sun"
 	director.add_child(sun)
 	director._ready()
 	director.apply_preset(&"pale_day")
+	director._process(0.5)
 	assert_almost_eq(
-		rad_to_deg(sun.rotation.y), director.sun_azimuth_degrees, 0.001,
-		"the director does not actually aim the sun at the azimuth it declares"
+		rad_to_deg(sun.rotation.y), 82.0, 0.001,
+		"with no clock to ask, the sun must sit at the arc's centre"
+	)
+
+
+## THE SUN ACTUALLY TRAVELS IT -- read off the light, not off the director.
+##
+## This is the assertion the old test could not make, and it is the one this
+## project keeps discovering it needs: **a value being set is not the same claim
+## as a value being applied.** Every number below comes back from
+## `DirectionalLight3D.rotation`, which is the thing the renderer reads.
+func test_the_sun_travels_the_arc_across_a_daylight_phase() -> void:
+	var built := _build_with_sun()
+	var director = built[0]
+	var sun: DirectionalLight3D = built[1]
+	var clock = built[2]
+	assert_almost_eq(
+		_sun_azimuth_at(director, sun, clock, 0.0, false), 69.0, 0.001, "dawn")
+	assert_almost_eq(
+		_sun_azimuth_at(director, sun, clock, 0.5, false), 82.0, 0.001, "midday")
+	assert_almost_eq(
+		_sun_azimuth_at(director, sun, clock, 1.0, false), 95.0, 0.001, "dusk")
+	# Monotone, because a sun that took a step backwards would read as the world
+	# glitching rather than as the hour passing.
+	var previous := -999.0
+	for step in range(21):
+		var here := _sun_azimuth_at(director, sun, clock, float(step) / 20.0, false)
+		assert_true(
+			here > previous,
+			"the sun went backwards at %d%% of the phase: %.3f after %.3f"
+				% [step * 5, here, previous]
+		)
+		previous = here
+
+
+## ELEVATION MUST NOT MOVE WHILE AZIMUTH DOES, and that is the whole reason this
+## is the affordable change.
+##
+## Shadow LENGTH is height / tan(elevation), and the derivative of that is savage
+## down here -- at 11 degrees a shadow ran 5.1x its caster and the walk lurched.
+## Azimuth costs nothing in length: a shadow that turns keeps its mass. If a
+## future arc ever reached for the elevation instead, this is what would catch it.
+func test_the_arc_turns_the_shadows_without_lengthening_them() -> void:
+	var built := _build_with_sun()
+	var director = built[0]
+	var sun: DirectionalLight3D = built[1]
+	var clock = built[2]
+	var elevation := 0.0
+	for step in range(11):
+		_sun_azimuth_at(director, sun, clock, float(step) / 10.0, false)
+		var here := rad_to_deg(-sun.rotation.x)
+		if step == 0:
+			elevation = here
+		assert_almost_eq(
+			here, 21.5, 0.001,
+			"the arc moved the sun's ELEVATION to %.3f at %d%% of the phase" % [here, step * 10]
+		)
+		assert_almost_eq(here, elevation, 0.0001, "the elevation drifted across the arc")
+
+
+## THE NIGHT RETURNS THE SUN TO WHERE THE NEXT DAWN OPENS.
+##
+## Two things fall out of that and both are the point. There is no jump at a phase
+## boundary -- a 26-degree step in one frame is a 20-degree step in every shadow
+## on screen, which is exactly the pop the eight-second crossfade exists to
+## prevent, and far more visible than the exposure fade laid over it. And **every
+## one of the seven days opens on the same light**, so day 1's dawn and day 7's
+## dawn differ only by the story.
+func test_the_night_runs_the_arc_back_so_every_dawn_opens_the_same() -> void:
+	var built := _build_with_sun()
+	var director = built[0]
+	var sun: DirectionalLight3D = built[1]
+	var clock = built[2]
+	var dusk := _sun_azimuth_at(director, sun, clock, 1.0, false)
+	assert_almost_eq(
+		_sun_azimuth_at(director, sun, clock, 0.0, true), dusk, 0.001,
+		"the night started somewhere the day had not left the sun -- that is a "
+			+ "20-degree jump in every shadow in the frame, in one tick"
+	)
+	assert_almost_eq(
+		_sun_azimuth_at(director, sun, clock, 1.0, true), 69.0, 0.001,
+		"the night did not hand the next dawn the azimuth the last one opened on"
+	)
+
+
+## THE ARC NEVER LEAVES ITS OWN BAND, at any hour of either phase, however the
+## clock is read. A clamp that only holds for well-formed input is not a clamp:
+## `WorldClock.advance()` can overshoot a phase boundary inside one frame, and a
+## capture harness may hand this a scrubbed time of its own.
+func test_the_arc_never_leaves_the_band_it_was_solved_in() -> void:
+	var built := _build_with_sun()
+	var director = built[0]
+	var sun: DirectionalLight3D = built[1]
+	var clock = built[2]
+	for night in [false, true]:
+		for step in range(-4, 25):
+			var here := _sun_azimuth_at(director, sun, clock, float(step) / 20.0, night)
+			assert_true(
+				here >= 69.0 - 0.001 and here <= 95.0 + 0.001,
+				"the sun reached %.3f degrees at position %.2f (night=%s), outside 69..95"
+					% [here, float(step) / 20.0, str(night)]
+			)
+
+
+## A phase of no length must not divide by it. The clock reports zero duration
+## before the schedules are loaded, and RunBoot loads them on the first frame --
+## so this is the state the director is genuinely in for one tick of every run.
+func test_a_phase_with_no_length_leaves_the_sun_where_it_was() -> void:
+	var built := _build_with_sun()
+	var director = built[0]
+	var sun: DirectionalLight3D = built[1]
+	var clock = built[2]
+	_sun_azimuth_at(director, sun, clock, 0.25, false)
+	var before := rad_to_deg(sun.rotation.y)
+	clock.duration = 0.0
+	director._process(0.0)
+	assert_almost_eq(
+		rad_to_deg(sun.rotation.y), before, 0.001,
+		"a zero-length phase moved the sun"
 	)
 
 # --- blending ---------------------------------------------------------------

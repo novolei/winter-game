@@ -117,7 +117,48 @@ const EVENT_NIGHT_STARTED := &"clock.night_started"
 ## below was raised to paper over. At 82 the sun is 63 degrees off the view axis
 ## instead of 27, so more of what the camera sees is lit, and the shadows are 22%
 ## longer on screen because they now lie across the frame rather than into it.
+##
+## SINCE THE ARC, THIS IS THE CENTRE OF THE TRAVEL RATHER THAN THE WHOLE OF IT --
+## see sun_azimuth_arc_degrees below. Every word above still holds: it is still
+## the solved value, the middle of every daylight phase is still exactly it, and
+## nothing here was re-derived. What changed is that it is no longer the only
+## azimuth the game has ever had.
 @export var sun_azimuth_degrees := 82.0
+
+## HOW FAR EITHER SIDE OF THE SOLVED CENTRE THE SUN TRAVELS, ACROSS ONE PHASE.
+##
+## Until this landed the sun had exactly one direction and had had it since the
+## day the project started: 82 degrees, on all six presets, at every hour of all
+## seven days. Which means that TIME, in a game whose whole subject is time, could
+## only ever speak by DIMMING -- and dimming is also what a snow fog does, so the
+## two owners of the light shared one word.
+##
+## The arc gives time a second channel, and it is the only one in this lighting
+## that moves 影 rather than 光:
+##
+##   azimuth   on-screen shadow rake     mean frame luminance vs 82
+##      69          ~10 degrees                    +2.1 %
+##      82          19.8 degrees                       --
+##      95          30.7 degrees                    -3.3 %
+##
+## Rake nearly triples. Brightness moves 1.056x end to end -- against time's own
+## 4.64x and against 1.128x for the SMALLEST step the run actually plays. **A
+## viewer cannot read the arc as "it got darker", because at half the size of the
+## smallest step in the game, it did not.** That separation is the whole reason
+## this is the change worth making rather than a brighter one.
+##
+## And shadow LENGTH barely moves while direction swings 26 degrees: the
+## on-screen length factor sqrt(1 - 0.5*cos^2(a+35)) runs 0.983 / 0.947 / 0.891
+## across 69 / 82 / 95, a 9% change. The composition's mass stays where it was;
+## only its direction travels. Elevation, which is what WOULD move the mass, is
+## untouched at 21.5 and must stay there.
+##
+## 13 DEGREES IS NARROW ON PURPOSE. 82 was solved against `Refs/game ref/level.jpg`
+## and the reference's shadows rake 13-20 degrees below horizontal, so the arc
+## keeps the approved look in the middle of the day and spends its budget at the
+## two ends. Wider is available and is a taste call, not a technical one.
+@export var sun_azimuth_arc_degrees := 13.0
+
 ## Penumbra width grows with distance from the caster, and these shadows are
 ## 25 m long. At 2.2 degrees the far half of every shadow was penumbra and the
 ## sheds cast fuzzy ovals; rule 10 wants a soft *edge* around a solid block.
@@ -150,6 +191,25 @@ var _days: Dictionary = {}
 
 var _bus = null
 var _subscribed := false
+
+## WHERE IN THE PHASE THE SUN IS, 0 at the arc's morning end and 1 at its evening
+## end. Read off the clock every frame; see _travel_the_arc().
+##
+## HALF, NOT ZERO, and the default matters more than it looks. Nothing in this
+## file requires a clock -- the header's rule is that deleting WorldClock has to
+## leave the lighting compiling -- so a director with no clock has to aim the sun
+## SOMEWHERE, and the only defensible somewhere is the solved centre. Which means
+## every existing unit test, every capture that forces a preset without running
+## the day, and the six presets' own authored look all still see exactly 82
+## degrees. The arc is what the RUN adds on top, not a new resting place.
+var _arc_position := 0.5
+
+## The clock, held duck-typed and never by type -- the same shape AuroraSystem
+## holds it in, and for the same reason: this file must go on compiling if
+## src/systems/world_clock.gd is deleted. Every call through it is guarded by
+## has_method(), so an object that does not answer simply leaves the sun at the
+## centre.
+var _clock = null
 
 ## What is written to the Environment right now -- a blended preset while a
 ## crossfade is running, one of the six otherwise.
@@ -195,6 +255,7 @@ func _ready() -> void:
 	_load_days()
 	_build_environment()
 	_resolve_sun()
+	_resolve_clock()
 	# The boot look, applied outright rather than faded: there is nothing to fade
 	# from on the first frame.
 	if not apply_preset(boot_preset):
@@ -346,6 +407,114 @@ func _resolve_sun() -> void:
 	_sun.shadow_normal_bias = 2.0
 	_sun.shadow_bias = 0.04
 	_sun.shadow_blur = 1.0
+
+
+# --- the arc ----------------------------------------------------------------
+#
+# The sun travels while the phase runs. Everything here is about WHERE it is
+# pointing; nothing here touches how bright anything is.
+
+
+## Injected by a test, or resolved off /root/WorldClock. Named after the THING
+## rather than after the quantity -- set_world_clock, never set_time -- because
+## WindSystem sweeps the whole tree adopting anything that answers set_wind, and
+## a duck-typed sweep makes a method name shared vocabulary across the project.
+## Nothing sweeps for this one; the name is chosen so that nothing ever will.
+func set_world_clock(value) -> void:
+	_clock = value
+
+
+func _resolve_clock() -> void:
+	if _clock == null and is_inside_tree():
+		_clock = get_node_or_null("/root/WorldClock")
+
+
+## WHERE THE SUN IS AIMED RIGHT NOW. The number actually written to the light,
+## which is not `sun_azimuth_degrees` any more -- that is the arc's centre.
+func sun_azimuth_now() -> float:
+	return azimuth_at(sun_azimuth_degrees, sun_azimuth_arc_degrees, _arc_position)
+
+
+## How far through its phase the sun is, 0..1. Published for a capture harness
+## and for the debug readout; nothing in the game reads it.
+func arc_position() -> float:
+	return _arc_position
+
+
+## The azimuth at a point in a phase. Static and pure for the same reason
+## `blend()` is: the whole travel is then testable with no tree, no clock, no
+## Environment and no frame.
+static func azimuth_at(centre: float, arc: float, position: float) -> float:
+	return centre + arc * (2.0 * clampf(position, 0.0, 1.0) - 1.0)
+
+
+## THE NIGHT RUNS THE ARC BACKWARDS, AND THAT IS A DECISION RATHER THAN A
+## CONVENIENCE.
+##
+## A phase boundary is the one place a travelling sun can produce the exact pop
+## the crossfade exists to prevent: a 26-degree jump in one frame is a 20-degree
+## jump in every shadow on screen, which is far more visible than the 8-second
+## exposure fade laid over it. Reversing the leg removes the jump entirely --
+## dusk continues from where the day left the sun, and every phase in the run is
+## continuous at both of its ends.
+##
+## The second reason is the one worth defending. Because the night returns the
+## sun to the arc's morning end, **every one of the seven days opens on exactly
+## the same light.** Day 1's dawn and day 7's dawn are the same frame, so the
+## only thing that differs between them is the story -- which is what a run whose
+## whole subject is deterioration needs. Let the night's leg run forwards instead
+## and each dawn starts wherever the previous night happened to stop.
+##
+## What it costs: the moon's azimuth runs the opposite way to the sun's, which is
+## not what a moon does. A player cannot see it -- it would take remembering a
+## 26-degree travel across five minutes and comparing it with the previous
+## phase's -- but it is a real inaccuracy and it is stated here rather than
+## buried. If the Director would rather the night held still, this is the one
+## function to change.
+static func phase_position(elapsed: float, duration: float, night: bool) -> float:
+	if duration <= 0.0:
+		return 0.0
+	var t := clampf(elapsed / duration, 0.0, 1.0)
+	return 1.0 - t if night else t
+
+
+## Reads the hour off the clock and re-aims. Called every frame, whether or not a
+## crossfade is running -- the whole point is that the light is never still.
+##
+## A clock that will not answer leaves `_arc_position` exactly where it was,
+## which for a director that has never had one is the solved centre.
+func _travel_the_arc() -> void:
+	if _clock == null:
+		return
+	if not (_clock.has_method("phase_elapsed")
+			and _clock.has_method("phase_duration")
+			and _clock.has_method("is_night")):
+		return
+	var duration := float(_clock.phase_duration())
+	if duration <= 0.0:
+		return
+	_arc_position = phase_position(
+		float(_clock.phase_elapsed()), duration, bool(_clock.is_night()))
+	_aim_sun()
+
+
+## The only place the sun's ROTATION is written. Elevation comes off the applied
+## preset -- all six carry 21.5 and a test pins them to it -- and azimuth comes
+## off the arc.
+##
+## Separate from _write() because _write() also pushes the cel band to every
+## solid in the game through CelPainter, and the sun has to be re-aimed on every
+## frame of a phase while that push has no business happening more than once per
+## look.
+func _aim_sun() -> void:
+	if _sun == null:
+		return
+	var elevation := _active.sun_angle_degrees if _active != null else sun_elevation_degrees
+	_sun.rotation = Vector3(
+		deg_to_rad(-elevation),
+		deg_to_rad(sun_azimuth_now()),
+		0.0
+	)
 
 
 # --- the six ----------------------------------------------------------------
@@ -638,6 +807,9 @@ func is_crossfading() -> bool:
 
 
 func _process(delta: float) -> void:
+	# FIRST, AND OUTSIDE THE CROSSFADE GUARD. The sun travels for the whole of
+	# every phase; a crossfade is eight seconds out of six hundred.
+	_travel_the_arc()
 	if _to == null:
 		return
 	_fade_elapsed += delta
@@ -803,11 +975,7 @@ func _write(look: LightingPreset) -> void:
 	)
 	if _sun == null:
 		return
-	_sun.rotation = Vector3(
-		deg_to_rad(-look.sun_angle_degrees),
-		deg_to_rad(sun_azimuth_degrees),
-		0.0
-	)
+	_aim_sun()
 	# The cel shaders read ATTENUATION, not LIGHT_COLOR, so both of these reach
 	# the character and nothing else in the frame. Set anyway, and correctly:
 	# the character is the one thing here that IS lit by a light.
