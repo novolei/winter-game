@@ -33,8 +33,6 @@ RunBoot="*res://src/systems/run_boot.gd"
 NightExposure="*res://src/systems/night_exposure.gd"
 OccluderFader="*res://src/rendering/occluder_fader.gd"
 GlobalInteraction3D="*uid://bq0l4mbdwl00e"
-BeehaveGlobalMetrics="*uid://c3ktl6ontsdt7"
-BeehaveGlobalDebugger="*uid://bl3ma400hpvsh"
 _mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
 
 [display]
