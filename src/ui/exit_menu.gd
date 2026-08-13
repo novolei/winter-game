@@ -669,7 +669,7 @@ func _show_confirmation(show: bool, animate: bool) -> void:
 	if _hint_label != null:
 		_hint_label.text = "ESC   返回暂停" if show else "ESC   返回风雪"
 	if _spatial != null:
-		_spatial.set_state(show)
+		_spatial.set_state(STATE_CONFIRM if show else STATE_MENU)
 	var arriving: Control = _confirm_panel if show else _menu_panel
 	if animate and is_inside_tree() and arriving != null:
 		arriving.modulate.a = 0.0
@@ -701,9 +701,7 @@ func _show_settings(show: bool, animate: bool) -> void:
 		_settings_focus_index = clampi(_settings_focus_index, 0,
 			_settings_row_buttons.size() - 1)
 	if _spatial != null:
-		# The settings state has no spatial copy yet (a later task adds it), so
-		# the spatial layer keeps the menu state's copy on screen.
-		_spatial.set_state(false)
+		_spatial.set_state(STATE_SETTINGS if show else STATE_MENU)
 	var arriving: Control = _settings_panel if show else _menu_panel
 	if animate and is_inside_tree() and arriving != null:
 		arriving.modulate.a = 0.0
@@ -757,6 +755,10 @@ func _apply_setting(entry: AccessibilitySetting, index: int) -> void:
 				_ui_layer.apply_accessibility()
 		# screen_shake: persisted only -- the shake system it gates has not
 		# shipped yet (DEFERRED).
+	if _spatial != null:
+		_spatial.set_row_value(entry.id, entry.format_value(
+			SettingsStore.value(entry.id, entry.default_value)),
+			entry.fraction_of(SettingsStore.value(entry.id, entry.default_value)))
 
 
 func _resolve_ui_layer() -> void:
@@ -823,7 +825,11 @@ func _on_viewport_size_changed() -> void:
 func _on_choice_focus_entered(button: Button) -> void:
 	_set_choice_line(button, true)
 	if _spatial != null:
-		_spatial.set_focus(_spatial_choice_id(button))
+		var focus_id := _spatial_choice_id(button)
+		var row_index := _settings_row_buttons.find(button)
+		if row_index >= 0:
+			focus_id = StringName("row_%s" % _settings_row_settings[row_index].id)
+		_spatial.set_focus(focus_id)
 	if _is_open:
 		_play(&"ui.move")
 
@@ -982,6 +988,8 @@ func _release_camera_push() -> void:
 func _spatial_choice_id(button: Button) -> StringName:
 	if button == _continue_button:
 		return SpatialPauseMenu.CONTINUE
+	if button == _settings_button:
+		return SpatialPauseMenu.SETTINGS
 	if button == _exit_button:
 		return SpatialPauseMenu.EXIT
 	if button == _cancel_button:
