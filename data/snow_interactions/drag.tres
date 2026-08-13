@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="SnowInteractionDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/snow_interaction_definition.gd" id="1_p4l81"]
+
+[resource]
+script = ExtResource("1_p4l81")
+interaction_id = &"drag"
+primitive = &"groove"
+strength_scale = 0.62
+max_strength = 0.54
+depth_reference_m = 0.34
+pressure_reference_ns_m2 = 1250.0
+width_scale = 0.72
+core = 0.24
+continuity_floor = 0.62
+meander_m = 0.015

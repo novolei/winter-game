@@ -29,7 +29,10 @@ func test_sole_definition_peaks_in_shallow_snow_and_collapses_in_a_drift() -> vo
 	var shallow: float = profile.sole_definition_at(profile.shallow_wade)
 	var medium: float = profile.sole_definition_at(profile.medium_wade)
 	var deep: float = profile.sole_definition_at(1.0)
-	assert_true(shallow > dust + 0.4, "a dusting should scrape, not show a perfect sole")
+	assert_true(
+		dust >= 0.65 and shallow > dust,
+		"a dusting should keep a light planted sole while shallow snow records it best"
+	)
 	assert_true(shallow > medium, "wall collapse should already soften the sole through medium snow")
 	assert_true(medium > deep + 0.25, "deep snow should read as a pocket, not a shoe mould")
 

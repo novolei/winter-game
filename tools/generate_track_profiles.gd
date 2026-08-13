@@ -27,10 +27,14 @@ func _initialize() -> void:
 	profile.weight_transition_to_x = 0.28
 	profile.shallow_wade = 0.33
 	profile.medium_wade = 0.72
-	profile.sole_definition_dust = 0.25
+	profile.sole_definition_dust = 0.78
 	profile.sole_definition_shallow = 0.85
 	profile.sole_definition_medium = 0.70
 	profile.sole_definition_deep = 0.30
+	profile.dust_length_scale = 1.03
+	profile.dust_width_scale = 0.96
+	profile.dust_core = 0.58
+	profile.dust_break = 0.16
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://data/tracks"))
 	var error := ResourceSaver.save(profile, OUTPUT_PATH)
 	if error != OK:

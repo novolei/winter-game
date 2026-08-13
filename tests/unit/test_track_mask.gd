@@ -294,28 +294,33 @@ func test_two_prints_a_stride_apart_do_not_run_together() -> void:
 		)
 
 
-## A SCRAPE IS A DIFFERENT EVENT, not a smaller hole. In snow too thin to punch
-## through, the foot scrapes: the mark runs further along the way he was going,
-## is narrower across, and has no pressed floor under it.
-func test_a_scuff_is_a_longer_narrower_flatter_mark_than_a_hole() -> void:
-	var hole := _mark(0.0)
-	var scrape := _mark(1.0)
+## A DUSTING RECORDS A LIGHT BOOT, NOT A LONG SMEAR.  The previous snow-depth
+## language stretched a thin print by 70%, narrowed it and removed its floor;
+## in the gameplay camera that read as a foot dragged through paint.  Thin snow
+## may chip the outline, but heel, waist and forefoot still belong to one planted
+## sole and its reach stays close to the deeper print.
+func test_a_profiled_thin_print_is_a_light_complete_boot_not_a_long_scuff() -> void:
+	var profile: TrackProfileDefinition = _mask.profile_for_subject(&"player")
+	assert_not_null(profile, "the player boot profile did not load")
+	if profile == null:
+		return
+	var hole := _profiled_mark(profile, 0.0, 1.0)
+	var dust := _profiled_mark(profile, 1.0, 0.22)
 	assert_true(
-		scrape.x > hole.x * 1.2,
-		"the scrape runs %.3f m along the walk against the hole's %.3f -- it is a "
-			% [scrape.x, hole.x]
-			+ "smaller hole rather than a longer mark"
+		dust.x <= hole.x * 1.10,
+		"the dusting runs %.3f m along the walk against the deep print's %.3f -- "
+			% [dust.x, hole.x]
+			+ "it is still the rejected dragged smear"
 	)
 	assert_true(
-		scrape.y < hole.y,
-		"the scrape is %.3f m across against the hole's %.3f, so it did not narrow"
-			% [scrape.y, hole.y]
+		dust.y >= hole.y * 0.72,
+		"the dusting narrowed to %.3f m against the boot's %.3f; the sole disappeared"
+			% [dust.y, hole.y]
 	)
 	assert_true(
-		scrape.z < hole.z - 0.05,
-		"the scrape keeps a pressed floor (%f against the hole's %f), which is the "
-			% [scrape.z, hole.z]
-			+ "one thing a scraped foot does not leave"
+		dust.z >= 0.10 and dust.z < 0.24,
+		"the thin sole reads %.3f at the waist; it must be light but anatomically whole"
+			% dust.z
 	)
 
 
@@ -347,6 +352,31 @@ func _mark(scuff: float) -> Vector3:
 			probe_x += 0.01
 		floor_depth += _mask.value_at(Vector3(DEEP_RADIUS * 0.4, 0.0, 0.0))
 	return Vector3(along, across, floor_depth / float(seeds.size()))
+
+
+func _profiled_mark(
+	profile: TrackProfileDefinition, scuff: float, strength: float
+) -> Vector3:
+	_mask.build_at(Vector3.ZERO)
+	_mask.stamp_profiled(
+		Vector3.ZERO, DEEP_RADIUS, strength, Vector2.RIGHT, 1.5, DEEP_CORE, 0.34,
+		71.0, Vector2.ZERO, 1.0, scuff, profile
+	)
+	var along := 0.0
+	var across := 0.0
+	var probe_x := -0.7
+	while probe_x <= 0.7:
+		var probe_z := -0.7
+		while probe_z <= 0.7:
+			if _mask.value_at(Vector3(probe_x, 0.0, probe_z)) > 0.025:
+				along = maxf(along, absf(probe_x))
+				across = maxf(across, absf(probe_z))
+			probe_z += 0.01
+		probe_x += 0.01
+	return Vector3(
+		along, across,
+		_mask.value_at(Vector3(-DEEP_RADIUS * 0.05, 0.0, 0.0))
+	)
 
 
 ## WHERE HE STOPPED OR TURNED. Prints composite with max(), and max() of two
@@ -525,13 +555,14 @@ func test_a_furrow_event_ploughs_and_a_half_specified_one_does_not() -> void:
 	_mask._on_furrow({
 		"from": Vector3.ZERO, "to": Vector3(0.6, 0.0, 0.0), "half_width": 0.16, "depth": 0.7,
 	})
-	assert_almost_eq(_mask.value_at(Vector3(0.3, 0.0, 0.0)), 0.7, 0.02)
+	var tuned := _mask.value_at(Vector3(0.3, 0.0, 0.0))
+	assert_true(tuned > 0.35 and tuned < 0.56, "legacy furrow bypassed its data definition: %f" % tuned)
 
 	_mask._on_furrow({"from": Vector3(5.0, 0.0, 0.0), "half_width": 0.16, "depth": 0.7})
 	assert_almost_eq(_mask.value_at(Vector3(5.3, 0.0, 0.0)), 0.0, 0.01)
 	_mask._on_furrow(null)
 	_mask._on_furrow("not a furrow")
-	assert_almost_eq(_mask.value_at(Vector3(0.3, 0.0, 0.0)), 0.7, 0.02)
+	assert_almost_eq(_mask.value_at(Vector3(0.3, 0.0, 0.0)), tuned, 0.01)
 
 
 ## Two prints on a wind-scoured crest carry no furrow between them, and the snow

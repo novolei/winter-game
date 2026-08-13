@@ -139,7 +139,9 @@ const RECENTER_SLACK_M := 3.0
 ## second event and a second mask.
 const FOOTPRINT_EVENT := &"track.footprint"
 const FURROW_EVENT := &"player.furrow"
+const SNOW_INTERACTION_EVENT := &"snow.interaction"
 const TRACK_PROFILE_DIRECTORY := "res://data/tracks"
+const SNOW_INTERACTION_DIRECTORY := "res://data/snow_interactions"
 
 ## ---------------------------------------------------------------------------
 ## What a print in snow actually looks like
@@ -336,6 +338,9 @@ var _floor_noise: FastNoiseLite
 ## subjects retain the legacy ellipse instead of silently inheriting a boot.
 var _profiles_by_subject: Dictionary = {}
 var _compiled_profiles: Dictionary = {}
+## Interaction id -> authored response.  The registry is resolved once; the
+## raster hot loops never inspect directories or Resources.
+var _interaction_definitions: Dictionary = {}
 
 var _static_origin := Vector2.ZERO
 var _static: Image
@@ -365,6 +370,7 @@ func _ready() -> void:
 	if bus != null:
 		bus.subscribe(FOOTPRINT_EVENT, _on_footprint)
 		bus.subscribe(FURROW_EVENT, _on_furrow)
+		bus.subscribe(SNOW_INTERACTION_EVENT, _on_snow_interaction)
 
 
 func _exit_tree() -> void:
@@ -375,12 +381,14 @@ func _exit_tree() -> void:
 	if bus != null:
 		bus.unsubscribe(FOOTPRINT_EVENT, _on_footprint)
 		bus.unsubscribe(FURROW_EVENT, _on_furrow)
+		bus.unsubscribe(SNOW_INTERACTION_EVENT, _on_snow_interaction)
 
 
 ## Builds both layers centred on `centre`. Separate from _ready() so a test can
 ## drive it without a tree.
 func build_at(centre: Vector3 = Vector3.ZERO) -> void:
 	_load_profiles()
+	_load_interaction_definitions()
 	if _mask == null:
 		_mask = Image.create_empty(RESOLUTION, RESOLUTION, false, Image.FORMAT_R8)
 		_create_upload_texture()
@@ -451,6 +459,28 @@ func _load_profiles() -> void:
 func profile_for_subject(subject: StringName) -> TrackProfileDefinition:
 	_load_profiles()
 	return _profiles_by_subject.get(subject, null) as TrackProfileDefinition
+
+
+func _load_interaction_definitions() -> void:
+	if not _interaction_definitions.is_empty():
+		return
+	var directory := DirAccess.open(SNOW_INTERACTION_DIRECTORY)
+	if directory == null:
+		return
+	for file_name in directory.get_files():
+		if not file_name.ends_with(".tres"):
+			continue
+		var definition := load(SNOW_INTERACTION_DIRECTORY.path_join(file_name))
+		if definition == null:
+			continue
+		var interaction_id: StringName = definition.get("interaction_id")
+		if interaction_id != &"":
+			_interaction_definitions[interaction_id] = definition
+
+
+func interaction_definition(interaction_id: StringName) -> Resource:
+	_load_interaction_definitions()
+	return _interaction_definitions.get(interaction_id, null) as Resource
 
 
 func _compile_profile(profile: TrackProfileDefinition) -> PackedFloat32Array:
@@ -684,6 +714,12 @@ func _blob(
 	# meaning; with none given the mark stays round whatever `scuff` says.
 	var stretch := 1.0 + SCUFF_STRETCH * scrape
 	var narrow := 1.0 - SCUFF_NARROW * scrape
+	# Anonymous marks retain their old scrape language.  An authored sole can
+	# instead say what a dusting records; the human winter boot remains a planted
+	# print with only a lightly chipped edge, never the rejected dragged smear.
+	if track_profile != null:
+		stretch = lerpf(1.0, track_profile.dust_length_scale, scrape)
+		narrow = lerpf(1.0, track_profile.dust_width_scale, scrape)
 	# The warp pushes the outline outward as often as inward, so the box has to
 	# allow for it or the ragged edge is clipped back to a straight line.
 	var reach := radius * (1.0 + maxf(irregularity, 0.0)) * stretch
@@ -698,6 +734,12 @@ func _blob(
 	# the two are different events with the same symptom: a deep print's walls
 	# collapse into it, and a scrape never had a floor to begin with.
 	var broken := clampf(FLOOR_BREAK_GAIN * maxf(irregularity, 0.0) + SCUFF_BREAK * scrape, 0.0, 0.9)
+	if track_profile != null:
+		pressed = lerpf(core, track_profile.dust_core, scrape)
+		broken = clampf(
+			FLOOR_BREAK_GAIN * maxf(irregularity, 0.0)
+			+ track_profile.dust_break * scrape, 0.0, 0.9
+		)
 
 	var along := Vector2.ZERO
 	if forward.length_squared() > 0.0001 and aspect > 1.0:
@@ -1669,6 +1711,179 @@ func upload_layer_image(layer_index: int) -> Image:
 	return _upload_layers[layer_index]
 
 
+## Converts physical contact facts into the mask's normalised depth.  Impulse is
+## distributed over contact area before it is combined with snow depth: a hip,
+## shoulder and forearm sharing one fall therefore cannot become one black body-
+## sized crater.  The authored ceiling is the final authority for extreme input.
+func interaction_strength(
+	interaction_id: StringName, snow_depth_m: float, impulse_ns: float,
+	contact_area_m2: float
+) -> float:
+	var definition := interaction_definition(interaction_id)
+	if definition == null:
+		return 0.0
+	var depth_reference: float = maxf(definition.get("depth_reference_m"), 0.01)
+	var pressure_reference: float = maxf(definition.get("pressure_reference_ns_m2"), 1.0)
+	var depth_response := clampf(maxf(snow_depth_m, 0.0) / depth_reference, 0.0, 1.25)
+	var pressure := maxf(impulse_ns, 0.0) / maxf(contact_area_m2, 0.01)
+	var pressure_response := clampf(pressure / pressure_reference, 0.0, 2.0)
+	var response: float = definition.get("strength_scale") * (
+		0.25 * depth_response + 0.55 * sqrt(pressure_response)
+	)
+	return clampf(response, 0.0, definition.get("max_strength"))
+
+
+## Unified cross-system boundary.  The type selects data; data selects one of
+## four generic raster primitives.  No producer noun is tested here, so a fall,
+## an animal or a dragged prop can share this path without TrackMask knowing it.
+func _on_snow_interaction(payload) -> void:
+	if not (payload is Dictionary):
+		return
+	var data: Dictionary = payload
+	var raw_type = data.get("type", &"")
+	if not (raw_type is StringName or raw_type is String):
+		return
+	var interaction_id := StringName(raw_type)
+	var definition := interaction_definition(interaction_id)
+	if definition == null:
+		return
+	match StringName(definition.get("primitive")):
+		&"footprint":
+			_on_defined_footprint(data, definition)
+		&"furrow":
+			_on_defined_furrow(data, definition)
+		&"contact":
+			_on_defined_contact(data, definition, interaction_id)
+		&"groove":
+			_on_defined_groove(data, definition, interaction_id)
+
+
+func _on_defined_footprint(data: Dictionary, definition: Resource) -> void:
+	if not data.has("position"):
+		return
+	var forwarded := data.duplicate()
+	forwarded["radius"] = maxf(float(data.get("radius", 0.28)), 0.0) \
+		* float(definition.get("length_scale"))
+	forwarded["strength"] = minf(
+		float(data.get("strength", 0.0)) * float(definition.get("strength_scale")),
+		float(definition.get("max_strength"))
+	)
+	_on_footprint(forwarded)
+
+
+func _on_defined_furrow(data: Dictionary, definition: Resource) -> void:
+	if not (data.has("from") and data.has("to")):
+		return
+	var from = data.get("from")
+	var to = data.get("to")
+	if not (from is Vector3 and to is Vector3):
+		return
+	var span := Vector2(to.x - from.x, to.z - from.z)
+	if span.length_squared() <= 0.000001:
+		return
+	var middle := Vector2((from.x + to.x) * 0.5, (from.z + to.z) * 0.5)
+	# Broad world-stable modulation, not per-texel noise.  Its low sections are
+	# collapsed walls between steps; max-composition still leaves boot pockets in
+	# charge, while the channel stops reading as a machine-cut central pipe.
+	var wave := 0.5 + 0.5 * sin(middle.x * 5.7 + middle.y * 3.1)
+	var continuity := lerpf(
+		float(definition.get("continuity_floor")), 1.0, wave
+	)
+	var strength := minf(
+		float(data.get("strength", data.get("depth", 0.0)))
+			* float(definition.get("strength_scale")) * continuity,
+		float(definition.get("max_strength"))
+	)
+	var direction := span.normalized()
+	var sideways := Vector2(-direction.y, direction.x)
+	var meander := sideways * float(definition.get("meander_m")) \
+		* sin(middle.x * 11.3 + middle.y * 7.1)
+	var shifted_from := Vector3(from.x + meander.x, from.y, from.z + meander.y)
+	var shifted_to := Vector3(to.x + meander.x, to.y, to.z + meander.y)
+	plough(
+		shifted_from, shifted_to,
+		maxf(float(data.get("half_width", 0.0)), 0.0)
+			* float(definition.get("width_scale")),
+		strength
+	)
+
+
+func _on_defined_contact(
+	data: Dictionary, definition: Resource, interaction_id: StringName
+) -> void:
+	if not data.has("position") or not (data.get("position") is Vector3):
+		return
+	var contacts = data.get("contacts", [])
+	if not (contacts is Array) or contacts.is_empty():
+		return
+	var area := 0.0
+	for contact in contacts:
+		if not (contact is Dictionary):
+			continue
+		var length := maxf(float(contact.get("length", 0.0)), 0.0)
+		var width := maxf(float(contact.get("width", 0.0)), 0.0)
+		area += PI * length * width * 0.25 * clampf(float(contact.get("weight", 1.0)), 0.0, 1.0)
+	if area <= 0.0:
+		return
+	var strength := interaction_strength(
+		interaction_id, float(data.get("snow_depth_m", 0.0)),
+		float(data.get("impulse_ns", 0.0)), area
+	)
+	var position: Vector3 = data.get("position")
+	var forward: Vector2 = data.get("forward", Vector2.RIGHT)
+	if forward.length_squared() <= 0.0001:
+		forward = Vector2.RIGHT
+	forward = forward.normalized()
+	var sideways := Vector2(-forward.y, forward.x)
+	var index := 0
+	for contact in contacts:
+		if not (contact is Dictionary):
+			continue
+		var length := maxf(float(contact.get("length", 0.0)), 0.0) \
+			* float(definition.get("length_scale"))
+		var width := maxf(float(contact.get("width", 0.0)), 0.0) \
+			* float(definition.get("width_scale"))
+		if length <= 0.0 or width <= 0.0:
+			continue
+		var offset: Vector2 = contact.get("offset", Vector2.ZERO)
+		var centre_xz := Vector2(position.x, position.z) \
+			+ forward * offset.x + sideways * offset.y
+		stamp(
+			Vector3(centre_xz.x, position.y, centre_xz.y), length * 0.5,
+			strength * clampf(float(contact.get("weight", 1.0)), 0.0, 1.0),
+			forward, maxf(length / width, 1.0), float(definition.get("core")),
+			float(definition.get("irregularity")),
+			float(data.get("edge_seed", 0.0)) + float(index) * 7.13
+		)
+		index += 1
+
+
+func _on_defined_groove(
+	data: Dictionary, definition: Resource, interaction_id: StringName
+) -> void:
+	if not (data.has("from") and data.has("to")):
+		return
+	var from = data.get("from")
+	var to = data.get("to")
+	if not (from is Vector3 and to is Vector3):
+		return
+	var full_width := maxf(float(data.get("width", 0.0)), 0.0)
+	if full_width <= 0.0:
+		return
+	var length := Vector2(to.x - from.x, to.z - from.z).length()
+	var strength := interaction_strength(
+		interaction_id, float(data.get("snow_depth_m", 0.0)),
+		float(data.get("impulse_ns", 0.0)), maxf(length * full_width, 0.01)
+	)
+	_written(_groove(
+		_mask, RESOLUTION, CELL_M,
+		cell_of(Vector2(from.x, from.z)), cell_of(Vector2(to.x, to.z)),
+		full_width * 0.5 * float(definition.get("width_scale")), strength,
+		float(definition.get("core")), float(definition.get("irregularity")),
+		float(data.get("edge_seed", 0.0))
+	))
+
+
 func _on_footprint(payload) -> void:
 	if not (payload is Dictionary):
 		return
@@ -1708,9 +1923,13 @@ func _on_furrow(payload) -> void:
 	var data: Dictionary = payload
 	if not (data.has("from") and data.has("to")):
 		return
-	plough(
-		data.get("from", Vector3.ZERO),
-		data.get("to", Vector3.ZERO),
-		data.get("half_width", 0.0),
-		data.get("depth", 0.0)
-	)
+	var definition := interaction_definition(&"furrow")
+	if definition == null:
+		plough(
+			data.get("from", Vector3.ZERO), data.get("to", Vector3.ZERO),
+			data.get("half_width", 0.0), data.get("depth", 0.0)
+		)
+		return
+	var forwarded := data.duplicate()
+	forwarded["strength"] = data.get("depth", 0.0)
+	_on_defined_furrow(forwarded, definition)

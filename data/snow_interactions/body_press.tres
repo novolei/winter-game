@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="SnowInteractionDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/snow_interaction_definition.gd" id="1_dts1j"]
+
+[resource]
+script = ExtResource("1_dts1j")
+interaction_id = &"body_press"
+primitive = &"contact"
+strength_scale = 0.86
+max_strength = 0.72
+depth_reference_m = 0.44
+pressure_reference_ns_m2 = 1450.0
+core = 0.38
+irregularity = 0.14

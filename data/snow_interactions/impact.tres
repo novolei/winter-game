@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="SnowInteractionDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/snow_interaction_definition.gd" id="1_t4mud"]
+
+[resource]
+script = ExtResource("1_t4mud")
+interaction_id = &"impact"
+primitive = &"contact"
+max_strength = 0.86
+depth_reference_m = 0.42
+pressure_reference_ns_m2 = 1150.0
+core = 0.34
+irregularity = 0.18

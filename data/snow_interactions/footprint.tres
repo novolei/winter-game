@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="SnowInteractionDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/snow_interaction_definition.gd" id="1_shbee"]
+
+[resource]
+script = ExtResource("1_shbee")
+interaction_id = &"footprint"
+max_strength = 0.86
+depth_reference_m = 0.24
+pressure_reference_ns_m2 = 1800.0
+core = 0.55
+irregularity = 0.2

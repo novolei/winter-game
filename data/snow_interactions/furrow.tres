@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="SnowInteractionDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/snow_interaction_definition.gd" id="1_cm8nk"]
+
+[resource]
+script = ExtResource("1_cm8nk")
+interaction_id = &"furrow"
+primitive = &"furrow"
+strength_scale = 0.72
+max_strength = 0.58
+pressure_reference_ns_m2 = 1700.0
+width_scale = 0.76
+core = 0.0
+irregularity = 0.0
+continuity_floor = 0.48
+meander_m = 0.012

@@ -31,15 +31,19 @@ extends Resource
 @export_range(-1.0, 1.0, 0.01) var weight_transition_to_x := 0.25
 
 @export_group("Snow-depth language")
-## `wade` is the same 0..1 fact locomotion and the furrow use.  A dusting is a
-## scrape, shallow snow records the sole, then collapsing walls take that sole
-## definition away again as the boot becomes a pocket in a drift.
+## `wade` is the same 0..1 fact locomotion and the furrow use.  A dusting keeps
+## a light planted sole; shallow snow records it most clearly, then collapsing
+## walls take that definition away as the boot becomes a pocket in a drift.
 @export_range(0.0, 1.0, 0.01) var shallow_wade := 0.35
 @export_range(0.0, 1.0, 0.01) var medium_wade := 0.75
 @export_range(0.0, 1.0, 0.01) var sole_definition_dust := 0.0
 @export_range(0.0, 1.0, 0.01) var sole_definition_shallow := 0.0
 @export_range(0.0, 1.0, 0.01) var sole_definition_medium := 0.0
 @export_range(0.0, 1.0, 0.01) var sole_definition_deep := 0.0
+@export_range(0.7, 1.3, 0.01) var dust_length_scale := 1.0
+@export_range(0.7, 1.3, 0.01) var dust_width_scale := 1.0
+@export_range(0.0, 0.9, 0.01) var dust_core := 0.55
+@export_range(0.0, 0.9, 0.01) var dust_break := 0.18
 
 
 func sole_definition_at(wade: float) -> float:
