@@ -21,6 +21,10 @@ const FOCUS_LIFT_PIXELS := -2.0
 const PULSE_SCALE := 0.03
 const PULSE_RESPONSE := 12.0
 
+## ≤6px，反向追随，指数平滑。相机不动——相机一动画面就"晕"（设计规范 2.5）。
+const POINTER_PARALLAX_PIXELS := 6.0
+const POINTER_RESPONSE := 4.0
+
 const STATUS := &"status"
 const CAPTION := &"caption"
 const TIME := &"time"
@@ -89,6 +93,9 @@ var _envelope_offset: Dictionary = {}   # id -> y 像素偏移（默认 0）
 
 var _focus_lift: Dictionary = {}   # id -> 像素
 var _row_pulses: Dictionary = {}   # setting_id -> 0..1
+
+var _pointer_target := Vector2.ZERO
+var _pointer_current := Vector2.ZERO
 
 
 func setup(tokens: UITokens, fonts: UIFonts) -> void:
@@ -359,6 +366,19 @@ func row_pulse(setting_id: StringName) -> float:
 	return float(_row_pulses.get(setting_id, 0.0))
 
 
+## The cursor in -1..1 viewport coordinates. The copy counter-follows it, so
+## the surface reads as a plane with depth rather than a sticker on the glass.
+func set_pointer_normalized(offset: Vector2) -> void:
+	if not offset.is_finite():
+		return
+	_pointer_target = -Vector2(clampf(offset.x, -1.0, 1.0),
+		clampf(offset.y, -1.0, 1.0)) * POINTER_PARALLAX_PIXELS
+
+
+func pointer_offset() -> Vector2:
+	return _pointer_current
+
+
 ## The cascade's handle on one line. Alpha multiplies every colour channel the
 ## line owns; offset shifts its projected home in screen pixels.
 func set_line_envelope(id: StringName, alpha: float, y_offset: float) -> void:
@@ -414,6 +434,22 @@ func _process(delta: float) -> void:
 			_row_pulses[setting_id] = 0.0
 			continue
 		_row_pulses[setting_id] = lerpf(current, 0.0, 1.0 - exp(-PULSE_RESPONSE * maxf(delta, 0.0)))
+	if _camera != null:
+		var viewport := _camera.get_viewport()
+		if viewport != null:
+			var mouse := viewport.get_mouse_position()
+			var rect := viewport.get_visible_rect().size
+			if rect.x > 0.0 and rect.y > 0.0:
+				set_pointer_normalized(Vector2(
+					mouse.x / rect.x * 2.0 - 1.0,
+					mouse.y / rect.y * 2.0 - 1.0))
+	# Parallax also settles while hidden or camera-free, for the same reason as
+	# the pulse: the offset should be home by the time the surface returns.
+	if _compact:
+		_pointer_current = Vector2.ZERO
+	else:
+		_pointer_current = _pointer_current.lerp(_pointer_target,
+			1.0 - exp(-POINTER_RESPONSE * maxf(delta, 0.0)))
 	if not visible or _camera == null:
 		return
 	for id in _line_amounts.keys():
@@ -633,7 +669,7 @@ func _update_projection() -> void:
 		# separated the visible glyphs from their accessible Canvas hit targets.
 		var label_transform := label.global_transform
 		label_transform.origin = _camera.project_position(
-			(_targets[id] as Vector2) + Vector2(0.0,
+			(_targets[id] as Vector2) + _pointer_current + Vector2(0.0,
 				_envelope_offset_for(id) + float(_focus_lift.get(id, 0.0))), _depth)
 		label_transform.basis = _camera.global_transform.basis.orthonormalized() \
 			* Basis.from_euler(_label_tilts[id] as Vector3)
@@ -648,7 +684,7 @@ func _update_projection() -> void:
 		quad.size = Vector2(maxf(screen_width * world_per_pixel, 0.001),
 			maxf(float(_line_heights[id]) * world_per_pixel, 0.001))
 		var transform := line.global_transform
-		transform.origin = _camera.project_position(center, _depth - 0.01)
+		transform.origin = _camera.project_position(center + _pointer_current, _depth - 0.01)
 		var tilt: Vector3 = _label_tilts.get(id,
 			_label_tilts.get(STATUS, Vector3.ZERO)) as Vector3
 		transform.basis = _camera.global_transform.basis.orthonormalized() \
@@ -661,7 +697,7 @@ func _update_projection() -> void:
 		quad.size = (_ornament_sizes[id] as Vector2) * world_per_pixel
 		var transform := ornament.global_transform
 		transform.origin = _camera.project_position(
-			_ornament_positions[id] as Vector2, _depth + 0.04)
+			(_ornament_positions[id] as Vector2) + _pointer_current, _depth + 0.04)
 		transform.basis = _camera.global_transform.basis.orthonormalized() \
 			* Basis.from_euler(_ornament_tilts[id] as Vector3)
 		ornament.global_transform = transform
@@ -675,7 +711,8 @@ func _update_projection() -> void:
 		track_quad.size = Vector2(maxf(rect.size.x * world_per_pixel, 0.001),
 			maxf(rect.size.y * world_per_pixel, 0.001))
 		var track_transform := track.global_transform
-		track_transform.origin = _camera.project_position(rect.get_center(), _depth - 0.01)
+		track_transform.origin = _camera.project_position(
+			rect.get_center() + _pointer_current, _depth - 0.01)
 		track_transform.basis = _camera.global_transform.basis.orthonormalized() \
 			* Basis.from_euler(_label_tilts.get(QUESTION, Vector3.ZERO) as Vector3)
 		track.global_transform = track_transform
