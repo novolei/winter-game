@@ -190,6 +190,30 @@ func _ready() -> void:
 	_camera.near = 0.05
 	_camera.far = 400.0
 	_camera.current = true
+	_build_vision_focus()
+
+
+## GDD section 5's 口渴 -> 画面轻微失焦, hung on the camera it defocuses.
+##
+## BUILT HERE RATHER THAN INSTANCED IN scenes/main.tscn, and the reason is the
+## same one PlayerController builds its own BreathFog and AnimationTree for. A
+## node whose entire job is to write `Camera3D.attributes` has exactly one
+## correct parent, and the scene file cannot carry the argument for that --
+## the editor strips comment lines from a .tscn every time it saves one, which
+## has already eaten 51 authored lines from main.tscn in a sitting. Wiring it
+## here puts the explanation in a file that keeps it, and leaves the single most
+## contested file in the repository untouched.
+##
+## The survival model is NOT injected: VisionFocus resolves /root/SurvivalSystem
+## itself, the way NightExposure does, so the rig does not have to know that a
+## survival model exists at all.
+func _build_vision_focus() -> void:
+	if _camera == null or _camera.get_node_or_null("VisionFocus") != null:
+		return
+	var focus := VisionFocus.new()
+	focus.name = "VisionFocus"
+	focus.set_camera(_camera)
+	_camera.add_child(focus)
 
 
 func _resolve() -> void:
