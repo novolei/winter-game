@@ -28,9 +28,16 @@
 //   For each selected model it finds every AnimationClip in the same folder
 //   tree, and writes  <ModelName>@<ClipName>.fbx  into Assets/WinterTimeExport/.
 //
-//   The `Model@Clip` naming is not decoration: it is the convention Godot's
-//   importer already understands, and it is how the wanderer's own animation
-//   library was assembled.
+//   `Model@Clip` is a naming convention Godot's importer understands, and it
+//   keeps one take per file legible on disk.
+//
+//   It is NOT how this project stores animations, and an earlier version of
+//   this comment claimed it was. Measured 2026-08-13: no filename in this
+//   repository contains an `@`. The wanderer's library is assembled by merging
+//   every take into a single `.glb` with tools/decimate_character.py, because
+//   the FBX path lands the rig at a different scale and axis. So these files
+//   are an intermediate, not a destination -- see
+//   Docs/asset-inventory-meshy-wanderer.md for the procedure that consumes them.
 //
 // AFTERWARDS
 // ----------
