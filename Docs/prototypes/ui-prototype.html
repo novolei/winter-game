@@ -36,7 +36,7 @@
 :root {
   /* --- the twelve, as they exist in color_bible.tres ------------------ */
   --snow-1: #8FB0D8;  --snow-2: #7FA0C9;  --snow-3: #748FBB;
-  --snow-4: #6987B4;  --snow-5: #5D7BA6;
+  --snow-4: #76889F;  --snow-5: #667890;
   --struct-1: #33496E; --struct-2: #2A3854;
   --struct-3: #1C2A45; --struct-4: #131C30;
   --warm-1: #6E2F2E;  --warm-2: #A05A35;  --warm-3: #FFB257;
@@ -780,7 +780,7 @@ const icon = id => ICONS[id] ? `url("${ICONS[id]}")` : 'none';
 const PALETTE = {
   'ink/primary':   ['#8FB0D8', 'snow_tones[0]', '主文本、主笔画、选中态'],
   'ink/secondary': ['#748FBB', 'snow_tones[2]', '说明文字、次要笔画'],
-  'ink/muted':     ['#5D7BA6', 'snow_tones[4]', '未选中、禁用、不可用选项'],
+  'ink/muted':     ['#667890', 'snow_tones[4]', '未选中、禁用、不可用选项'],
   'line/hairline': ['#33496E', 'structure_tones[0]', '分隔线、弧的底槽'],
   'line/deep':     ['#1C2A45', 'structure_tones[2]', '暗场下的底槽'],
   'scrim/veil':    ['#131C30', 'structure_tones[3]', '遮罩、暗场、结局淡出'],
@@ -859,7 +859,7 @@ function drawScene() {
 
   // Snow field, banded rather than gradiented -- Art Bible rule 8 forbids
   // gradients on world surfaces, and the bands are what read as cel shading.
-  const bands = [['#5D7BA6', .62], ['#6987B4', .70], ['#748FBB', .82], ['#7FA0C9', 1.0]];
+  const bands = [['#667890', .62], ['#76889F', .70], ['#748FBB', .82], ['#7FA0C9', 1.0]];
   let prev = .62;
   for (const [c, to] of bands) {
     sctx.fillStyle = c; sctx.fillRect(0, h * prev, w, h * (to - prev) + 1);

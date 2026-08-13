@@ -58,7 +58,11 @@ var _cache: Dictionary = {}
 
 
 func _post_import(scene: Node) -> Object:
-	var bible: Resource = load(PALETTE_PATH)
+	# An import pass runs in the editor process, which may already hold an older
+	# ColorBible in its ResourceLoader cache. Palette revisions must repaint every
+	# slot from the data file being imported now, rather than preserving the
+	# stale material values the model carried into this pass.
+	var bible: Resource = ResourceLoader.load(PALETTE_PATH, "", ResourceLoader.CACHE_MODE_IGNORE)
 	_repaint(scene, bible)
 	CollisionScript.attach(scene)
 	return scene

@@ -41,7 +41,7 @@ func _initialize() -> void:
 	# Section 2.1's table, read out of the palette rather than written down.
 	tokens.ink_primary = bible.snow_tones[0]      # #8FB0D8 snow, brightest
 	tokens.ink_secondary = bible.snow_tones[2]    # #748FBB snow, mid
-	tokens.ink_muted = bible.snow_tones[4]        # #5D7BA6 snow, darkest
+	tokens.ink_muted = bible.snow_tones[4]        # #667890 snow, darkest
 	tokens.line_hairline = bible.structure_tones[0]  # #33496E structure, lit
 	tokens.line_deep = bible.structure_tones[2]      # #1C2A45 structure, dark
 	tokens.scrim_veil = bible.structure_tones[3]     # #131C30 structure, darkest

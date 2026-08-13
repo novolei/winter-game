@@ -9,7 +9,7 @@ func _initialize() -> void:
 
 	var snow: Array[Color] = [
 		Color("#8FB0D8"), Color("#7FA0C9"), Color("#748FBB"),
-		Color("#6987B4"), Color("#5D7BA6"),
+		Color("#76889F"), Color("#667890"),
 	]
 	var structure: Array[Color] = [
 		Color("#33496E"), Color("#2A3854"), Color("#1C2A45"), Color("#131C30"),

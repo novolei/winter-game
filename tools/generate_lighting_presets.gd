@@ -83,7 +83,7 @@ extends SceneTree
 ##   #B1D0EA horizon _pale(0.65)      -> #B6CCE6     within 8/255 per channel
 ##   #8CB4D9 fog     snow_tones[0]    -> #8FB0D8     within 4/255 per channel
 ##   #B8D4EA vol.    _pale(0.60)      -> #BCD0E8     within 6/255 per channel
-##   #5D96D3 zenith  snow_tones[4]    -> #5D7BA6     red exact, less saturated
+##   #5D96D3 zenith  snow_tones[4]    -> #667890     restrained slate shadow
 ##
 ## The zenith is the one real departure: nothing in the twelve is as saturated as
 ## #5D96D3, and inventing a colour to match a suggestion is how a palette stops

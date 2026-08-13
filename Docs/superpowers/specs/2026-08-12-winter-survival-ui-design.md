@@ -130,7 +130,7 @@ GDD 第三支柱是**「沉默即叙事——没有 HUD、没有旁白，世界�
 |---|---|---|---|
 | `ink/primary` | `snow_tones[0]` | `#8FB0D8` | 主文本、主笔画、选中态 |
 | `ink/secondary` | `snow_tones[2]` | `#748FBB` | 说明文字、次要笔画 |
-| `ink/muted` | `snow_tones[4]` | `#5D7BA6` | 未选中、禁用、不可用选项 |
+| `ink/muted` | `snow_tones[4]` | `#667890` | 未选中、禁用、不可用选项 |
 | `line/hairline` | `structure_tones[0]` | `#33496E` | 分隔线、弧的底槽 |
 | `line/deep` | `structure_tones[2]` | `#1C2A45` | 弧的底槽（暗场下） |
 | `scrim/veil` | `structure_tones[3]` | `#131C30` | 遮罩、暗场、结局淡出 |

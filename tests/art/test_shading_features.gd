@@ -209,7 +209,7 @@ func test_the_gate_catches_an_orm_material() -> void:
 ## written down and enforced nowhere.
 func test_the_gate_catches_a_gradient_albedo_texture() -> void:
 	var offender := StandardMaterial3D.new()
-	offender.albedo_color = Color("#6987B4")
+	offender.albedo_color = Color("#76889F")
 	offender.metallic = 0.0
 	offender.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
 	offender.albedo_texture = _gradient_texture()

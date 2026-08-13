@@ -70,8 +70,8 @@ PALETTE = {
     "PAL_SNOW_1": "8FB0D8",    # snow, brightest
     "PAL_SNOW_2": "7FA0C9",
     "PAL_SNOW_3": "748FBB",
-    "PAL_SNOW_4": "6987B4",
-    "PAL_SNOW_5": "5D7BA6",
+    "PAL_SNOW_4": "76889F",
+    "PAL_SNOW_5": "667890",
     "PAL_STRUCT_1": "33496E",  # structure, lit face
     "PAL_STRUCT_2": "2A3854",
     "PAL_STRUCT_3": "1C2A45",

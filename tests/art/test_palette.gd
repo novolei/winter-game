@@ -145,7 +145,7 @@ func test_the_gate_catches_an_off_palette_material() -> void:
 
 func test_the_gate_accepts_an_on_palette_material() -> void:
 	var good := StandardMaterial3D.new()
-	good.albedo_color = Color("#6987B4")
+	good.albedo_color = Color("#76889F")
 	assert_true(_bible.contains(good.albedo_color), "a palette snow tone must be accepted")
 
 ## Joins the two halves the other tests each prove separately: the predicate
