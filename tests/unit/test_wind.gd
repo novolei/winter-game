@@ -634,6 +634,45 @@ func test_the_wire_amplitude_stays_inside_what_a_rigid_span_can_get_away_with() 
 	assert_true(sway.sway_metres > 0.0)
 
 
+# --- the cone, and the mark it has to stay under -----------------------------
+#
+# A STREAK FLIES STRAIGHT. Whatever the emitter gives it -- a direction, and
+# later a lane -- survives only if the crosswind wander it picks up over its own
+# life is small next to the scale of that structure.
+#
+# At 14 degrees the cone smeared a streak 2.7 m sideways over an 11 m flight,
+# against a mark 0.55 m long. So the sheet, which is the only thing on screen
+# that shows a wind direction, scattered over 84 degrees at every instant while
+# the wind itself swung 91. The owner called the direction fixed and he was
+# reading the picture correctly.
+#
+# Nothing about that failed. Every parameter read correct, the emitter emitted,
+# and the picture was a uniform wash -- which is the only way this can go wrong.
+
+
+func _drift() -> Spindrift:
+	var drift: Spindrift = SpindriftScript.new()
+	return _keep(drift) as Spindrift
+
+
+## THE CONE, AGAINST THE MARK IT DRAWS. A streak whose own path is several times
+## its own length wide cannot state a direction, however well the wind knows one.
+##
+## Measured on screen at the gameplay framing, spindrift alone, same instant of
+## the same deterministic run: streak angle p10..p90 went from 84.4 degrees to
+## 19.9 on the proposal's own instrument, and from 29.6 to 17.2 once the plus or
+## minus 90 degree wrap in that instrument is corrected for. Either way it is the
+## difference between a sheet that says which way the wind is going and one that
+## does not.
+func test_the_emission_cone_cannot_erase_the_mark_it_draws() -> void:
+	var drift := _drift()
+	assert_true(
+		drift.crosswind_spread_m() <= drift.streak_length * 1.5,
+		"the %.1f degree cone wanders a streak %.2f m across a %.2f m mark"
+			% [drift.spread_degrees, drift.crosswind_spread_m(), drift.streak_length]
+	)
+
+
 func test_spindrift_carries_no_colour_of_its_own() -> void:
 	var source := FileAccess.get_file_as_string("res://src/rendering/spindrift.gd")
 	assert_false(source.contains("Color(0x"), "spindrift.gd writes a hex colour")

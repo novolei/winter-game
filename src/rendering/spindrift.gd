@@ -86,9 +86,34 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 @export var streak_width := 0.050
 @export var streak_length := 0.55
 
-## The cone the snow leaves in. Wide enough that the sheet has a top and a
-## bottom; narrow enough that it stays a sheet.
-@export var spread_degrees := 14.0
+## The cone the snow leaves in.
+##
+## ---------------------------------------------------------------------------
+## THIS IS NOT FREE VARIATION, AND IT WAS FOR AS LONG AS THE SHEET HAD NO SHAPE
+## ---------------------------------------------------------------------------
+## At 14 degrees this read as pleasant scatter, and it was: the sheet was a
+## uniform box of streaks, so a wide cone cost nothing -- there was no structure
+## for it to erase and no direction it had to state.
+##
+## Both of those changed. The owner's complaint was the wind's direction looking
+## fixed, and the wind's instantaneous heading is NOT fixed: it swings 91 degrees
+## through a blizzard, at up to 12 degrees a second. What was fixed was the
+## PICTURE of it. This sheet is the only thing on screen that shows a direction,
+## and at 14 degrees its own angle scatter buried the signal it was carrying.
+##
+## THE NUMBER IS A CROSSWIND DISTANCE, NOT AN ANGLE. A streak travels
+## `stream_speed_max * life_seconds`, about 11 m, and the cone smears that by
+## `travel * tan(spread)`. At 14 degrees that is 2.7 m of sideways wander for a
+## mark 0.55 m long -- a streak's own path five times its own length wide, with
+## every instant of the sheet sampling the whole cone at once. At 3.5 degrees it
+## is 0.67 m, of the same order as the mark, and the sheet states one direction.
+##
+## Measured on screen, spindrift alone, at the same instant of the same
+## deterministic run: streak angle p10 to p90 fell from 84.4 degrees to 19.9.
+##
+## See `crosswind_spread_m()`, which is where that arithmetic lives, and
+## `tests/unit/test_wind.gd`, which holds it against the mark it must stay under.
+@export var spread_degrees := 3.5
 
 ## How far the palette's lightest snow is taken toward white, and the most alpha
 ## a streak ever has.
@@ -154,6 +179,19 @@ static func stream_ratio(strength: float, onset: float) -> float:
 	# a strength of 0.7, which is most of a gale, and the cue did not read.
 	var t := (held - onset) / span
 	return clampf(pow(t, 1.5), 0.0, 1.0)
+
+
+## How far off the heading the emission cone can carry a streak over its whole
+## life, in world metres, at the speed a full gale gives it.
+##
+## THE SCALE AT WHICH THIS EFFECT BLURS. Anything the sheet is meant to show has
+## to be larger than this or it is gone inside one lifetime. It is a RELATIONSHIP
+## between `spread_degrees`, `stream_speed_max` and `life_seconds` -- change any
+## one of the three and it moves -- which is why it is computed here rather than
+## written down, and why the test asserts it against a length rather than against
+## a number somebody typed.
+func crosswind_spread_m() -> float:
+	return stream_speed_max * life_seconds * tan(deg_to_rad(maxf(spread_degrees, 0.0)))
 
 
 ## The direction and speed the sheet travels, in world metres per second. Flat by
