@@ -451,6 +451,8 @@ func _process(_delta: float) -> void:
 	var track_origin: Vector2 = _tracks.origin()
 	_material.set_shader_parameter("snow_terrain", _snow.terrain_texture())
 	_material.set_shader_parameter("snow_packed", _snow.packed_texture())
+	_material.set_shader_parameter("mature_snow", _snow.mature_snow_texture())
+	_material.set_shader_parameter("mature_variation_m", _snow.mature_variation_limit_m())
 	_material.set_shader_parameter("track_mask", _tracks.texture())
 	_material.set_shader_parameter("field_origin", field_origin)
 	_material.set_shader_parameter("track_origin", track_origin)

@@ -56,6 +56,27 @@ func _build_boot():
 	_boot = RunBootScript.new()
 	return _boot
 
+
+# --- run seed ownership ---------------------------------------------------
+
+## An explicit seed is the replay seam: captures, automated checks and the
+## future GameState can establish it before the boot node enters the tree.
+func test_an_explicit_run_seed_is_stable_for_the_whole_boot() -> void:
+	var boot = _build_boot()
+	boot.run_seed = 1729
+	assert_eq(boot.current_run_seed(), 1729)
+	assert_eq(boot.current_run_seed(), 1729, "asking for the run seed changed a replayable run")
+
+
+## A normal boot owns a concrete seed even before _ready(), so a future owner
+## can persist or hand it to a scene without depending on process timing.
+func test_an_unset_run_seed_is_minted_once() -> void:
+	var boot = _build_boot()
+	var first: int = boot.current_run_seed()
+	assert_true(first != 0, "a fresh boot left the run seed unset")
+	assert_eq(boot.current_run_seed(), first, "a fresh boot minted a second seed")
+
+
 # --- the clock starts ------------------------------------------------------
 
 func test_the_boot_loads_the_seven_days_and_starts_the_clock() -> void:

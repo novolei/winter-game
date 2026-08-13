@@ -20,7 +20,8 @@ render_mode ambient_light_disabled, specular_disabled, diffuse_lambert;
 // it, by the same three lines SnowField uses on the CPU:
 //
 //   ground  = drift_relief(terrain - 0.5) * terrain_amplitude
-//   depth   = max_depth * scour(terrain) * (1 - packed)
+//   depth   = clamp(max_depth * scour(terrain) + mature_variation, 0, max_depth)
+//             * (1 - packed)
 //   surface = ground + depth
 //
 // The wind strips the crests and dumps the snow in the hollows, so depth is a
@@ -28,6 +29,9 @@ render_mode ambient_light_disabled, specular_disabled, diffuse_lambert;
 // "how high is the ground here" and "how deep is the snow on it".
 uniform sampler2D snow_terrain : filter_linear, repeat_disable;
 uniform sampler2D snow_packed : filter_linear, repeat_disable;
+// The immutable, run-seeded opening snow layer.  Its neutral encoding is 0.5,
+// so an unseeded fixture keeps the authored baseline exactly.
+uniform sampler2D mature_snow : filter_linear, repeat_disable;
 uniform vec2 field_origin = vec2(-60.0, -60.0);
 uniform float field_extent = 120.0;
 uniform float terrain_amplitude = 3.4;
@@ -42,6 +46,7 @@ uniform float drift_sharpness = 3.0;
 uniform float max_depth = 1.05;
 uniform float scour_hollow = 0.36;
 uniform float scour_crest = 0.72;
+uniform float mature_variation_m = 0.0;
 
 // TrackMask, dynamic layer: one image, any number of prints. A thousand
 // footprints cost the same as one because they are all already composited into
@@ -271,6 +276,16 @@ float packed_at(vec2 w) {
 	return textureLod(snow_packed, uv, 0.0).r * window_falloff(uv, w);
 }
 
+// The texture encodes signed variation as 0.5 + signed / 2.  Sampling from
+// absolute world coordinates and returning to neutral beyond this moving
+// window preserves the same result after a recenter without putting a square
+// raster edge into the far field.
+float mature_variation_at(vec2 w) {
+	vec2 uv = (w - field_origin) / field_extent;
+	float encoded = mix(0.5, textureLod(mature_snow, uv, 0.0).r, window_falloff(uv, w));
+	return (encoded * 2.0 - 1.0) * mature_variation_m;
+}
+
 // repeat_disable clamps to the edge texel, which would smear the outermost
 // footprint across the rest of the world. Outside a window there are no tracks,
 // so say so.
@@ -320,7 +335,8 @@ float ground_height(vec2 w) {
 	float terrain = terrain_at(w);
 	float ground = drift_relief(terrain - 0.5) * terrain_amplitude;
 	float scour = 1.0 - smoothstep(scour_hollow, scour_crest, terrain);
-	return ground + max_depth * scour * (1.0 - packed_at(w));
+	float mature_depth = clamp(max_depth * scour + mature_variation_at(w), 0.0, max_depth);
+	return ground + mature_depth * (1.0 - packed_at(w));
 }
 
 // Centimetre-scale, and only ever seen through the normal.

@@ -4,15 +4,18 @@ extends Node
 ## The ground, as a world-anchored raster window that follows whoever is being
 ## tracked. 512x512 texels over 120 m, so one texel is 23 cm.
 ##
-## Two stored layers:
+## Three stored layers:
 ##
 ##   terrain -- normalised ground height, from FastNoiseLite. Broad dunes.
 ##   packed  -- how much of the snow has been trodden flat. 0 fresh, 1 flat.
+##   mature_snow -- immutable, run-seeded opening variation around the authored
+##                  snow baseline. Protected routes encode exactly neutral.
 ##
 ## and everything else is derived from them:
 ##
 ##   ground  = drift_relief(terrain - 0.5) * terrain_amplitude_m
-##   depth   = max_depth_m * scour(terrain) * (1 - packed)
+##   depth   = clamp(max_depth_m * scour(terrain) + mature_variation, 0, max_depth_m)
+##             * (1 - packed)
 ##   surface = ground + depth
 ##
 ## `scour` is the part that makes the terrain mean something. Snow does not lie
@@ -22,7 +25,7 @@ extends Node
 ## you can see and the speed you can feel the same fact, and it is why one
 ## texture is enough for both.
 ##
-## assets/shaders/snow_ground.gdshader reproduces those three lines exactly, so
+## src/rendering/snow_ground.gdshader reproduces those three lines exactly, so
 ## a drift you can see is a drift you walk in. There is no second source of
 ## truth to drift out of sync.
 ##
@@ -47,6 +50,8 @@ const CELL_M := EXTENT_M / float(RESOLUTION)
 const RECENTER_SLACK_M := 8.0
 
 const FOOTPRINT_EVENT := &"track.footprint"
+const RUN_SEED_SERVICE := &"run_seed"
+const SNOW_PROFILE_PATH := "res://data/snow/valley_profile.tres"
 
 ## A building announcing the ground it stands on. Published by whatever knows
 ## where a building's rooms are -- in practice src/entities/interior/
@@ -166,6 +171,13 @@ const BUILDING_FOOTPRINT_EVENT := &"building.footprint"
 
 @export var noise_seed := 20260811
 
+## The opening snow layer belongs to the run, not to terrain generation.  Zero
+## means no owner has injected a run seed yet, which keeps isolated legacy
+## fixtures on their exact authored baseline.  A real run receives its seed from
+## the registered run owner before this scene settles its buildings.
+@export var run_seed := 0
+@export_file("*.tres") var snow_profile_path := SNOW_PROFILE_PATH
+
 ## Cycles per metre. 0.036 is a swell about 28 m across.
 ##
 ## It was 0.05, chosen when the relief was proportional to the noise and the
@@ -208,7 +220,7 @@ const BUILDING_FOOTPRINT_EVENT := &"building.footprint"
 ## are needed and neither is sufficient.
 ##
 ## BOTH ARE WRITTEN INTO THE TWO RASTERS THIS FIELD ALREADY HAS. There is no
-## third texture and no shader edit, because assets/shaders/snow_ground.gdshader
+## third texture and no shader edit, because src/rendering/snow_ground.gdshader
 ## reads exactly `terrain` and `packed` and rebuilds `ground + depth` from them
 ## line for line. Write the field correctly and the picture follows.
 ##
@@ -272,12 +284,21 @@ var _terrain_texture: ImageTexture
 var _packed_texture: ImageTexture
 var _packed_dirty := false
 var _noise: FastNoiseLite
+var _mature_snow_noise: FastNoiseLite
+var _snow_profile: SnowFieldProfile
+## Signed seed variation encoded as 0.5 + signed / 2.  It is a separate image
+## from terrain so a new run changes snow volume without moving the valley,
+## buildings, roads, or every fixed story anchor that already sits on them.
+var _mature_snow: Image
+var _mature_snow_texture: ImageTexture
+var _has_run_seed := false
 ## Building instance id -> {areas, floor_y, doorways}. Keyed by the publisher so
 ## a building that announces itself twice replaces rather than doubles.
 var _carves := {}
 
 
 func _ready() -> void:
+	_resolve_run_seed()
 	build_at(Vector3.ZERO)
 	var registry := get_node_or_null("/root/ServiceRegistry")
 	if registry != null:
@@ -329,11 +350,22 @@ func _build() -> void:
 	# noise_frequency be stated in the unit that means something -- cycles per
 	# metre of world.
 	_noise.frequency = noise_frequency * CELL_M
+	_snow_profile = load(snow_profile_path) as SnowFieldProfile
+	_mature_snow_noise = FastNoiseLite.new()
+	_mature_snow_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	if _snow_profile != null:
+		_mature_snow_noise.fractal_octaves = maxi(_snow_profile.variation_octaves, 1)
+		_mature_snow_noise.fractal_gain = clampf(_snow_profile.variation_gain, 0.0, 1.0)
+		_mature_snow_noise.frequency = maxf(_snow_profile.variation_frequency_per_m, 0.00001)
+	_mature_snow_noise.seed = run_seed
 	_packed_walked = Image.create_empty(RESOLUTION, RESOLUTION, false, Image.FORMAT_R8)
 	_packed_walked.fill(Color(0.0, 0.0, 0.0, 1.0))
 	_packed = Image.create_empty(RESOLUTION, RESOLUTION, false, Image.FORMAT_R8)
 	_packed.fill(Color(0.0, 0.0, 0.0, 1.0))
 	_packed_texture = ImageTexture.create_from_image(_packed)
+	_mature_snow = Image.create_empty(RESOLUTION, RESOLUTION, false, Image.FORMAT_RF)
+	_mature_snow.fill(Color(0.5, 0.0, 0.0, 1.0))
+	_mature_snow_texture = ImageTexture.create_from_image(_mature_snow)
 
 
 func _snap(point: Vector2) -> Vector2:
@@ -348,7 +380,70 @@ func _regenerate_terrain() -> void:
 	# its own min/max, so the same world position would change height every time
 	# the window moved -- the ground would breathe as you walked.
 	_terrain_base = _noise.get_image(RESOLUTION, RESOLUTION, false, false, false)
+	_regenerate_mature_snow()
 	_apply_carves()
+
+
+## The one injected fact that distinguishes two runs.  It does not choose a
+## terrain seed: terrain is the map and must keep every building, road and
+## narrative anchor where it was authored.  It only rebuilds the immutable
+## mature-snow layer; later phases add weather and action deltas separately.
+func set_run_seed(value: int) -> void:
+	run_seed = value
+	_has_run_seed = true
+	if _mature_snow_noise == null:
+		return
+	_mature_snow_noise.seed = run_seed
+	if _terrain != null:
+		_regenerate_mature_snow()
+
+
+func current_run_seed() -> int:
+	return run_seed
+
+
+## RunBoot is today's temporary run owner; GameState will later replace that
+## service.  SnowField knows only the registry contract -- an owner publishing
+## `current_run_seed()` -- not either implementation.
+func _resolve_run_seed() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry == null:
+		return
+	var owner: Object = registry.get_service(RUN_SEED_SERVICE)
+	if owner != null and owner.has_method("current_run_seed"):
+		set_run_seed(int(owner.current_run_seed()))
+
+
+## Rebuilds the static, seed-derived snow field for the current window.  Its
+## input is absolute world XZ, never a frame counter or camera coordinate; a
+## window can therefore move or regenerate without changing one world point.
+func _regenerate_mature_snow() -> void:
+	if _mature_snow == null:
+		return
+	for y in range(RESOLUTION):
+		for x in range(RESOLUTION):
+			var encoded := 0.5
+			if _has_run_seed and _snow_profile != null and _mature_snow_noise != null:
+				var world := _origin + Vector2(float(x), float(y)) * CELL_M
+				var variation := _mature_snow_noise.get_noise_2d(world.x, world.y)
+				encoded = 0.5 + 0.5 * variation * _open_snow_weight(world)
+			_mature_snow.set_pixel(x, y, Color(clampf(encoded, 0.0, 1.0), 0.0, 0.0, 1.0))
+	if _mature_snow_texture == null:
+		_mature_snow_texture = ImageTexture.create_from_image(_mature_snow)
+	else:
+		_mature_snow_texture.update(_mature_snow)
+
+
+## Zero on the authored first-day network, one in open snow, with a feathered
+## transition so a protected route cannot draw a straight edge into the field.
+func _open_snow_weight(world_xz: Vector2) -> float:
+	if _snow_profile == null:
+		return 0.0
+	var protected := 0.0
+	for route in _snow_profile.protected_routes:
+		if route != null:
+			protected = maxf(protected, route.protection_at(world_xz))
+	return 1.0 - protected
 
 
 ## World XZ -> texel coordinates, fractional. The inverse of everything above.
@@ -422,7 +517,22 @@ func depth_at(world: Vector3) -> float:
 		return 0.0
 	var cell := cell_of(Vector2(world.x, world.z))
 	var packed := sample_bilinear(_packed, cell.x, cell.y)
-	return max_depth_m * scour_at(world) * (1.0 - packed)
+	var mature_depth := clampf(
+		max_depth_m * scour_at(world) + mature_variation_at(world), 0.0, max_depth_m
+	)
+	return mature_depth * (1.0 - packed)
+
+
+## The additional mature snow a run's opening weather history left at this
+## point.  It is immutable for Phase B: weather, wind transport, compaction
+## recovery and local thaw have distinct future layers and must not be smuggled
+## into this one.
+func mature_variation_at(world: Vector3) -> float:
+	if not _has_run_seed or _snow_profile == null or _mature_snow == null:
+		return 0.0
+	var cell := cell_of(Vector2(world.x, world.z))
+	var encoded := sample_bilinear(_mature_snow, cell.x, cell.y)
+	return (encoded * 2.0 - 1.0) * _snow_profile.mature_variation_m
 
 
 ## What you would stand on if the snow held your weight: ground plus snow. This
@@ -556,6 +666,14 @@ func terrain_texture() -> ImageTexture:
 
 func packed_texture() -> ImageTexture:
 	return _packed_texture
+
+
+func mature_snow_texture() -> ImageTexture:
+	return _mature_snow_texture
+
+
+func mature_variation_limit_m() -> float:
+	return 0.0 if _snow_profile == null else _snow_profile.mature_variation_m
 
 
 # ---------------------------------------------------------------------------

@@ -128,6 +128,180 @@ func test_12m_windows_include_an_intermediate_mean_depth() -> void:
 	)
 
 
+## Phase B: a run owns one initial snow layout.  It must be a fact of the
+## world, not a frame of the moving height window: the same seed has the same
+## answer before and after a recenter, while another seed changes an open route.
+func test_a_run_seed_replays_the_same_open_snow_after_a_recentre() -> void:
+	const SEED := 1729
+	var open_spot := Vector3(-20.0, 0.0, 20.0)
+	_field.set_run_seed(SEED)
+	var before: float = _field.depth_at(open_spot)
+	assert_true(_field.follow(Vector3(37.0, 0.0, 28.0)), "setup failed: the field did not recentre")
+	var after: float = _field.depth_at(open_spot)
+	assert_almost_eq(
+		after, before, 0.0001,
+		"seed %d changed the initial snow at one world position after a recenter" % SEED
+	)
+
+
+## The production injection path.  SnowField must receive the owner through the
+## registry before it builds, otherwise farm props settle against one seed and
+## the rendered field changes under them on the first process frame.
+func test_the_registered_run_owner_injects_the_seed_before_the_field_builds() -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	assert_not_null(tree, "the test runner must expose /root for injection wiring")
+	if tree == null:
+		return
+	var registry := tree.root.get_node_or_null("ServiceRegistry")
+	assert_not_null(registry, "the run-seed contract needs ServiceRegistry")
+	if registry == null:
+		return
+	var previous: Object = registry.get_service(&"run_seed")
+	var owner := _RunSeedOwner.new()
+	owner.seed = 1729
+	registry.register(&"run_seed", owner)
+	var field: SnowField = SnowFieldScript.new()
+	tree.root.add_child(field)
+	var received := field.current_run_seed()
+	tree.root.remove_child(field)
+	field.free()
+	owner.free()
+	if previous != null:
+		registry.register(&"run_seed", previous)
+	else:
+		registry.unregister(&"run_seed")
+	assert_eq(received, 1729, "SnowField built before the registered run owner supplied its seed")
+
+
+func test_the_same_run_seed_rebuilds_the_same_open_snow_field() -> void:
+	const SEED := 1729
+	var second: SnowField = SnowFieldScript.new()
+	second.set_run_seed(SEED)
+	second.build_at(Vector3(31.0, 0.0, -22.0))
+	_field.set_run_seed(SEED)
+	var largest_delta := 0.0
+	# The two windows overlap only across this rectangle.  Sampling beyond it
+	# would compare one world texel with the other's clamped border, which tests
+	# Image sampling rather than seed determinism.
+	for x in range(-20, 45, 11):
+		for z in range(-40, 35, 11):
+			var spot := Vector3(float(x), 0.0, float(z))
+			largest_delta = maxf(largest_delta, absf(_field.depth_at(spot) - second.depth_at(spot)))
+	second.free()
+	assert_almost_eq(largest_delta, 0.0, 0.0001, "one run seed rebuilt two different fields")
+
+
+func test_different_run_seeds_change_only_open_snow() -> void:
+	var first: SnowField = SnowFieldScript.new()
+	var second: SnowField = SnowFieldScript.new()
+	first.set_run_seed(1729)
+	second.set_run_seed(8191)
+	first.build_at(Vector3.ZERO)
+	second.build_at(Vector3.ZERO)
+	var largest_open_delta := 0.0
+	for x in range(-48, 49, 4):
+		for z in range(-48, 49, 4):
+			var spot := Vector3(float(x), 0.0, float(z))
+			largest_open_delta = maxf(largest_open_delta, absf(first.depth_at(spot) - second.depth_at(spot)))
+	first.free()
+	second.free()
+	assert_true(
+		largest_open_delta >= 0.015,
+		"two run seeds made no meaningful initial-snow difference; largest delta was %.4f m" % largest_open_delta
+	)
+
+
+## The road, yard and spur already encode the farmstead's authored navigable
+## network.  The first-day shelter line begins at Player's zero transform and
+## ends at the farmhouse doorstep's scene transform.  This test deliberately
+## reads those production anchors instead of inventing a new safety route.
+func test_run_seed_does_not_change_the_authored_first_day_safe_routes() -> void:
+	var first: SnowField = SnowFieldScript.new()
+	var second: SnowField = SnowFieldScript.new()
+	first.set_run_seed(1729)
+	second.set_run_seed(8191)
+	first.build_at(Vector3.ZERO)
+	second.build_at(Vector3.ZERO)
+	var worst_delta := 0.0
+	for route in _authored_safe_routes():
+		for index in range(route.size() - 1):
+			var from: Vector3 = route[index]
+			var to: Vector3 = route[index + 1]
+			var length := from.distance_to(to)
+			var steps := maxi(int(ceilf(length / 0.5)), 1)
+			for step in range(steps + 1):
+				var spot := from.lerp(to, float(step) / float(steps))
+				worst_delta = maxf(worst_delta, absf(first.depth_at(spot) - second.depth_at(spot)))
+	first.free()
+	second.free()
+	assert_almost_eq(
+		worst_delta, 0.0, 0.001,
+		"a run seed changed an authored first-day-safe route by %.4f m" % worst_delta
+	)
+
+
+func _authored_safe_routes() -> Array:
+	var routes: Array = []
+	routes.append([
+		Vector3.ZERO,
+		# Farmhouse (13, -12) + Doorstep (1.8, 1.2), from scenes/main.tscn.
+		Vector3(14.8, 0.0, -10.8),
+	])
+	routes.append(_road_route())
+	routes.append([
+		Vector3(2.7, 0.0, -25.6),
+		Vector3(4.6, 0.0, -22.2),
+		# Truck transform in scenes/main.tscn; _spur() deliberately continues
+		# beneath it, so the authored line is protected through the truck.
+		Vector3(4.85, 0.0, -18.16),
+	])
+	routes.append(_yard_route())
+	routes.append(_east_trail())
+	routes.append(_well_trail())
+	return routes
+
+
+## These values are the world anchors in scenes/main.tscn today.  They live in
+## this unit rather than importing Farmstead because Farmstead preloads models,
+## and unit-level snow arithmetic must remain runnable when a visual asset cache
+## is intentionally absent.  `tools/generate_snow_field_profile.gd` is the
+## production source and imports Farmstead's authored constants directly.
+func _road_route() -> Array:
+	return [
+		Vector3(45.0, 0.0, -59.0), Vector3(30.0, 0.0, -46.0), Vector3(20.0, 0.0, -37.0),
+		Vector3(11.0, 0.0, -29.5), Vector3(2.7, 0.0, -25.6), Vector3(-9.0, 0.0, -28.5),
+		Vector3(-24.0, 0.0, -34.0), Vector3(-41.0, 0.0, -40.0),
+	]
+
+
+func _yard_route() -> Array:
+	return [
+		Vector3(4.2, 0.0, -20.6), Vector3(6.4, 0.0, -16.4),
+		Vector3(10.6, 0.0, -12.4), Vector3(14.4, 0.0, -9.6),
+	]
+
+
+func _east_trail() -> Array:
+	return [
+		Vector3(16.5, 0.0, -8.5), Vector3(24.0, 0.0, 3.0),
+		Vector3(30.0, 0.0, 13.0), Vector3(37.2, 0.0, 24.9),
+	]
+
+
+func _well_trail() -> Array:
+	return [
+		Vector3(13.5, 0.0, -8.0), Vector3(8.6, 0.0, -0.4), Vector3(4.4, 0.0, 3.2),
+		Vector3(-1.0, 0.0, 10.5), Vector3(-4.6, 0.0, 17.5),
+	]
+
+
+class _RunSeedOwner extends Node:
+	var seed := 0
+
+	func current_run_seed() -> int:
+		return seed
+
+
 ## Finds somewhere with snow actually in it. Since the wind scours the crests,
 ## a hardcoded coordinate can legitimately land on bare ground, and a test that
 ## fails for that reason is testing the noise seed rather than the code.

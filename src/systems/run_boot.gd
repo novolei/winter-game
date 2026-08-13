@@ -53,6 +53,14 @@ extends Node
 ## arrives before the autoload line comes out.
 @export var auto_start := true
 
+## The seed for this one attempt.  Zero means "make a fresh one at boot";
+## tests, captures and a future GameState may author a non-zero value before
+## `_ready()` to replay an exact world.  RunBoot owns this only until GameState
+## arrives -- consumers resolve the generic `run_seed` service, never RunBoot.
+@export var run_seed := 0
+
+const RUN_SEED_SERVICE := &"run_seed"
+
 var _survival = null
 var _clock = null
 
@@ -66,7 +74,39 @@ var _clock = null
 ## the exact failure this file exists to fix, reintroduced by its own fix. By the
 ## first frame every autoload is present and every _ready() has run.
 func _ready() -> void:
+	_ensure_run_seed()
+	_register_run_seed()
 	set_process(auto_start)
+
+
+func _exit_tree() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.get_service(RUN_SEED_SERVICE) == self:
+		registry.unregister(RUN_SEED_SERVICE)
+
+
+## The public contract a run-owned system exposes through ServiceRegistry.  It
+## deliberately has no retry policy: whether death reuses this value or asks for
+## another is the deferred GameState decision, not an accidental side effect of
+## booting the opening scene.
+func current_run_seed() -> int:
+	_ensure_run_seed()
+	return run_seed
+
+
+func _ensure_run_seed() -> void:
+	if run_seed != 0:
+		return
+	# A seed is recorded as data by the owner; this one only starts a fresh run.
+	# Keep it inside FastNoiseLite's signed seed range without making a second RNG
+	# stream whose state a future save would also have to serialise.
+	run_seed = int(Time.get_ticks_usec() % 2147483646) + 1
+
+
+func _register_run_seed() -> void:
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null:
+		registry.register(RUN_SEED_SERVICE, self)
 
 func _process(_delta: float) -> void:
 	# Disarmed first: this has one job and must not go on polling for the rest of
