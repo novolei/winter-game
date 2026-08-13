@@ -331,6 +331,53 @@ func test_the_mass_register_does_not_keep_a_freed_instance_alive() -> void:
 	)
 
 
+## The accumulation system reports its continuous cover every rendered frame,
+## but a shader cannot distinguish values inside one 8-bit cover interval.  A
+## second broadcast inside that interval used to allocate two weak-reference
+## arrays and rewrite every solid and roof mass for no visible result.  The
+## first value that crosses out of the interval must still reach both paths.
+func test_same_snow_cover_bucket_skips_writes_but_a_crossing_reaches_materials_and_masses() -> void:
+	var material := _painter.material_for(_bible.structure_tones[0])
+	var holder := Node3D.new()
+	var instance := _mass_instance()
+	holder.add_child(instance)
+	_painter.paint(holder)
+
+	CelPainterScript.set_snow_cover(0.5000)
+	var after_first: Dictionary = CelPainterScript.snow_cover_write_counts()
+	CelPainterScript.set_snow_cover(0.5005)
+	var same_bucket: Dictionary = CelPainterScript.snow_cover_write_counts()
+	assert_eq(
+		int(same_bucket["materials"]), int(after_first["materials"]),
+		"two covers in one shader-visible bucket still rewrote every material"
+	)
+	assert_eq(
+		int(same_bucket["masses"]), int(after_first["masses"]),
+		"two covers in one shader-visible bucket still rewrote every roof mass"
+	)
+
+	CelPainterScript.set_snow_cover(0.5100)
+	var crossed: Dictionary = CelPainterScript.snow_cover_write_counts()
+	assert_true(
+		int(crossed["materials"]) > int(same_bucket["materials"]),
+		"crossing a shader-visible bucket did not update the standing material"
+	)
+	assert_true(
+		int(crossed["masses"]) > int(same_bucket["masses"]),
+		"crossing a shader-visible bucket did not update the standing roof mass"
+	)
+	assert_almost_eq(
+		float(material.get_shader_parameter("snow_cover")), 0.5100, 0.0001,
+		"the crossing never reached the material's visible cover"
+	)
+	assert_almost_eq(
+		instance.get_blend_shape_value(0), CelPainterScript.snow_mass(0.5100), 0.0001,
+		"the crossing never reached the roof's snow-mass curve"
+	)
+
+	holder.free()
+
+
 ## A triangle with one blend shape named the way the build scripts name theirs.
 ## Deliberately NOT the farmhouse: this is the contract, and a unit test that
 ## loads a 1,400-triangle building to check it would go red for reasons that have
