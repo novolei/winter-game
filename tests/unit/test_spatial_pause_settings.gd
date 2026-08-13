@@ -59,6 +59,15 @@ func test_set_row_value_updates_the_word_and_slides_the_marker() -> void:
 	assert_true(marker_after > marker_before,
 		"the marker rect did not slide when the fraction changed")
 
+func test_the_settings_state_has_a_heading() -> void:
+	var heading := _heading_label()
+	assert_not_null(heading, "the spatial settings page has no heading")
+	assert_eq(heading.text, "设　置", "the settings heading carries the wrong word")
+	_spatial.set_state(&"menu")
+	assert_false(heading.visible, "the settings heading stayed visible in the menu state")
+	_spatial.set_state(&"settings")
+	assert_true(heading.visible, "the settings heading was hidden in the settings state")
+
 func test_tracks_and_ticks_are_depth_composited_quads() -> void:
 	var quads := _spatial.track_quads()
 	# 3 轨道 + 3 游标 + 11 + 2 + 2 刻度
@@ -68,3 +77,9 @@ func test_tracks_and_ticks_are_depth_composited_quads() -> void:
 		var material := quad.material_override as StandardMaterial3D
 		assert_not_null(material)
 		assert_false(material.no_depth_test)
+
+func _heading_label() -> Label3D:
+	for label in _spatial.labels():
+		if label.name == "SettingsHeading":
+			return label
+	return null

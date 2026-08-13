@@ -775,6 +775,7 @@ func _cascade_ids() -> Array[StringName]:
 		SpatialPauseMenu.CAPTION, SpatialPauseMenu.TIME,
 	]
 	if _state == STATE_SETTINGS:
+		ids.append(SpatialPauseMenu.SETTINGS_HEADING)
 		if _spatial != null:
 			ids.append_array(_spatial.row_label_ids())
 			ids.append_array(_spatial.track_ids())

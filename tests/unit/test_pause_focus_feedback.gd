@@ -1,7 +1,7 @@
 extends TestCase
 
 ## The pause surface's focus feedback -- the focused choice gains one weight
-## step and a two-pixel lift while the rest dim to the third opacity step, and
+## step and a two-pixel lift while the rest dim to the second opacity step, and
 ## a settings adjustment lands with a short settle pulse on the value word.
 
 const SpatialScript := preload("res://src/ui/spatial_pause_menu.gd")
@@ -36,11 +36,11 @@ func test_focus_boldens_the_choice_by_one_weight_step() -> void:
 	assert_eq(_weight_of(focused) - _weight_of(resting),
 		SpatialScript.FOCUS_WEIGHT_STEP)
 
-func test_unfocused_choices_dim_to_the_third_opacity_step() -> void:
+func test_unfocused_choices_dim_to_the_second_opacity_step() -> void:
 	_spatial.set_state(&"menu")
 	_spatial.set_focus(SpatialPauseMenu.CONTINUE)
 	var resting := _label(&"Exit") as Label3D
-	assert_almost_eq(resting.modulate.a, Tokens.opacity_steps[2], 0.02)
+	assert_almost_eq(resting.modulate.a, Tokens.opacity_steps[1], 0.02)
 
 func test_the_focused_choice_lifts_two_pixels() -> void:
 	_spatial.set_state(&"menu")

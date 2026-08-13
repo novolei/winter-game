@@ -15,7 +15,7 @@ const FOREGROUND_SURFACE_DEPTH_METRES := 3.2
 const LINE_RESPONSE := 12.0
 const PAUSE_TREATMENT_COMPENSATION := 1.75
 
-## 焦点三重反馈（设计规范 2.2）：字重 +100、上浮 -2px、其余降到 opacity_steps[2]。
+## 焦点三重反馈（设计规范 2.2）：字重 +100、上浮 -2px、其余降到 opacity_steps[1]。
 const FOCUS_WEIGHT_STEP := 100
 const FOCUS_LIFT_PIXELS := -2.0
 const PULSE_SCALE := 0.03
@@ -37,6 +37,7 @@ const CONFIRM := &"confirm"
 const HINT := &"hint"
 const CONTEXT_LINE := &"context_line"
 const SETTINGS := &"settings"
+const SETTINGS_HEADING := &"settings_heading"
 const STATE_MENU := &"menu"
 const STATE_SETTINGS := &"settings"
 const STATE_CONFIRM := &"confirm"
@@ -118,6 +119,7 @@ func setup(tokens: UITokens, fonts: UIFonts) -> void:
 	_make_label(CONFIRM, "确　认", fonts.display, tokens.line_deep)
 	_make_label(HINT, "ESC   返回风雪", fonts.interface, tokens.line_deep)
 	_make_label(SETTINGS, "设　置", fonts.display, tokens.line_deep)
+	_make_label(SETTINGS_HEADING, "设　置", fonts.display, tokens.scrim_veil)
 	_catalog = ResourceLoader.load(CATALOG_PATH) as AccessibilityCatalog
 	if _catalog != null:
 		for setting in _catalog.entries:
@@ -143,6 +145,7 @@ func setup(tokens: UITokens, fonts: UIFonts) -> void:
 	_set_group_tilt([RETURN, CONFIRM], Vector3(0.0, -0.087266, 0.017453))
 	_set_group_tilt([HINT], Vector3(0.0, -0.069813, -0.017453))
 	_set_group_tilt(_row_ids + _row_value_ids, Vector3(0.0, -0.10472, -0.017453))
+	_set_group_tilt([SETTINGS_HEADING], Vector3(0.0, -0.10472, -0.017453))
 
 	for line_id in [CONTEXT_LINE, CONTINUE, SETTINGS, EXIT, RETURN, CONFIRM]:
 		_make_line(line_id)
@@ -202,6 +205,10 @@ func layout(content: Rect2, frame_scale: float, compact: bool, state_y: float) -
 	_targets[TIME] = Vector2(left + 112.0 * frame_scale, top + 72.0 * frame_scale)
 
 	var actions_top := top + state_y
+	# The settings heading sits just above its rows: smaller than the 42px day
+	# line, larger than the 15px rows, so the subpage reads as a titled page.
+	_targets[SETTINGS_HEADING] = Vector2(left, actions_top - 44.0 * frame_scale)
+	_label_sizes[SETTINGS_HEADING] = maxf(24.0 * frame_scale, 16.0)
 	_set_ornament_layout(&"context_start",
 		Vector2(left - 4.0 * frame_scale, top + 54.0 * frame_scale),
 		Vector2(8.0, 1.25) * frame_scale)
@@ -592,6 +599,7 @@ func _apply_state_visibility() -> void:
 		(_lines[id] as MeshInstance3D).visible = in_confirm
 	for id in _row_ids + _row_value_ids:
 		(_labels[id] as Label3D).visible = in_settings
+	(_labels[SETTINGS_HEADING] as Label3D).visible = in_settings
 	for id in _tracks.keys():
 		(_tracks[id] as MeshInstance3D).visible = in_settings
 	(_labels[HINT] as Label3D).visible = not _compact
@@ -607,10 +615,10 @@ func _apply_alpha() -> void:
 		# Keep the charcoal fill dark over snow. The paired snow edge below is the
 		# second contrast channel when a depth-composited word crosses scenery.
 		fill.a *= _alpha * _envelope_alpha_for(id)
-		# Unfocused choices recede to the third opacity step. The confirm page is
+		# Unfocused choices recede to the second opacity step. The confirm page is
 		# exempt: its two buttons keep their colour contrast as the focus cue.
 		if id in focusables and id != _focus and _state != STATE_CONFIRM:
-			fill.a *= _tokens.opacity_steps[2]
+			fill.a *= _tokens.opacity_steps[1]
 		label.modulate = fill
 		var outline := _tokens.ink_primary
 		outline.a *= _alpha * _envelope_alpha_for(id)
