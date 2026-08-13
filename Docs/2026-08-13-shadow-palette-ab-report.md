@@ -119,8 +119,10 @@ lighting controls around it.
 - All 15 real captures completed successfully on Godot 4.7.1 / D3D12 / Forward+
   with the Godot AI capture helper registered. The measurement tool exited 0;
   all three PALE DAY rows passed.
-- A concurrent full-wrapper attempt reported `1968 passed, 1 failed`, but the
-  failure was the unrelated palette fixture unable to create/load `user://`
-  files while other jobs were active; the wrapper also correctly rejected the
-  resulting console `ERROR:` lines. It is not treated as a green result. A
-  clean integration wrapper remains required after concurrent jobs finish.
+- An early concurrent wrapper attempt reported `1968 passed, 1 failed`: an
+  unrelated palette fixture could not create/load `user://` files while other
+  jobs were active, and the wrapper correctly rejected its console `ERROR:`
+  lines. It was not treated as green.
+- After the concurrent fixture writes had stopped, the required wrapper passed
+  cleanly: `bash tools/run_tests.sh` → **`1970 passed, 0 failed`**, exit 0, with
+  no console warning/error/parse/leak output.
