@@ -899,9 +899,9 @@ func _blob(
 				var sole_distance_squared := minf(
 					waist_distance_squared, end_distance_squared
 				)
-				# A dusting shows two pressure contacts rather than the complete sole.
-				# Removing the waist only as `scrape` approaches one leaves medium and
-				# deep snow byte-for-byte on the original three-lobe distance field.
+				# Profiles may simplify their lightest contact patch independently of
+				# medium and deep snow. A neutral endpoint preserves the complete sole;
+				# reducing it removes the waist only as `scrape` approaches one.
 				var dust_separation := scrape * (1.0 - dust_waist_influence)
 				sole_distance_squared = lerpf(
 					sole_distance_squared, dust_end_distance_squared, dust_separation

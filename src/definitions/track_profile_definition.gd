@@ -50,16 +50,16 @@ extends Resource
 @export_range(0.0, 1.0, 0.01) var dust_irregularity_scale := 1.0
 
 @export_group("Dusting pressure")
-## Powder too thin to hold a boot-shaped pocket records the two load-bearing
-## contacts instead: a restrained heel and a stronger forefoot.  These values
-## are blended in by `scuff`, so a deep print keeps the complete sole above.
+## Optional endpoint shaping for subjects whose lightest marks genuinely lose
+## part of their contact patch. Values of 1 retain the complete authored sole;
+## lower values are blended in by `scuff`, so deep prints remain unchanged.
 @export_range(0.0, 1.0, 0.01) var dust_waist_influence := 1.0
 @export_range(0.5, 1.0, 0.01) var dust_lobe_length_scale := 1.0
 @export_range(0.05, 1.0, 0.01) var dust_heel_weight := 1.0
 @export_range(0.05, 1.0, 0.01) var dust_forefoot_weight := 1.0
-## Camera-scale readability for the two shallow pressure contacts. It is
-## interpolated by the same continuous `scuff` fact as the dust silhouette, so
-## 1.0 means no change and a deep footprint remains byte-identical.
+## Camera-scale readability at the dust endpoint. It is interpolated by the
+## same continuous `scuff` fact as the silhouette, so 1.0 means no change and a
+## deep footprint remains byte-identical.
 @export_range(1.0, 2.0, 0.01) var dust_readability_gain := 1.0
 
 

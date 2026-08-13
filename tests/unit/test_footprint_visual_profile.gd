@@ -89,6 +89,8 @@ func test_rim_uses_one_shared_peak_gate_without_more_track_fetches() -> void:
 	var source := FileAccess.get_file_as_string(SHADER_PATH)
 	assert_true(source.contains("track_rim_gate_start"), "the shader has no thin-snow rim gate")
 	assert_true(source.contains("track_rim_gate_full"), "the shader has no full rim threshold")
+	assert_true(source.contains("track_thin_rim_share"),
+		"the shader still turns the displaced thin-snow shoulder completely off")
 	var start := source.find("vec2 track_gradient")
 	var finish := source.find("\n}\n", start)
 	var body := source.substr(start, finish - start)
@@ -98,13 +100,17 @@ func test_rim_uses_one_shared_peak_gate_without_more_track_fetches() -> void:
 		"each sample has its own gate, which can draw four mismatched halo fragments")
 
 
-func test_the_shared_gate_cannot_lift_a_thin_scuff_above_the_snow() -> void:
+func test_the_shared_gate_keeps_a_restrained_thin_rim_below_the_snow() -> void:
 	# Mirrors the shader constants deliberately: this is the physical inequality
-	# the authored numbers must maintain, independently of a screenshot.
+	# the authored numbers must maintain, independently of a screenshot. A
+	# dusting still displaces a little snow at the shoulder: turning its rim all
+	# the way off removes the only highlight/shadow pair that makes the depression
+	# read as volume at the game camera.
 	var peak := 0.22
 	var gate_start := 0.30
 	var gate_full := 0.58
-	var gate := smoothstep(gate_start, gate_full, peak)
+	var thin_rim_share := 0.55
+	var gate := lerpf(thin_rim_share, 1.0, smoothstep(gate_start, gate_full, peak))
 	var deepest_height := -INF
 	for step in range(23):
 		var value := float(step) / 100.0
@@ -114,6 +120,8 @@ func test_the_shared_gate_cannot_lift_a_thin_scuff_above_the_snow() -> void:
 		deepest_height = maxf(deepest_height, height)
 	assert_true(deepest_height <= 0.000001,
 		"a 0.22 scuff rises %.4f m above untouched snow" % deepest_height)
+	assert_true(gate > 0.0 and gate < 1.0,
+		"the thin rim is either completely disabled or restored as a full halo")
 
 
 ## The gameplay trail must read as a cadence of planted boots, not as one low,
@@ -156,67 +164,53 @@ func test_a_thin_boot_keeps_a_clear_gap_at_the_shipped_stride() -> void:
 	)
 
 
-## The approved dusting reference is not a complete miniature sole. It is two
-## pressure contacts: a paler heel and a darker forefoot with original snow
-## between them. This exercises the actual CPU raster contract without asking a
-## camera, light or post-process to manufacture that separation.
-func test_a_thin_boot_is_two_shallow_pressure_lobes_with_a_low_bridge() -> void:
+## The shipped caller floors a dusting at strength 0.22 and takes at most 30%
+## away through bite jitter. The old test exercised only the 1.0 bite endpoint,
+## so the weakest production step could lose another 30% and still pass. Both
+## endpoints have to remain a physical boot-shaped depression, not two pale dots.
+func test_every_production_bite_leaves_a_readable_thin_boot_depression() -> void:
 	var profile = load(PROFILE_PATH)
-	var mask: TrackMask = TrackMaskScript.new()
-	mask.build_at(Vector3.ZERO)
 	assert_not_null(profile)
 	if profile == null:
-		mask.free()
-		return
-	var dust_readability_gain = profile.get("dust_readability_gain")
-	assert_not_null(
-		dust_readability_gain,
-		"the dusting has no data-owned readability gain independent of deep prints"
-	)
-	if dust_readability_gain == null:
-		mask.free()
 		return
 
+	var weakest := _thin_boot_samples(profile, 0.22 * (1.0 - 0.30))
+	var ordinary := _thin_boot_samples(profile, 0.22)
+	for sample in [weakest, ordinary]:
+		assert_true(sample.heel >= 0.13,
+			"heel peak %.4f is a flat tonal dot, not a depression" % sample.heel)
+		assert_true(sample.forefoot >= 0.15 and sample.forefoot <= 0.23,
+			"forefoot peak %.4f left the readable thin-snow response" % sample.forefoot)
+		assert_true(sample.waist >= sample.heel * 0.55,
+			"waist %.4f disconnects heel %.4f from forefoot %.4f"
+				% [sample.waist, sample.heel, sample.forefoot])
+
+	# The 0.16 m terrain response makes even the weakest planted forefoot about
+	# 25 mm deep. More importantly, its 6 cm reconstructed-normal sample crosses
+	# the pale-day cel band's fully-lit boundary instead of remaining a flat tint.
+	assert_true(weakest.forefoot * 0.16 >= 0.024,
+		"weakest production bite is only %.1f mm deep" % (weakest.forefoot * 160.0))
+	var tilt_degrees := rad_to_deg(atan(weakest.forefoot * 0.16 / (2.0 * 0.06)))
+	var readable_boundary := 21.5 - rad_to_deg(asin(0.12 + 0.07))
+	assert_true(tilt_degrees >= readable_boundary + 0.5,
+		"weakest bite tilts %.2f degrees, only %.2f past the cel boundary"
+			% [tilt_degrees, tilt_degrees - readable_boundary])
+
+
+func _thin_boot_samples(profile: TrackProfileDefinition, strength: float) -> Dictionary:
+	var mask: TrackMask = TrackMaskScript.new()
+	mask.build_at(Vector3.ZERO)
 	var radius := 0.28 * 0.74
-	var strength := 0.22
 	mask.call(&"stamp_profiled", Vector3.ZERO, radius, strength, Vector2.RIGHT, 1.5,
 		0.74, 0.0, 17.0, Vector2.ZERO, 1.0, 1.0, profile)
 	var along_scale: float = radius * float(profile.dust_length_scale)
-	var heel_x: float = along_scale * float(profile.heel_centre_x)
-	var forefoot_x: float = along_scale * float(profile.forefoot_centre_x)
-	var heel_edge: float = along_scale * (
-		float(profile.heel_centre_x)
-		+ float(profile.heel_half_length) * float(profile.dust_lobe_length_scale)
-	)
-	var forefoot_edge: float = along_scale * (
-		float(profile.forefoot_centre_x)
-		- float(profile.forefoot_half_length) * float(profile.dust_lobe_length_scale)
-	)
-	var bridge_x := 0.5 * (heel_edge + forefoot_edge)
-	var heel: float = mask.value_at(Vector3(heel_x, 0.0, 0.0))
-	var forefoot: float = mask.value_at(Vector3(forefoot_x, 0.0, 0.0))
-	var bridge: float = mask.value_at(Vector3(bridge_x, 0.0, 0.0))
-
-	assert_true(heel > 0.0, "the shallow heel pressure lobe disappeared")
-	assert_true(forefoot >= heel * 1.20,
-		"forefoot %.4f is not visibly stronger than heel %.4f" % [forefoot, heel])
-	assert_true(bridge <= heel * 0.20,
-		"bridge %.4f joins heel %.4f to forefoot %.4f into a complete sole"
-			% [bridge, heel, forefoot])
-
-	# TerrainRenderer's shipped 0.16 m response turns these dimensionless peaks
-	# into the physical indentation. The owner found 7--11 mm too faint at the
-	# game camera; retain a shallow depression but give both contacts enough
-	# normal slope to read without a colour decal or a positive halo.
-	assert_true(heel * 0.16 >= 0.012 and heel * 0.16 <= 0.014,
-		"heel indentation %.4f m is outside the thin-snow band" % (heel * 0.16))
-	assert_true(forefoot * 0.16 >= 0.015 and forefoot * 0.16 <= 0.018,
-		"forefoot indentation %.4f m is outside the thin-snow band" % (forefoot * 0.16))
-	# Both peaks are far below the shader's 0.30 rim gate. No positive halo can
-	# be generated around either lobe even before the shared-rim inequality test.
-	assert_true(maxf(heel, forefoot) < 0.30,
-		"a dust lobe reached the positive-rim gate")
+	var result := {
+		"heel": mask.value_at(Vector3(along_scale * float(profile.heel_centre_x), 0.0, 0.0)),
+		"waist": mask.value_at(Vector3(along_scale * float(profile.waist_centre_x), 0.0, 0.0)),
+		"forefoot": mask.value_at(Vector3(along_scale * float(profile.forefoot_centre_x), 0.0, 0.0)),
+	}
 	mask.free()
+	return result
 
 
 func test_dust_lobe_language_fades_out_completely_in_deep_snow() -> void:

@@ -139,12 +139,15 @@ uniform float track_depth = 0.05;
 // mask's falloff it sits. Small: a rim you can see the shape of, not a crater.
 uniform float track_rim = 0.014;
 uniform float track_rim_extent = 0.4;
-// A shallow scrape has no displaced bank high enough to rise above the snow.
-// The four normal samples share one gate based on their deepest neighbour: this
-// keeps a deep cavity's shoulder, removes the thin-snow halo, and costs exactly
-// the same four texture fetches as the ungated normal.
+// The four normal samples share one gate based on their deepest neighbour. A
+// light print keeps only a restrained part of its displaced shoulder, while a
+// deep cavity recovers the full rim, at the same four-fetch budget.
 uniform float track_rim_gate_start = 0.30;
 uniform float track_rim_gate_full = 0.58;
+// A dusting still pushes a restrained shoulder out of the planted sole. Keep a
+// partial rim so the depression owns a light/shadow pair at camera distance;
+// 0 would return it to a flat tint, while 1 would restore the old full halo.
+uniform float track_thin_rim_share = 0.55;
 
 // How far the print's colour shifts toward the track tones. Low on purpose:
 // with the normal doing the work a print reads as a dent, and leaning on
@@ -468,7 +471,11 @@ vec2 track_gradient(vec2 w, float e) {
 	float zr = track_at(w + vec2(0.0, e));
 	float zl = track_at(w - vec2(0.0, e));
 	float local_peak = max(max(xr, xl), max(zr, zl));
-	float rim_gate = smoothstep(track_rim_gate_start, track_rim_gate_full, local_peak);
+	float rim_gate = mix(
+		track_thin_rim_share,
+		1.0,
+		smoothstep(track_rim_gate_start, track_rim_gate_full, local_peak)
+	);
 	return vec2(
 		track_height(xr, rim_gate) - track_height(xl, rim_gate),
 		track_height(zr, rim_gate) - track_height(zl, rim_gate)
