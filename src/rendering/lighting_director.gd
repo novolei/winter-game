@@ -160,9 +160,17 @@ const EVENT_NIGHT_STARTED := &"clock.night_started"
 @export var sun_azimuth_arc_degrees := 13.0
 
 ## Penumbra width grows with distance from the caster, and these shadows are
-## 25 m long. At 2.2 degrees the far half of every shadow was penumbra and the
-## sheds cast fuzzy ovals; rule 10 wants a soft *edge* around a solid block.
-@export var sun_angular_softness := 0.9
+## 25 m long. At 0.9 degrees the PCSS sampling region became wide enough that
+## its rotating taps survived the two-band snow threshold as a visible herringbone
+## / ripple pattern. It was most obvious in broad tree shadows, but it was the
+## filter, not a tree, track or terrain seam.
+##
+## 0.30 degrees was compared at the real camera against 0.15, 0.50 and 0.90:
+## it keeps a narrow, continuous snow-soft edge while no longer exposing the
+## individual penumbra samples. `tools/capture_shadow_ripple_ab.tscn` is the
+## fixed-camera regression shutter for that comparison. Rule 10 wants a soft
+## *edge* around a solid block, never a screen-sized fuzzy or stippled region.
+@export var sun_angular_softness := 0.3
 
 ## What is on screen before the clock has said anything. Day 1's daylight, so
 ## the first frame of a run is already the frame the run opens on rather than
@@ -406,7 +414,9 @@ func _resolve_sun() -> void:
 	_sun.directional_shadow_fade_start = 0.98
 	_sun.shadow_normal_bias = 2.0
 	_sun.shadow_bias = 0.04
-	_sun.shadow_blur = 1.0
+	# Match the reduced light angle above. A larger constant blur would restore
+	# the broad filtered region that the angle deliberately removed.
+	_sun.shadow_blur = 0.5
 
 
 # --- the arc ----------------------------------------------------------------
