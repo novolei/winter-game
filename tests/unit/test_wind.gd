@@ -634,20 +634,27 @@ func test_the_wire_amplitude_stays_inside_what_a_rigid_span_can_get_away_with() 
 	assert_true(sway.sway_metres > 0.0)
 
 
-# --- the cone, and the mark it has to stay under -----------------------------
+# --- the sheet's shape, and the budget that decides whether it has one --------
 #
-# A STREAK FLIES STRAIGHT. Whatever the emitter gives it -- a direction, and
-# later a lane -- survives only if the crosswind wander it picks up over its own
-# life is small next to the scale of that structure.
+# THE DEFECT THESE WERE WRITTEN FOR, TWICE OVER, AND IT IS THE SAME ONE.
 #
-# At 14 degrees the cone smeared a streak 2.7 m sideways over an 11 m flight,
-# against a mark 0.55 m long. So the sheet, which is the only thing on screen
-# that shows a wind direction, scattered over 84 degrees at every instant while
-# the wind itself swung 91. The owner called the direction fixed and he was
-# reading the picture correctly.
+# A streak flies STRAIGHT. Whatever structure the emitter is given -- a direction,
+# a lane -- survives only if the crosswind wander a streak picks up over its own
+# life is small compared with the scale of that structure. Both times this file's
+# subject got it wrong, every parameter still read correct and the picture was a
+# uniform wash:
 #
-# Nothing about that failed. Every parameter read correct, the emitter emitted,
-# and the picture was a uniform wash -- which is the only way this can go wrong.
+#   * the CONE at 14 degrees smeared a streak 2.7 m sideways over an 11 m flight,
+#     against a mark 0.55 m long -- so the sheet, which is the only thing on
+#     screen that shows a wind direction, scattered over 84 degrees at every
+#     instant while the wind itself swung 91. The owner called the direction
+#     fixed and he was reading the picture correctly.
+#   * the MEANDER, authored at 1.9 m from the field figures, painted a band 3.8 m
+#     wide against a 5.0 m lane spacing. Emission histogram: cone 0.67 + swing
+#     3.80 + width 0.30 = 4.77 m of 5.0, ninety-five per cent. The lanes were shut
+#     and the rendered frame was indistinguishable from having no lanes at all.
+#
+# So the thing to assert is not any one of those numbers. It is the BUDGET.
 
 
 func _drift() -> Spindrift:
@@ -660,8 +667,8 @@ func _drift() -> Spindrift:
 ##
 ## Measured on screen at the gameplay framing, spindrift alone, same instant of
 ## the same deterministic run: streak angle p10..p90 went from 84.4 degrees to
-## 19.9 on the proposal's own instrument, and from 29.6 to 17.2 once the plus or
-## minus 90 degree wrap in that instrument is corrected for. Either way it is the
+## 19.9 on the proposal's own instrument, and from 29.6 to 17.2 once the ±90
+## degree wrap in that instrument is corrected for. Either way it is the
 ## difference between a sheet that says which way the wind is going and one that
 ## does not.
 func test_the_emission_cone_cannot_erase_the_mark_it_draws() -> void:
@@ -671,6 +678,163 @@ func test_the_emission_cone_cannot_erase_the_mark_it_draws() -> void:
 		"the %.1f degree cone wanders a streak %.2f m across a %.2f m mark"
 			% [drift.spread_degrees, drift.crosswind_spread_m(), drift.streak_length]
 	)
+
+
+## THE WHOLE BUDGET. Everything that widens a lane, against the distance between
+## lanes -- the cone above is only one of the three terms, and the meander was
+## the one that had eaten 76% of the spacing on its own.
+func test_the_sheet_cannot_smear_away_the_structure_it_is_emitted_on() -> void:
+	var drift := _drift()
+	assert_true(
+		drift.crosswind_smear_m() < drift.ribbon_spacing_m * 0.5,
+		"a streak's crosswind wander totals %.2f m against a %.2f m lane spacing "
+			% [drift.crosswind_smear_m(), drift.ribbon_spacing_m]
+			+ "(cone %.2f + meander %.2f + width %.2f): the lanes are closed up"
+			% [drift.crosswind_spread_m(), drift.meander_swing_m(), drift.ribbon_width_m]
+	)
+
+
+## How clustered a set of points is along one axis, folded onto the lane period.
+## A wash comes back near zero; lanes come back near one or above.
+func _lane_relief(points: PackedVector3Array, axis: int, period: float) -> float:
+	if points.is_empty() or period <= 0.0:
+		return 0.0
+	var bins := 20
+	var counts := PackedFloat32Array()
+	counts.resize(bins)
+	for point in points:
+		var value: float = point.x if axis == 0 else point.z
+		var index := clampi(int(fposmod(value, period) / period * float(bins)), 0, bins - 1)
+		counts[index] += 1.0
+	var mean := float(points.size()) / float(bins)
+	if mean <= 0.0:
+		return 0.0
+	var variance := 0.0
+	for count in counts:
+		variance += (count - mean) * (count - mean)
+	return sqrt(variance / float(bins)) / mean
+
+
+## THE SHEET IS EMITTED IN RIBBONS, and a uniform box would fail this outright.
+##
+## Folded onto one lane period rather than counted raw, so the measure is of the
+## PATTERN and not of how many lanes happen to fit the volume.
+func test_the_sheet_is_emitted_in_ribbons_rather_than_as_a_wash() -> void:
+	var drift := _drift()
+	# Wind along +X, so the lanes run along x and the structure is in z.
+	drift.set_wind(Vector3(1.0, 0.0, 0.0))
+	drift._build()
+	var points := drift.baked_points()
+	assert_true(points.size() > 1000, "only %d emission points" % points.size())
+	var relief := _lane_relief(points, 2, drift.ribbon_spacing_m)
+	# A uniform scatter of this many points over twenty bins comes back at about
+	# 0.07 from sampling alone. Anything near that is a wash wearing lanes.
+	assert_true(
+		relief > 1.0,
+		"the emission varies by only %.2f across a lane period -- that is a box" % relief
+	)
+
+
+## ...and they lie ALONG the wind, which is the whole reason a straight-flying
+## streak stays on its ribbon. A lane pattern that did not turn with the heading
+## would be crossed by the snow rather than followed by it, and would be erased
+## within one lifetime whatever the cone did.
+func test_the_ribbons_turn_with_the_wind() -> void:
+	var drift := _drift()
+	drift.set_wind(Vector3(1.0, 0.0, 0.0))
+	drift._build()
+	var across_x := _lane_relief(drift.baked_points(), 2, drift.ribbon_spacing_m)
+	var along_x := _lane_relief(drift.baked_points(), 0, drift.ribbon_spacing_m)
+	assert_true(
+		across_x > along_x * 3.0,
+		"with the wind along +X the lanes showed %.2f across it and %.2f along it"
+			% [across_x, along_x]
+	)
+	# Turn the wind a quarter and the structure has to change axis with it.
+	drift.set_wind(Vector3(0.0, 0.0, 1.0))
+	drift.bake(0.0)
+	var across_z := _lane_relief(drift.baked_points(), 0, drift.ribbon_spacing_m)
+	var along_z := _lane_relief(drift.baked_points(), 2, drift.ribbon_spacing_m)
+	assert_true(
+		across_z > along_z * 3.0,
+		"the wind turned 90 degrees and the lanes did not: %.2f across, %.2f along"
+			% [across_z, along_z]
+	)
+
+
+## THE ONE THING THE PROPOSAL FLAGGED AS UNTESTED.
+##
+## The pattern is baked, so it is static until it is baked again -- and a field
+## that never moved would be wallpaper: a standing player under a steady wind
+## would see the same stripes in the same places for as long as he stood there.
+##
+## The rebake has to do two opposite things at once. It has to MOVE the pattern,
+## and it has to move it by so little that no birth position jumps. A jump would
+## not error and would not warn; it would be a frame in which a band of snow
+## appeared somewhere it had not been.
+##
+## The exception is deliberate and is named: a lane that slides off one edge of
+## the volume is wrapped back to the other, which is a full-width jump for those
+## few points. It is invisible because it is a BIRTH position in a field that is
+## statistically the same everywhere -- but it has to stay a few points, so the
+## bound is on the ninety-ninth percentile rather than on the maximum.
+func test_a_rebake_moves_the_pattern_without_teleporting_it() -> void:
+	var drift := _drift()
+	drift.set_wind(Vector3(1.0, 0.0, 0.0))
+	drift._build()
+	var before := drift.baked_points()
+	drift.bake(drift.rebake_seconds)
+	var after := drift.baked_points()
+	assert_eq(after.size(), before.size())
+	var moves := PackedFloat32Array()
+	for index in before.size():
+		moves.append((after[index] - before[index]).length())
+	moves.sort()
+	var median: float = moves[moves.size() / 2]
+	var p99: float = moves[mini(int(moves.size() * 0.99), moves.size() - 1)]
+	assert_true(
+		median > 0.0001,
+		"nothing moved between two bakes %.2f s apart -- the field is wallpaper"
+			% drift.rebake_seconds
+	)
+	assert_true(
+		p99 < drift.streak_length,
+		"99%% of birth points moved up to %.3f m in one rebake, against a %.3f m "
+			% [p99, drift.streak_length] + "streak -- that is a seam, not a drift"
+	)
+
+
+## THE FIELD PULSES, and the pulse may neither stop the sheet nor top out.
+##
+## Bounded above at 1 because it multiplies `amount_ratio`, which the engine
+## clamps: an envelope that overshot would flat-top at every peak, and a
+## flat-topped surge reads as a mechanism rather than as weather.
+func test_the_pulse_eases_the_sheet_without_ever_switching_it_off() -> void:
+	var drift := _drift()
+	var low := 2.0
+	var high := -1.0
+	var previous: float = SpindriftScript.pulse_at(0.0, drift.pulse_seconds, drift.pulse_depth)
+	var biggest_step := 0.0
+	var t := 0.0
+	while t < 600.0:
+		t += FRAME
+		var now: float = SpindriftScript.pulse_at(t, drift.pulse_seconds, drift.pulse_depth)
+		low = minf(low, now)
+		high = maxf(high, now)
+		biggest_step = maxf(biggest_step, absf(now - previous))
+		previous = now
+	assert_true(high <= 1.0001, "the pulse reached %.4f and would be clamped" % high)
+	assert_true(
+		low >= 1.0 - drift.pulse_depth - 0.0001,
+		"the pulse fell to %.4f, past its own depth of %.2f" % [low, drift.pulse_depth]
+	)
+	assert_true(
+		high - low > 0.25,
+		"the pulse only spans %.4f -- a sustained gale still draws a constant wash"
+			% (high - low)
+	)
+	# Continuous, like everything else that reaches a particle system here.
+	assert_true(biggest_step < 0.002, "the pulse stepped by %.4f" % biggest_step)
 
 
 func test_spindrift_carries_no_colour_of_its_own() -> void:
