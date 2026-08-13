@@ -1,6 +1,6 @@
 # Snow shadow colour — art-direction proposal
 
-**Status:** proposal only — no game, asset, palette, or shader file was changed.  
+**Status:** proposal only — no game, asset, palette, or shader file was changed.
 **Question:** the supplied gameplay image makes the blue cast shadows feel artificial. Should they be refined?
 
 ## Decision
@@ -88,5 +88,5 @@ The project registered its Godot AI debug capture helper during each live captur
 
 ## Audit scope
 
-Read: AGENT briefing; Art Bible §4 and §10; ColorBible; palette and lighting generators; `LightingPreset`, `LightingDirector`, `TerrainRenderer`, `CelPainter`; both exterior cel shaders; related unit/art tests; Wave 2 and Wave 3 lighting reports.  
+Read: AGENT briefing; Art Bible §4 and §10; ColorBible; palette and lighting generators; `LightingPreset`, `LightingDirector`, `TerrainRenderer`, `CelPainter`; both exterior cel shaders; related unit/art tests; Wave 2 and Wave 3 lighting reports.
 Captured: six real runtime presets on Godot 4.7.1 / D3D12 / Forward+; no project files were modified for the capture.
