@@ -155,8 +155,8 @@ const SNOW_INTERACTION_DIRECTORY := "res://data/snow_interactions"
 ##   2. the outline is TORN at a coarse scale -- lobes, tears, bites out of the
 ##      shape -- not a fine wobble on a smooth oval. "An oval with noise applied"
 ##      against "a hole that fell in on itself".
-##   3. in thin snow the foot SCRAPES rather than punches, so the mark there is a
-##      broken scuffed patch and not a small version of the hole.
+##   3. thin snow cannot hold a punched hole. Anonymous marks retain the original
+##      scrape morph, while an authored boot may keep a shallow planted sole.
 ##
 ## HOW THE SHADOW IS ACTUALLY DRAWN, because it decides every number below. The
 ## mask is never seen. What is seen is the normal snow_ground.gdshader rebuilds
@@ -190,7 +190,7 @@ const SNOW_INTERACTION_DIRECTORY := "res://data/snow_interactions"
 ##
 ## What the shape CAN do is the other two, and they are what the rest of this
 ## block is: an outline that is torn instead of rippled, and a mark in thin snow
-## that is a scrape instead of a small hole.
+## that is authored independently of the deep hole.
 
 ## Lobes across one print. COARSE, deliberately: 1.6 -- what this was -- puts
 ## three wavelengths across a print and reads as a noisy ellipse, which is
@@ -252,10 +252,10 @@ const EDGE_PUSH_BEHIND := 0.4
 const FLOOR_BREAK_M := 0.28
 const FLOOR_BREAK_GAIN := 0.85
 
-## THE SCUFF. In snow too thin to punch through, the foot scrapes: the mark is a
-## broken scraped patch that is longer than the boot, has no pressed floor under
-## it, and carries almost no shadow. It is a different event from a hole and not
-## a small one, so these are what `scuff` morphs the shape toward.
+## THE LEGACY SCUFF. Anonymous marks in snow too thin to punch through morph
+## toward a longer broken patch. Profiled tracks override this language: the
+## human winter boot now keeps a short planted sole because the extended form
+## read as an ice-skate scratch from the gameplay camera.
 ##
 ## `SCUFF_CORE` rather than zero: even a scrape presses a little of the snow flat
 ## where the sole first touched. Everything else about it is the absence of the
@@ -569,12 +569,10 @@ func static_extent() -> float:
 ## varies it per step, and the tests can hold it still. Once written, a print is
 ## texels and can never shimmer or redraw itself differently.
 ##
-## `scuff` is 0 for a boot punched into a drift and 1 for one SCRAPED across snow
-## too thin to punch through. It is a different event, not a smaller one: the
-## scrape is longer than the boot that made it, has no pressed floor under it and
-## carries almost no shadow, which is why it is a parameter here rather than a
-## smaller `radius_m` at the call site. The caller morphs it continuously with the
-## snow, so there is no moment at which the mark changes kind.
+## `scuff` is the continuous thin-snow factor: 0 in a drift and 1 in a dusting.
+## Anonymous marks use the legacy scrape constants; an authored profile may map
+## the same fact to a compact planted sole. Keeping the input continuous avoids a
+## depth at which the mark suddenly changes kind.
 ##
 ## `fall` and `downhill_scale` put the print into the ground rather than onto
 ## it. This mask is a plan view -- it is sampled by world XZ -- so a shape that
@@ -707,6 +705,11 @@ func _blob(
 ) -> Rect2i:
 	var touched := Rect2i()
 	var scrape := clampf(scuff, 0.0, 1.0)
+	var edge_irregularity := maxf(irregularity, 0.0)
+	if track_profile != null:
+		edge_irregularity *= lerpf(
+			1.0, track_profile.dust_irregularity_scale, scrape
+		)
 	var radius := maxf(radius_m / cell_m, 1.0)
 	# A scrape is longer than the boot that made it AND narrower, so the two axes
 	# move in opposite directions -- and the box below has to be told, or the ends
@@ -722,7 +725,7 @@ func _blob(
 		narrow = lerpf(1.0, track_profile.dust_width_scale, scrape)
 	# The warp pushes the outline outward as often as inward, so the box has to
 	# allow for it or the ragged edge is clipped back to a straight line.
-	var reach := radius * (1.0 + maxf(irregularity, 0.0)) * stretch
+	var reach := radius * (1.0 + edge_irregularity) * stretch
 	var min_x := maxi(int(floorf(cell.x - reach)), 0)
 	var max_x := mini(int(ceilf(cell.x + reach)), resolution - 1)
 	var min_y := maxi(int(floorf(cell.y - reach)), 0)
@@ -733,11 +736,11 @@ func _blob(
 	# How much of the floor is broken up by what fell onto it. Both terms, because
 	# the two are different events with the same symptom: a deep print's walls
 	# collapse into it, and a scrape never had a floor to begin with.
-	var broken := clampf(FLOOR_BREAK_GAIN * maxf(irregularity, 0.0) + SCUFF_BREAK * scrape, 0.0, 0.9)
+	var broken := clampf(FLOOR_BREAK_GAIN * edge_irregularity + SCUFF_BREAK * scrape, 0.0, 0.9)
 	if track_profile != null:
 		pressed = lerpf(core, track_profile.dust_core, scrape)
 		broken = clampf(
-			FLOOR_BREAK_GAIN * maxf(irregularity, 0.0)
+			FLOOR_BREAK_GAIN * edge_irregularity
 			+ track_profile.dust_break * scrape, 0.0, 0.9
 		)
 
@@ -767,7 +770,7 @@ func _blob(
 		# 1.5:1 footprint therefore visited almost twice as many untouched texels
 		# as its rotated ellipse can reach. This exact rotated AABB includes the
 		# full irregularity allowance and changes no mask value or overlap rule.
-		var edge_allowance := 1.0 + maxf(irregularity, 0.0)
+		var edge_allowance := 1.0 + edge_irregularity
 		var along_reach := radius * stretch * edge_allowance
 		var across_reach := radius * narrow / aspect * edge_allowance
 		var half_x := sqrt(
@@ -879,7 +882,7 @@ func _blob(
 				))
 			else:
 				distance = sqrt(distance_squared)
-			if irregularity > 0.0:
+			if edge_irregularity > 0.0:
 				# Warping the distance rather than the radius means the outline
 				# is displaced in whatever direction the noise happens to run,
 				# which is what makes it crumble rather than merely ripple.
@@ -901,7 +904,7 @@ func _blob(
 				# ungated, a warp this coarse tears the print into three or four
 				# disconnected islands -- which is not a bite out of a hole, it is
 				# the ring of hard little fragments that was rejected once already.
-				distance += warp * irregularity * smoothstep(
+				distance += warp * edge_irregularity * smoothstep(
 					EDGE_TEAR_FROM, EDGE_TEAR_FULL, distance
 				)
 			if distance >= 1.0:

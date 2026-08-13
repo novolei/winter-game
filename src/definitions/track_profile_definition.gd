@@ -44,6 +44,10 @@ extends Resource
 @export_range(0.7, 1.3, 0.01) var dust_width_scale := 1.0
 @export_range(0.0, 0.9, 0.01) var dust_core := 0.55
 @export_range(0.0, 0.9, 0.01) var dust_break := 0.18
+## Deep walls can collapse into coarse lobes; a dusting cannot.  Scaling the
+## same irregularity down at the profile boundary keeps the light sole intact
+## without taking the torn edge away from medium and deep prints.
+@export_range(0.0, 1.0, 0.01) var dust_irregularity_scale := 1.0
 
 
 func sole_definition_at(wade: float) -> float:

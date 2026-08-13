@@ -55,3 +55,38 @@ the reported GPU thermal/full-load stability incident and the instruction to
 avoid excessive performance testing.  Visual acceptance remains deferred; use
 the existing user screenshots and the mask-shape assertions for this delivery,
 then obtain a user-authorised very short fixed-camera capture in a cool session.
+
+## Thin-snow cadence correction
+
+The second user screenshot showed that the first correction still read as a
+lengthwise skate mark. Static inspection found two independent contributors:
+
+- the profile still lengthened a dust print to `1.03`, while keeping `0.16`
+  world-space breakup and the full thin-print edge irregularity;
+- the running Godot editor process predates commit `d66fbcc`, so a game already
+  running from that editor can retain the older script/resource instances until
+  the play session is stopped and started again.
+
+The winter-boot resource now owns a compact thin-snow response: length `0.80`,
+width `1.08`, core `0.72`, breakup `0.03`, sole definition `0.92`, and thin edge
+irregularity scale `0.20`. Deep, body-contact and furrow values are unchanged.
+The mask applies that irregularity scale only as `scuff` approaches one, so deep
+walls keep their approved torn silhouette.
+
+The conservative no-bridge contract removes the real left/right offset and uses
+the widest shipped scale jitter:
+
+`gap = 0.72 - 2 * (0.28 * 0.74 * 1.08) * 0.80 * (1 + 0.34 * 0.20)`
+
+This yields **0.338 m of guaranteed untouched snow** between consecutive print
+extents. The real alternating lateral positions increase centre distance from
+`0.720 m` to `sqrt(0.72^2 + 0.38^2) = 0.814 m`, so this is the worst case even
+under heading jitter. A focused CPU-only RED/GREEN test pins a minimum `0.30 m`
+gap, breakup at most `0.06`, and dust sole definition at least `0.90`.
+
+No D3D12 process, GUI run, capture, full wrapper or performance probe was started
+for this correction. The focused CPU-only suite completed in 1.3 seconds with
+**54 passed, 0 failed**. Visual acceptance remains deliberately deferred; first
+stop the currently running play session and start it again so the new resource is
+actually loaded, then judge a newly walked, non-retraced line (old persistent
+marks and turn-overlap are expected to remain in the mask).

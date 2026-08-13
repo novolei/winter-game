@@ -114,3 +114,43 @@ func test_the_shared_gate_cannot_lift_a_thin_scuff_above_the_snow() -> void:
 		deepest_height = maxf(deepest_height, height)
 	assert_true(deepest_height <= 0.000001,
 		"a 0.22 scuff rises %.4f m above untouched snow" % deepest_height)
+
+
+## The gameplay trail must read as a cadence of planted boots, not as one low,
+## ragged stroke.  This is deliberately a geometry contract rather than a
+## screenshot gate: the owner has paused GPU captures, and no camera can rescue
+## two stamps whose possible extents close the untouched-snow gap between them.
+func test_a_thin_boot_keeps_a_clear_gap_at_the_shipped_stride() -> void:
+	var profile = load(PROFILE_PATH)
+	assert_not_null(profile)
+	if profile == null:
+		return
+	var dust_irregularity_scale = profile.get("dust_irregularity_scale")
+	assert_not_null(
+		dust_irregularity_scale,
+		"the profile cannot restrain torn deep-snow walls independently in a dusting"
+	)
+	if dust_irregularity_scale == null:
+		return
+
+	# Worst shipped scale jitter, with the lateral alternation deliberately
+	# removed: a straight centre-line pair is closer than the real left/right
+	# cadence and is therefore the conservative case.
+	var radius := 0.28 * 0.74 * 1.08
+	var stride := 0.72
+	var edge_allowance := 1.0 + 0.34 * float(dust_irregularity_scale)
+	var half_reach := radius * float(profile.dust_length_scale) * edge_allowance
+	var guaranteed_gap := stride - 2.0 * half_reach
+	assert_true(
+		guaranteed_gap >= 0.30,
+		"worst-case thin prints leave only %.3f m untouched; the chain can read as a skate line"
+			% guaranteed_gap
+	)
+	assert_true(
+		float(profile.dust_break) <= 0.06,
+		"dust breakup %.3f fragments the light sole into a lengthwise scratch" % profile.dust_break
+	)
+	assert_true(
+		float(profile.sole_definition_dust) >= 0.90,
+		"the dusting does not preserve enough of the authored heel/waist/forefoot silhouette"
+	)
