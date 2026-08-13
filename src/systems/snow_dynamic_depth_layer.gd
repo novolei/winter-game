@@ -8,6 +8,12 @@ extends RefCounted
 var tile_size_m := 3.75
 var maximum_tiles := 2048
 
+## This format is deliberately a list of changed world tiles, never a 512²
+## image.  It is owned by the layer so a save owner can persist the same sparse
+## state without reaching into its private map.
+const PERSISTENCE_VERSION := 1
+const MAX_PERSISTED_TILES := 8192
+
 var _tiles: Dictionary = {}
 var _tick := 0
 
@@ -105,6 +111,95 @@ func total_depth_m() -> float:
 		if record is Dictionary:
 			total += float((record as Dictionary).get("depth", 0.0))
 	return total
+
+
+## A deterministic, Variant-serialisable view of the mutable sparse state.
+## The caller owns file I/O and run policy; this layer only answers what one
+## resumed simulation needs.  Sorting removes Dictionary iteration order from
+## saves, which keeps replay diffs readable and stable.
+func create_persistence_snapshot() -> Dictionary:
+	var keys: Array[Vector2i] = []
+	for raw_key in _tiles:
+		if raw_key is Vector2i:
+			keys.append(raw_key as Vector2i)
+	keys.sort_custom(_comes_before)
+	var tiles: Array[Dictionary] = []
+	for key in keys:
+		var record: Dictionary = _tiles[key]
+		tiles.append({
+			"x": key.x,
+			"z": key.y,
+			"depth_m": float(record.get("depth", 0.0)),
+			"touched_tick": int(record.get("touched", 0)),
+		})
+	return {
+		"version": PERSISTENCE_VERSION,
+		"tile_size_m": tile_size_m,
+		"maximum_tiles": maximum_tiles,
+		"tick": _tick,
+		"tiles": tiles,
+	}
+
+
+## Parses into this newly-created candidate only.  No caller state changes on
+## malformed or newer data, so a failed load cannot erase live snow.
+func restore_persistence_snapshot(snapshot: Dictionary) -> bool:
+	if int(snapshot.get("version", -1)) != PERSISTENCE_VERSION:
+		return false
+	if not _is_finite_number(snapshot.get("tile_size_m", null)) \
+			or not _is_finite_number(snapshot.get("maximum_tiles", null)) \
+			or not _is_finite_number(snapshot.get("tick", null)):
+		return false
+	var snapshot_tile_size := float(snapshot["tile_size_m"])
+	var snapshot_maximum_tiles := int(snapshot["maximum_tiles"])
+	var snapshot_tick := int(snapshot["tick"])
+	if snapshot_tile_size <= 0.0 or snapshot_maximum_tiles < 1 \
+			or snapshot_maximum_tiles > MAX_PERSISTED_TILES or snapshot_tick < 0:
+		return false
+	if absf(snapshot_tile_size - tile_size_m) > 0.000001 \
+			or snapshot_maximum_tiles != maximum_tiles:
+		return false
+	var raw_tiles = snapshot.get("tiles", null)
+	if not (raw_tiles is Array):
+		return false
+	var records := raw_tiles as Array
+	if records.size() > snapshot_maximum_tiles:
+		return false
+	var restored := {}
+	for raw_record in records:
+		if not (raw_record is Dictionary):
+			return false
+		var record := raw_record as Dictionary
+		if not (record.has("x") and record.has("z") and record.has("depth_m") \
+				and record.has("touched_tick")):
+			return false
+		if not _is_finite_number(record["x"]) or not _is_finite_number(record["z"]) \
+				or not _is_finite_number(record["depth_m"]) \
+				or not _is_finite_number(record["touched_tick"]):
+			return false
+		var x := int(record["x"])
+		var z := int(record["z"])
+		var depth := float(record["depth_m"])
+		var touched := int(record["touched_tick"])
+		if float(x) != float(record["x"]) or float(z) != float(record["z"]) \
+				or float(touched) != float(record["touched_tick"]) \
+				or depth <= 0.0000001 or depth > 1.0 or touched < 0:
+			return false
+		var key := Vector2i(x, z)
+		if restored.has(key):
+			return false
+		restored[key] = {"depth": depth, "touched": touched}
+	_tiles = restored
+	_tick = snapshot_tick
+	return true
+
+
+func persisted_tile_count() -> int:
+	return _tiles.size()
+
+
+static func _is_finite_number(value) -> bool:
+	return (value is int or value is float) and is_finite(float(value))
 
 
 func _comes_before(left: Vector2i, right: Vector2i) -> bool:

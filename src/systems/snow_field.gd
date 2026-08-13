@@ -54,6 +54,12 @@ const SNOW_INPUTS_CHANGED_EVENT := &"snow.inputs_changed"
 const RUN_SEED_SERVICE := &"run_seed"
 const SNOW_PROFILE_PATH := "res://data/snow/valley_profile.tres"
 
+## Snow snapshots are owned by the eventual GameState/save owner, but their
+## schema belongs beside the simulation that interprets them.  A mismatch is a
+## safe refusal, never an attempt to make old sparse values fit new rules.
+const PERSISTENCE_SCHEMA_VERSION := 1
+const MAX_PERSISTED_CARVES := 128
+
 ## The route list is authored in SnowFieldProfile.  The shader needs the same
 ## facts to keep a protected corridor neutral in the rendered field without
 ## baking that corridor into every moved texture.  These are transport limits,
@@ -322,6 +328,7 @@ var _dynamic_focus := Vector2.ZERO
 var _wind_direction := Vector2.ZERO
 var _wind_strength := 0.0
 var _last_wind_transport_tile_work := 0
+var _last_persistence_tile_work := 0
 ## Cached while the field is in the tree. `_exit_tree()` is also reached when a
 ## test removes this node, when absolute scene paths are no longer valid.
 ## Keeping these two event-boundary references avoids an exit-time engine error
@@ -613,6 +620,220 @@ func set_wind_input(direction: Vector2, strength: float) -> void:
 
 func last_wind_transport_tile_work() -> int:
 	return _last_wind_transport_tile_work
+
+
+## Returns a portable, sparse simulation snapshot.  This method deliberately
+## does not call follow(), build_at(), regenerate terrain, apply carves or
+## flush(): saving a run must never turn a player step into a raster rebuild or
+## texture upload.  File I/O, retry policy and selection of "resume this save"
+## versus "mint a new run" are intentionally GameState responsibilities.
+func create_persistence_snapshot() -> Dictionary:
+	_last_persistence_tile_work = 0
+	var dynamic_snapshot: Dictionary = {}
+	if _dynamic_snow != null:
+		dynamic_snapshot = _dynamic_snow.create_persistence_snapshot()
+		_last_persistence_tile_work = _dynamic_snow.persisted_tile_count()
+	var carves := _persistence_carve_records()
+	if carves.size() > MAX_PERSISTED_CARVES:
+		return {"schema_version": PERSISTENCE_SCHEMA_VERSION, "valid": false}
+	return {
+		"schema_version": PERSISTENCE_SCHEMA_VERSION,
+		"valid": true,
+		"run_seed": run_seed,
+		"profile_path": snow_profile_path,
+		"profile_version": _profile_persistence_version(),
+		"window_centre_x": _origin.x + EXTENT_M * 0.5,
+		"window_centre_z": _origin.y + EXTENT_M * 0.5,
+		"dynamic": dynamic_snapshot,
+		"inputs": _persistence_input_record(),
+		"carves": carves,
+	}
+
+
+## O(1) pre-build seed extraction for the run owner.  The owner calls this on
+## a fresh SnowField, then builds its normal native window, rebuilds world
+## registrations, and finally calls restore_persistence_snapshot().  Keeping
+## those phases explicit prevents a save load from scanning a 512² image or
+## uploading a texture behind the caller's back.
+func inject_run_seed_from_persistence_snapshot(snapshot: Dictionary) -> bool:
+	if _terrain != null or not _has_persistence_header(snapshot):
+		return false
+	var seed := int(snapshot.get("run_seed", 0))
+	if seed <= 0:
+		return false
+	set_run_seed(seed)
+	return true
+
+
+## The owner may need the saved camera/player window before it performs its
+## normal build.  This is data only: it does not move the existing field.
+func persistence_window_centre(snapshot: Dictionary) -> Vector3:
+	if not _has_persistence_header(snapshot):
+		return Vector3.INF
+	var x = snapshot.get("window_centre_x", null)
+	var z = snapshot.get("window_centre_z", null)
+	if not _is_finite_number(x) or not _is_finite_number(z):
+		return Vector3.INF
+	return Vector3(float(x), 0.0, float(z))
+
+
+## Loads only sparse state into an already prepared field.  The saved seed must
+## have been injected before the base build, and static building publishers
+## must already have restored their footprint registrations.  This is a
+## policy-neutral continuation seam, not a decision about whether a death uses
+## this snapshot or mints a fresh weather day.
+func restore_persistence_snapshot(snapshot: Dictionary) -> bool:
+	_last_persistence_tile_work = 0
+	if _terrain == null or _dynamic_snow == null or not _has_run_seed:
+		return false
+	if not _has_persistence_header(snapshot) or int(snapshot.get("run_seed", 0)) != run_seed:
+		return false
+	var raw_dynamic = snapshot.get("dynamic", null)
+	var raw_inputs = snapshot.get("inputs", null)
+	var raw_carves = snapshot.get("carves", null)
+	if not (raw_dynamic is Dictionary) or not (raw_inputs is Dictionary) \
+			or not (raw_carves is Array):
+		return false
+	var saved_carves := raw_carves as Array
+	if saved_carves.size() > MAX_PERSISTED_CARVES \
+			or saved_carves != _persistence_carve_records():
+		return false
+	var candidate: SnowDynamicDepthLayer = SnowDynamicDepthLayer.new()
+	candidate.tile_size_m = dynamic_tile_size_m
+	candidate.maximum_tiles = maximum_dynamic_tiles
+	if not candidate.restore_persistence_snapshot(raw_dynamic as Dictionary):
+		return false
+	var input_result := _read_persistence_input_record(raw_inputs as Dictionary)
+	if not bool(input_result.get("valid", false)):
+		return false
+	_dynamic_snow = candidate
+	_dynamic_tick_elapsed = float(input_result["tick_elapsed"])
+	_dynamic_focus = input_result["focus"] as Vector2
+	_snow_response = input_result["response"] as SnowResponseDefinition
+	_snow_intensity = float(input_result["snow_intensity"])
+	_wind_direction = input_result["wind_direction"] as Vector2
+	_wind_strength = float(input_result["wind_strength"])
+	_last_persistence_tile_work = candidate.persisted_tile_count()
+	return true
+
+
+## The precise amount of record work done by the last create/restore call.
+## It deliberately excludes raster and texture work because persistence never
+## performs either kind of work.
+func last_persistence_tile_work() -> int:
+	return _last_persistence_tile_work
+
+
+func _has_persistence_header(snapshot: Dictionary) -> bool:
+	if int(snapshot.get("schema_version", -1)) != PERSISTENCE_SCHEMA_VERSION \
+			or not bool(snapshot.get("valid", false)):
+		return false
+	if not _is_finite_number(snapshot.get("run_seed", null)) \
+			or not _is_finite_number(snapshot.get("profile_version", null)):
+		return false
+	return String(snapshot.get("profile_path", "")) == snow_profile_path \
+		and int(snapshot.get("profile_version", -1)) == _profile_persistence_version()
+
+
+func _profile_persistence_version() -> int:
+	return 1 if _snow_profile == null else _snow_profile.persistence_version
+
+
+func _persistence_input_record() -> Dictionary:
+	var response_record := {"present": false}
+	if _snow_response != null:
+		response_record = {
+			"present": true,
+			"deposition_m_per_second": _snow_response.deposition_m_per_second,
+			"maximum_added_depth_m": _snow_response.maximum_added_depth_m,
+			"wind_transport_m_per_second": _snow_response.wind_transport_m_per_second,
+			"wind_minimum_strength": _snow_response.wind_minimum_strength,
+			"wind_sample_distance_m": _snow_response.wind_sample_distance_m,
+			"wind_shelter_deposition_gain": _snow_response.wind_shelter_deposition_gain,
+		}
+	return {
+		"tick_elapsed": _dynamic_tick_elapsed,
+		"focus_x": _dynamic_focus.x,
+		"focus_z": _dynamic_focus.y,
+		"snow_intensity": _snow_intensity,
+		"wind_x": _wind_direction.x,
+		"wind_z": _wind_direction.y,
+		"wind_strength": _wind_strength,
+		"response": response_record,
+	}
+
+
+## Validates every Variant before creating the new input Resource.  The caller
+## only commits it after this succeeds, preserving the old live simulation on
+## corrupt data or an incompatible save version.
+func _read_persistence_input_record(record: Dictionary) -> Dictionary:
+	for key in ["tick_elapsed", "focus_x", "focus_z", "snow_intensity", "wind_x", "wind_z", "wind_strength"]:
+		if not _is_finite_number(record.get(key, null)):
+			return {"valid": false}
+	var elapsed := float(record["tick_elapsed"])
+	var intensity := float(record["snow_intensity"])
+	var strength := float(record["wind_strength"])
+	if elapsed < 0.0 or elapsed >= dynamic_tick_seconds + 0.000001 \
+			or intensity < 0.0 or intensity > 1.0 or strength < 0.0 or strength > 1.0:
+		return {"valid": false}
+	var raw_response = record.get("response", null)
+	if not (raw_response is Dictionary):
+		return {"valid": false}
+	var response_record := raw_response as Dictionary
+	if not response_record.has("present"):
+		return {"valid": false}
+	var response: SnowResponseDefinition = null
+	if bool(response_record["present"]):
+		var response_keys := [
+			"deposition_m_per_second", "maximum_added_depth_m", "wind_transport_m_per_second",
+			"wind_minimum_strength", "wind_sample_distance_m", "wind_shelter_deposition_gain",
+		]
+		for key in response_keys:
+			if not _is_finite_number(response_record.get(key, null)):
+				return {"valid": false}
+		response = SnowResponseDefinition.new()
+		response.deposition_m_per_second = float(response_record["deposition_m_per_second"])
+		response.maximum_added_depth_m = float(response_record["maximum_added_depth_m"])
+		response.wind_transport_m_per_second = float(response_record["wind_transport_m_per_second"])
+		response.wind_minimum_strength = float(response_record["wind_minimum_strength"])
+		response.wind_sample_distance_m = float(response_record["wind_sample_distance_m"])
+		response.wind_shelter_deposition_gain = float(response_record["wind_shelter_deposition_gain"])
+		if response.deposition_m_per_second < 0.0 or response.maximum_added_depth_m < 0.0 \
+				or response.wind_transport_m_per_second < 0.0 or response.wind_minimum_strength < 0.0 \
+				or response.wind_minimum_strength > 1.0 or response.wind_sample_distance_m < 0.0 \
+				or response.wind_shelter_deposition_gain < 1.0:
+			return {"valid": false}
+	var wind := Vector2(float(record["wind_x"]), float(record["wind_z"]))
+	if wind.length_squared() > 0.000001:
+		wind = wind.normalized()
+	else:
+		wind = Vector2.ZERO
+	return {
+		"valid": true,
+		"tick_elapsed": elapsed,
+		"focus": Vector2(float(record["focus_x"]), float(record["focus_z"])),
+		"snow_intensity": intensity,
+		"wind_direction": wind,
+		"wind_strength": strength,
+		"response": response,
+	}
+
+
+func _persistence_carve_records() -> Array:
+	var ids: Array[int] = []
+	for raw_id in _carves:
+		if raw_id is int:
+			ids.append(raw_id as int)
+	ids.sort()
+	var records: Array[Dictionary] = []
+	for id in ids:
+		var carve: Dictionary = _carves[id]
+		records.append({"id": id, "carve": carve.duplicate(true)})
+	return records
+
+
+static func _is_finite_number(value) -> bool:
+	return (value is int or value is float) and is_finite(float(value))
 
 
 func shelter_weight_at(world_xz: Vector2, wind_direction: Vector2) -> float:

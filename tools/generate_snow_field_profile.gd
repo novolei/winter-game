@@ -17,6 +17,7 @@ const SnowShelterDefinitionScript := preload("res://src/definitions/snow_shelter
 
 func _initialize() -> void:
 	var profile: SnowFieldProfile = SnowFieldProfileScript.new()
+	profile.persistence_version = 1
 	profile.mature_variation_m = 0.08
 	profile.variation_frequency_per_m = 0.025
 	profile.variation_octaves = 2

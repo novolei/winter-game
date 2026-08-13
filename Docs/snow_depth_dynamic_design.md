@@ -121,6 +121,15 @@
 
 实现稀疏块序列化、版本迁移、性能计数器和端到端回放；随后再调足迹尺寸、涉雪速度和威胁读取。消费者参数只能在新分布稳定后重调，避免用表现层掩盖生成问题。
 
+**Phase D2 实现（2026-08-13）。** `SnowField.create_persistence_snapshot()` 现在仅导出
+`run_seed`、雪场/档案版本、当前固定 tick 的余量、天气/风输入、稀疏动态瓦片和已登记建筑 carve
+的确定性记录；不会扫描 512² 地形、recentre、重建 raster 或上传纹理。加载是两阶段、且由未来
+GameState 持有：对新雪场先用 `inject_run_seed_from_persistence_snapshot()` 注入种子并按普通路径
+构建/恢复建筑登记，再调用 `restore_persistence_snapshot()` 原子写入已验证的稀疏层。版本、profile、
+tile 格式、carve 注册或数值任一不匹配均安全拒绝而不破坏现有运行。接口刻意不决定死亡重开：owner
+可选择注入同一 snapshot，或 mint 一个新 seed；该产品裁决仍留在下一节。回归覆盖精确 round-trip、
+中断/恢复与不中断路径一致、路线/carve 约束、损坏/版本错配拒绝，以及存读工作量不超过稀疏 tile 数。
+
 ## 需要负责人先裁决的边界
 
 1. 每局地貌差异的幅度：建议只改变“可选路线与局部风险”，不改变固定叙事地点的位置或让 Day 1 失去安全路线。

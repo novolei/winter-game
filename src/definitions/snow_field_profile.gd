@@ -5,6 +5,10 @@ extends Resource
 ## only the low-frequency variation inside the open field; the protected routes
 ## below remain the known, reliable first-day network.
 
+## Bump only when this authored profile's persistence interpretation changes.
+## A newer profile must reject an older dynamic snapshot rather than replaying
+## its sparse snow against subtly different route or shelter semantics.
+@export var persistence_version := 1
 @export var mature_variation_m := 0.08
 @export var variation_frequency_per_m := 0.025
 @export var variation_octaves := 2

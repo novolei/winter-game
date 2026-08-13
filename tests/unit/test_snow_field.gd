@@ -535,6 +535,180 @@ func test_wind_transport_work_is_bounded_by_the_local_tile_budget() -> void:
 	)
 
 
+## A run owner saves the opening seed, current weather inputs and only the
+## sparse mutable layer.  The receiver is prepared from that seed before its
+## normal native field build, then restores the sparse state without a raster
+## rebuild.  This keeps a resumed run exactly on its prior weather timeline.
+func test_persistence_snapshot_round_trips_seed_sparse_depth_and_inputs() -> void:
+	var response := _wind_response()
+	response.deposition_m_per_second = 0.0007
+	_field.set_run_seed(1729)
+	_field.set_snow_response(response, 0.65)
+	_field.set_wind_input(Vector2(0.6, -0.8), 0.72)
+	_field.set_dynamic_focus(Vector3(18.0, 0.0, -27.0))
+	_field.advance_dynamic(0.2)
+	_field._dynamic_snow.add_at(Vector2(-30.0, 30.0), 0.071, response.maximum_added_depth_m)
+	_field._dynamic_snow.add_at(Vector2(26.0, -21.0), 0.113, response.maximum_added_depth_m)
+	var snapshot: Dictionary = _field.create_persistence_snapshot()
+
+	assert_eq(snapshot["run_seed"], 1729, "the run seed was not saved")
+	assert_eq((snapshot["dynamic"] as Dictionary)["tiles"].size(), 2,
+		"the save stored something other than the two sparse dynamic tiles")
+	assert_eq(_field.last_persistence_tile_work(), 2,
+		"snapshot work was not proportional to the two stored sparse tiles")
+
+	var restored: SnowField = SnowFieldScript.new()
+	assert_true(restored.inject_run_seed_from_persistence_snapshot(snapshot),
+		"a valid snapshot did not provide its run seed before field construction")
+	restored.build_at(Vector3.ZERO)
+	assert_true(restored.restore_persistence_snapshot(snapshot),
+		"a prepared field rejected its own valid snapshot")
+	assert_eq(restored.current_run_seed(), _field.current_run_seed())
+	assert_eq(restored.dynamic_tile_count(), _field.dynamic_tile_count())
+	assert_almost_eq(
+		restored.dynamic_depth_at(Vector3(-30.0, 0.0, 30.0)),
+		_field.dynamic_depth_at(Vector3(-30.0, 0.0, 30.0)), 0.000001
+	)
+	assert_almost_eq(
+		restored.dynamic_depth_at(Vector3(26.0, 0.0, -21.0)),
+		_field.dynamic_depth_at(Vector3(26.0, 0.0, -21.0)), 0.000001
+	)
+	assert_almost_eq(restored._dynamic_tick_elapsed, _field._dynamic_tick_elapsed, 0.000001)
+	assert_almost_eq(restored._snow_intensity, _field._snow_intensity, 0.000001)
+	assert_almost_eq(restored._wind_strength, _field._wind_strength, 0.000001)
+	assert_almost_eq(restored._wind_direction.distance_to(_field._wind_direction), 0.0, 0.000001)
+	restored.free()
+
+
+## Save after a time split, prepare a fresh field with the saved seed, and
+## continue the exact same fixed-tick inputs.  A resumed field must reach the
+## same surface fact as a field which never stopped.
+func test_persistence_resume_matches_an_uninterrupted_dynamic_run() -> void:
+	var response := _wind_response()
+	response.deposition_m_per_second = 0.0006
+	var uninterrupted: SnowField = SnowFieldScript.new()
+	uninterrupted.set_run_seed(2468)
+	uninterrupted.build_at(Vector3.ZERO)
+	uninterrupted.set_snow_response(response, 0.8)
+	uninterrupted.set_wind_input(Vector2.RIGHT, 0.6)
+	uninterrupted.set_dynamic_focus(Vector3(-30.0, 0.0, 30.0))
+	uninterrupted.advance_dynamic(1.7)
+
+	var interrupted: SnowField = SnowFieldScript.new()
+	interrupted.set_run_seed(2468)
+	interrupted.build_at(Vector3.ZERO)
+	interrupted.set_snow_response(response, 0.8)
+	interrupted.set_wind_input(Vector2.RIGHT, 0.6)
+	interrupted.set_dynamic_focus(Vector3(-30.0, 0.0, 30.0))
+	interrupted.advance_dynamic(1.7)
+	var snapshot: Dictionary = interrupted.create_persistence_snapshot()
+	var resumed: SnowField = SnowFieldScript.new()
+	assert_true(resumed.inject_run_seed_from_persistence_snapshot(snapshot))
+	resumed.build_at(Vector3.ZERO)
+	assert_true(resumed.restore_persistence_snapshot(snapshot))
+
+	# The restore reconstructed its own response object from values, so this
+	# continuation must not depend on retaining the first field's Resource.
+	uninterrupted.advance_dynamic(2.3)
+	resumed.advance_dynamic(2.3)
+	for spot in [Vector3(-30.0, 0.0, 30.0), Vector3(18.0, 0.0, -18.0), Vector3(31.0, 0.0, 22.0)]:
+		assert_almost_eq(resumed.dynamic_depth_at(spot), uninterrupted.dynamic_depth_at(spot), 0.000001,
+			"resumed depth diverged at %s" % spot)
+		assert_almost_eq(resumed.depth_at(spot), uninterrupted.depth_at(spot), 0.000001,
+			"resumed surface diverged at %s" % spot)
+	interrupted.free()
+	uninterrupted.free()
+	resumed.free()
+
+
+## The Day-1 route and building-carve rules cannot be overwritten by a save.
+## A snapshot carries the registered carve facts for the world owner to replay,
+## while dynamic snowfall itself remains excluded from authored safe routes.
+func test_persistence_snapshot_preserves_route_and_registered_carve_constraints() -> void:
+	var response := _wind_response()
+	response.deposition_m_per_second = 0.001
+	_field.set_run_seed(1729)
+	_field.set_snow_response(response, 1.0)
+	_field.carve_building(_persistence_carve())
+	_field.advance_dynamic(1.0)
+	var snapshot: Dictionary = _field.create_persistence_snapshot()
+	assert_eq((snapshot["carves"] as Array).size(), 1, "registered building carve was not saved")
+	assert_almost_eq(_field.dynamic_depth_at(Vector3.ZERO), 0.0, 0.000001,
+		"setup let dynamic snow enter the authored safe route")
+	var restored: SnowField = SnowFieldScript.new()
+	assert_true(restored.inject_run_seed_from_persistence_snapshot(snapshot))
+	restored.build_at(Vector3.ZERO)
+	restored.carve_building(_persistence_carve())
+	assert_true(restored.restore_persistence_snapshot(snapshot),
+		"a field with the saved building registrations rejected its snapshot")
+	assert_eq(restored.carved_count(), 1)
+	assert_almost_eq(restored.dynamic_depth_at(Vector3.ZERO), 0.0, 0.000001)
+	restored.free()
+
+
+## Invalid data must leave a prepared field unchanged.  A failed save load is
+## not an excuse to drop live snow, rebuild the terrain, or invent a new seed.
+func test_persistence_snapshot_rejects_corrupt_and_version_mismatched_data_safely() -> void:
+	var response := _wind_response()
+	_field.set_run_seed(1729)
+	_field.set_snow_response(response, 1.0)
+	_field._dynamic_snow.add_at(Vector2(-30.0, 30.0), 0.08, response.maximum_added_depth_m)
+	var valid: Dictionary = _field.create_persistence_snapshot()
+	var target: SnowField = SnowFieldScript.new()
+	assert_true(target.inject_run_seed_from_persistence_snapshot(valid))
+	target.build_at(Vector3.ZERO)
+	target._dynamic_snow.add_at(Vector2(26.0, -21.0), 0.06, response.maximum_added_depth_m)
+	var existing_depth := target.dynamic_depth_at(Vector3(26.0, 0.0, -21.0))
+	var existing_origin := target._origin
+	var corrupt: Dictionary = valid.duplicate(true)
+	corrupt["dynamic"] = {"version": 1, "tiles": [{"x": 1, "z": 2, "depth_m": -1.0}]}
+	assert_false(target.restore_persistence_snapshot(corrupt), "negative depth was accepted")
+	var incompatible: Dictionary = valid.duplicate(true)
+	incompatible["schema_version"] = 999
+	assert_false(target.restore_persistence_snapshot(incompatible), "unknown schema was accepted")
+	assert_almost_eq(target.dynamic_depth_at(Vector3(26.0, 0.0, -21.0)), existing_depth, 0.000001)
+	assert_eq(target._origin, existing_origin, "a rejected restore recentred or rebuilt the terrain")
+	target.free()
+
+
+## Persistence is a sparse-copy operation.  It neither follows/recentres the
+## terrain window nor touches its shader texture path, and it copies no more
+## records than the tile store is allowed to retain.
+func test_persistence_snapshot_work_is_bounded_by_sparse_tile_count_without_recentre() -> void:
+	_field.maximum_dynamic_tiles = 11
+	_field._dynamic_snow.maximum_tiles = _field.maximum_dynamic_tiles
+	for x in range(-4, 5):
+		for z in range(-4, 5):
+			_field._dynamic_snow.add_at(Vector2(float(x) * 4.0, float(z) * 4.0), 0.02, 0.2)
+	_field._dynamic_snow.trim_to_limit()
+	_field.flush()
+	var origin_before := _field._origin
+	var dirty_before := _field._packed_dirty
+	var recenter_before := _field.last_recentre_duration_ms()
+	var snapshot: Dictionary = _field.create_persistence_snapshot()
+	assert_true(_field.last_persistence_tile_work() <= _field.maximum_dynamic_tiles,
+		"save copied %d records for a %d-tile store" % [
+			_field.last_persistence_tile_work(), _field.maximum_dynamic_tiles,
+		])
+	assert_eq((snapshot["dynamic"] as Dictionary)["tiles"].size(), _field.dynamic_tile_count())
+	assert_eq(_field._origin, origin_before, "saving moved the terrain window")
+	assert_eq(_field._packed_dirty, dirty_before, "saving dirtied the packed texture")
+	assert_almost_eq(_field.last_recentre_duration_ms(), recenter_before, 0.000001,
+		"saving altered recenter timing state")
+
+
+func _persistence_carve() -> Dictionary:
+	return {
+		"id": 812,
+		"areas": [{
+			"centre": Vector2(32.0, 32.0), "axis_x": Vector2.RIGHT, "axis_z": Vector2.DOWN,
+			"half": Vector2(1.0, 1.0),
+		}],
+		"floor_y": 0.0,
+		"doorways": [],
+	}
+
+
 func _wind_response() -> SnowResponseDefinition:
 	var response: SnowResponseDefinition = SnowResponseDefinition.new()
 	response.maximum_added_depth_m = 0.20
