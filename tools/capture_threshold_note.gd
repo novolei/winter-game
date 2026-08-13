@@ -45,6 +45,7 @@ extends Node
 ## UILayer envelope. Only the number is dictated.
 
 const DEFAULT_OUTPUT := "user://threshold_note.png"
+const Evidence := preload("res://tools/ui_evidence.gd")
 
 ## A pixel counts as ink when the shot moved this far from the plate, in
 ## relative luminance. Above the render's own frame-to-frame noise and well
@@ -85,6 +86,7 @@ var _night := false
 var _seconds := 2.0
 var _offset := Vector3.ZERO
 var _ink_ground := -1.0
+var _verify := false
 var _elapsed := 0.0
 var _done := false
 
@@ -111,6 +113,8 @@ func _ready() -> void:
 			_night = true
 		if arg == "--depleted":
 			_depleted = true
+		if arg == "--verify":
+			_verify = true
 
 
 func _string_arg(args: PackedStringArray, name: String, fallback: String) -> String:
@@ -219,8 +223,18 @@ func _capture() -> void:
 	print("  ground_for(preset) estimated %.4f -> ink %s" % [
 		note.ground(), note.ink().to_html(false)])
 
-	print("  whole element:")
-	_measure(plate, shot, canvas, Rect2(note.position, note.size))
+	var whole: Dictionary = Evidence.measure_delivered_ink(
+		plate, shot, canvas, Rect2(note.position, note.size))
+	print(Evidence.describe("  whole element (graphic)", whole, Evidence.GRAPHIC_CORE_MIN_CONTRAST))
+	var occupancy: Dictionary = Evidence.boundary_occupancy(Rect2(note.position, note.size), canvas)
+	var anchored := Evidence.is_anchored_to_edge(
+		Rect2(note.position, note.size), canvas, tokens.edge_pixels(canvas), &"left")
+	var occupancy_pass := bool(occupancy.get("inside_frame", false)) \
+		and float(occupancy.get("frame_fraction", 1.0)) <= Evidence.TRANSIENT_MAX_FRAME_OCCUPANCY and anchored
+	print("  boundary: %.3f%% frame, %s, left-anchor %s — %s" % [
+		float(occupancy.get("frame_fraction", 1.0)) * 100.0,
+		"in frame" if bool(occupancy.get("inside_frame", false)) else "CLIPPED",
+		"PASS" if anchored else "FAIL", "PASS" if occupancy_pass else "FAIL"])
 	# AND THE SENTENCE ON ITS OWN, because the sentence is the element. 说后果，
 	# 不说数字 -- the icon says which reading and the arc says how far gone, but a
 	# player who cannot read 手指不听使唤了 has been told nothing. A number averaged
@@ -232,10 +246,18 @@ func _capture() -> void:
 		+ tokens.design_px(ThresholdNote.GAP_DESIGN_PX, canvas) * 2.0
 		+ tokens.design_px(ThresholdNote.ARC_DESIGN_PX, canvas) + pad * 2.0)
 	if note.size.x > words_x:
-		print("  the sentence alone:")
-		_measure(plate, shot, canvas, Rect2(
-			note.position + Vector2(words_x, 0.0),
-			Vector2(note.size.x - words_x, note.size.y)))
+		var sentence: Dictionary = Evidence.measure_delivered_ink(plate, shot, canvas, Rect2(
+			note.position + Vector2(words_x, 0.0), Vector2(note.size.x - words_x, note.size.y)))
+		print(Evidence.describe("  the sentence alone (body)", sentence, Evidence.BODY_CORE_MIN_CONTRAST))
+		if _verify and (not bool(whole.get("ok", false))
+			or float(whole.get("core_contrast", 0.0)) < Evidence.GRAPHIC_CORE_MIN_CONTRAST
+			or not bool(sentence.get("ok", false))
+			or float(sentence.get("core_contrast", 0.0)) < Evidence.BODY_CORE_MIN_CONTRAST
+			or not occupancy_pass):
+			Engine.time_scale = 1.0
+			push_error("capture_threshold_note: UI evidence gate failed")
+			get_tree().quit(1)
+			return
 
 	var error := shot.save_png(_out)
 	if error != OK:

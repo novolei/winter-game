@@ -30,6 +30,7 @@ extends Node
 ## The layer is driven past the bloom before the frame is read.
 
 const DEFAULT_OUTPUT := "user://time_prompt.png"
+const Evidence := preload("res://tools/ui_evidence.gd")
 
 var _out := DEFAULT_OUTPUT
 var _night := false
@@ -37,6 +38,7 @@ var _progress := -1.0
 var _day := 0
 var _preset := ""
 var _seconds := 2.0
+var _verify := false
 var _elapsed := 0.0
 var _done := false
 
@@ -51,6 +53,8 @@ func _ready() -> void:
 	for arg in args:
 		if arg == "--night":
 			_night = true
+		if arg == "--verify":
+			_verify = true
 
 
 func _string_arg(args: PackedStringArray, name: String, fallback: String) -> String:
@@ -102,6 +106,12 @@ func _capture() -> void:
 	if rig != null and rig.has_method("snap_to_target"):
 		rig.snap_to_target()
 
+	# Freeze before the plate: world motion must not become false UI ink.
+	Engine.time_scale = 0.0
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	var plate := get_viewport().get_texture().get_image()
+
 	var arc = prompt.surface_now()
 	if arc == null:
 		push_error("capture_time_prompt: the prompt refused to surface")
@@ -125,9 +135,38 @@ func _capture() -> void:
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	var image := get_viewport().get_texture().get_image()
+	var canvas := get_viewport().get_visible_rect().size
+	var whole: Dictionary = Evidence.measure_delivered_ink(
+		plate, image, canvas, Rect2(arc.position, arc.size))
+	print(Evidence.describe("  whole instrument (graphic)", whole, Evidence.GRAPHIC_CORE_MIN_CONTRAST))
+	# The line is the lower 1.5 label-heights of the already-public element bounds.
+	# This preserves runtime drawing while measuring the actual delivered glyphs.
+	var text_px: float = float(tokens.design_px(prompt.data().label_design_px, canvas))
+	var text_rect := Rect2(arc.position + Vector2(0.0, arc.size.y - text_px * 1.5),
+		Vector2(arc.size.x, text_px * 1.5))
+	var text: Dictionary = Evidence.measure_delivered_ink(plate, image, canvas, text_rect)
+	print(Evidence.describe("  time line (body)", text, Evidence.BODY_CORE_MIN_CONTRAST))
+	var occupancy: Dictionary = Evidence.boundary_occupancy(Rect2(arc.position, arc.size), canvas)
+	var anchored := Evidence.is_anchored_to_edge(
+		Rect2(arc.position, arc.size), canvas, tokens.edge_pixels(canvas), &"bottom")
+	var occupancy_pass := bool(occupancy.get("inside_frame", false)) \
+		and float(occupancy.get("frame_fraction", 1.0)) <= Evidence.TRANSIENT_MAX_FRAME_OCCUPANCY and anchored
+	print("  boundary: %.3f%% frame, %s, bottom-anchor %s — %s" % [
+		float(occupancy.get("frame_fraction", 1.0)) * 100.0,
+		"in frame" if bool(occupancy.get("inside_frame", false)) else "CLIPPED",
+		"PASS" if anchored else "FAIL", "PASS" if occupancy_pass else "FAIL"])
 	var error := image.save_png(_out)
 	if error != OK:
 		push_error("capture_time_prompt: could not write %s (error %d)" % [_out, error])
 	else:
 		print("capture_time_prompt: wrote ", ProjectSettings.globalize_path(_out))
+	Engine.time_scale = 1.0
+	if _verify and (not bool(whole.get("ok", false))
+		or float(whole.get("core_contrast", 0.0)) < Evidence.GRAPHIC_CORE_MIN_CONTRAST
+		or not bool(text.get("ok", false))
+		or float(text.get("core_contrast", 0.0)) < Evidence.BODY_CORE_MIN_CONTRAST
+		or not occupancy_pass):
+		push_error("capture_time_prompt: UI evidence gate failed")
+		get_tree().quit(1)
+		return
 	get_tree().quit()
