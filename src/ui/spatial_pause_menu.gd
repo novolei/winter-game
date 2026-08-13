@@ -183,11 +183,13 @@ func layout(content: Rect2, frame_scale: float, compact: bool, state_y: float) -
 	_compact = compact
 	_frame_scale = frame_scale
 	var title_size := maxf(34.0 * frame_scale, 22.0)
-	var body_size := maxf(17.0 * frame_scale, 14.0)
+	var body_size := maxf(15.0 * frame_scale, 12.0)
 	var time_size := maxf(20.0 * frame_scale, 15.0)
 	var hint_size := maxf(14.0 * frame_scale, 12.0)
 	for id in [STATUS, CONTINUE, SETTINGS, EXIT, QUESTION, RETURN, CONFIRM]:
 		_label_sizes[id] = title_size
+	# The day line anchors the composition; everything else steps down from it.
+	_label_sizes[STATUS] = maxf(42.0 * frame_scale, 26.0)
 	for id in [CAPTION, CONSEQUENCE]:
 		_label_sizes[id] = body_size
 	_label_sizes[TIME] = time_size

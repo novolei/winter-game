@@ -522,11 +522,11 @@ func layout_for_viewport(viewport_size: Vector2) -> void:
 	_context.position = Vector2.ZERO
 	_context.size = Vector2(width, context_height)
 	_context.add_theme_constant_override("separation", maxi(int(roundf(10.0 * _frame_scale)), 4))
-	_status_label.add_theme_font_size_override("font_size", maxi(int(roundf(34.0 * _frame_scale)), 22))
+	_status_label.add_theme_font_size_override("font_size", maxi(int(roundf(42.0 * _frame_scale)), 26))
 	_context_line.custom_minimum_size = Vector2(264.0 * _frame_scale, maxf(roundf(_frame_scale), 1.0))
 	var remaining_row := _remaining_caption.get_parent() as HBoxContainer
 	remaining_row.add_theme_constant_override("separation", maxi(int(roundf(16.0 * _frame_scale)), 8))
-	_remaining_caption.add_theme_font_size_override("font_size", maxi(int(roundf(17.0 * _frame_scale)), 14))
+	_remaining_caption.add_theme_font_size_override("font_size", maxi(int(roundf(15.0 * _frame_scale)), 12))
 	_remaining_value.add_theme_font_size_override("font_size", maxi(int(roundf(20.0 * _frame_scale)), 15))
 
 	var state_y := (104.0 if compact else 144.0) * _frame_scale
