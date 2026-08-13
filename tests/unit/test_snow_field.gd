@@ -82,6 +82,52 @@ func test_depth_stays_inside_the_declared_range() -> void:
 	assert_true(best >= 0.0, "shallowest sample %f is below zero" % best)
 
 
+## W4-1 was based on the claim that no 12 m square had a mean depth in the
+## intermediate band.  This is a characterization gate, not a balance target:
+## final distribution thresholds need product approval before they belong here.
+func test_12m_windows_include_an_intermediate_mean_depth() -> void:
+	const SAMPLE_M := 0.5
+	const SPAN_M := 80.0
+	const BLOCK_M := 12.0
+	const STRIDE_M := 1.0
+	const LOW_M := 0.02
+	const HIGH_M := 0.32
+	var cells := int(round(SPAN_M / SAMPLE_M))
+	var block_cells := int(round(BLOCK_M / SAMPLE_M))
+	var stride_cells := int(round(STRIDE_M / SAMPLE_M))
+	var width := cells + 1
+	var sums: Array[float] = []
+	sums.resize(width * width)
+	for y in range(cells):
+		var row_sum := 0.0
+		for x in range(cells):
+			var depth: float = _field.depth_at(Vector3(
+				-SPAN_M * 0.5 + (float(x) + 0.5) * SAMPLE_M,
+				0.0,
+				-SPAN_M * 0.5 + (float(y) + 0.5) * SAMPLE_M
+			))
+			row_sum += depth
+			sums[(y + 1) * width + (x + 1)] = sums[y * width + (x + 1)] + row_sum
+
+	var middle_windows := 0
+	var total_windows := 0
+	for y in range(0, cells - block_cells + 1, stride_cells):
+		for x in range(0, cells - block_cells + 1, stride_cells):
+			var x2 := x + block_cells
+			var y2 := y + block_cells
+			var total := sums[y2 * width + x2] - sums[y * width + x2] - sums[y2 * width + x] + sums[y * width + x]
+			var mean := total / float(block_cells * block_cells)
+			total_windows += 1
+			if mean >= LOW_M and mean <= HIGH_M:
+				middle_windows += 1
+	assert_true(
+		middle_windows > 0,
+		"0/%d 12 m windows had a %.2f..%.2f m mean; W4-1's absence has returned" % [
+			total_windows, LOW_M, HIGH_M,
+		]
+	)
+
+
 ## Finds somewhere with snow actually in it. Since the wind scours the crests,
 ## a hardcoded coordinate can legitimately land on bare ground, and a test that
 ## fails for that reason is testing the noise seed rather than the code.
