@@ -2448,10 +2448,11 @@ func _physics_process(delta: float) -> void:
 	var snow_depth := 0.0
 	var snow_max := 1.0
 	if _snow != null:
-		var ground: float = _snow.terrain_height_at(global_position)
-		snow_depth = _snow.depth_at(global_position)
+		snow_depth = _snow.structural_depth_at(global_position) \
+			if _snow.has_method(&"structural_depth_at") else _snow.depth_at(global_position)
 		snow_max = maxf(_snow.max_depth_m, 0.0001)
-		var wanted_y := ground + snow_depth * (1.0 - sink_fraction)
+		var surface: float = _snow.surface_height_at(global_position)
+		var wanted_y := surface - snow_depth * sink_fraction
 		if _grounded:
 			var blend := 1.0 - exp(-vertical_smoothing * delta)
 			global_position.y = lerpf(global_position.y, wanted_y, blend)
@@ -2509,12 +2510,22 @@ func _place_print() -> void:
 	var depth := 0.0
 	var max_depth := 1.0
 	var wade := 0.0
+	var imprint := 0.0
+	var allowed_depression_m := 0.0
+	var response_depth_m := 0.16
 	if _snow != null:
-		depth = _snow.depth_at(spot)
+		depth = _snow.structural_depth_at(spot) \
+			if _snow.has_method(&"structural_depth_at") else _snow.depth_at(spot)
 		max_depth = maxf(_snow.max_depth_m, 0.0001)
 		# The SAME reading the trudge speed and the furrow gate take: depth
 		# against SnowField.deep_depth_m. See the print block above.
 		wade = _snow.wade_factor(spot)
+		if _snow.has_method(&"imprint_factor_at"):
+			imprint = _snow.imprint_factor_at(spot)
+		if _snow.has_method(&"allowed_boot_depression_at"):
+			allowed_depression_m = _snow.allowed_boot_depression_at(spot)
+		if _snow.has_method(&"footprint_response_depth_m"):
+			response_depth_m = _snow.footprint_response_depth_m()
 	# A print in bare snow is a scuff; a print in a drift is a hole. Depth at
 	# the spot, not a constant, is what makes a trail through a drift read
 	# darker than one across a wind-scoured patch -- and sound different too.
@@ -2533,7 +2544,10 @@ func _place_print() -> void:
 	# off. It was 0.34 + 0.66 * wade, which put two thirds of a full-depth print
 	# into 10 cm of snow and is why the thin ground photographed as small holes
 	# rather than as the scuffs it is supposed to leave.
-	var strength := clampf(maxf(wade, print_scrape_depth) * bite, 0.0, 1.0)
+	var imprint_strength := allowed_depression_m / maxf(response_depth_m, 0.0001)
+	if _snow == null or not _snow.has_method(&"allowed_boot_depression_at"):
+		imprint_strength = print_scrape_depth
+	var strength := clampf(maxf(wade, imprint_strength) * bite, 0.0, 1.0)
 
 	if _bus == null:
 		return
@@ -2566,6 +2580,10 @@ func _place_print() -> void:
 		"position": spot,
 		"depth": depth,
 		"depth_ratio": depth_ratio,
+		"visible_depth_m": _snow.visible_depth_at(spot) \
+			if _snow != null and _snow.has_method(&"visible_depth_at") else depth,
+		"imprint_factor": imprint,
+		"allowed_depression_m": allowed_depression_m,
 		"strength": strength,
 		"radius": print_radius * scale,
 		"forward": heading,
@@ -2575,7 +2593,7 @@ func _place_print() -> void:
 		# 0 in snow deep enough to punch through, 1 on ground too thin to do
 		# anything but scrape across. Morphed rather than switched, so there is no
 		# depth at which the mark changes kind in front of you.
-		"scuff": 1.0 - wade,
+		"scuff": 1.0 - maxf(wade, imprint),
 		# Any large spread works; it only has to move the noise far enough that
 		# two prints never see the same patch of it.
 		"edge_seed": randf() * 997.0,

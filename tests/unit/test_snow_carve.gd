@@ -103,11 +103,12 @@ func test_the_levelled_ground_sits_just_under_the_floorboards() -> void:
 	assert_true(pad > FLOOR_Y - 0.05, "pad %.4f is %.3f m below the floor" % [pad, FLOOR_Y - pad])
 
 
-## A house is a thing that keeps snow out. Depth is what the player wades
-## through and what a footprint presses into, and indoors there is none of it.
+## A house is a thing that keeps snow out. Neither mobility snow nor the mature
+## imprint veneer may survive the same authored carve.
 func test_there_is_no_snow_inside_a_building() -> void:
 	_field.carve_building(_footprint())
 	assert_almost_eq(_field.depth_at(_at(0.0, 0.0)), 0.0, 0.0001)
+	assert_almost_eq(_field.visible_depth_at(_at(0.0, 0.0)), 0.0, 0.0001)
 	assert_almost_eq(_field.wade_factor(_at(-2.0, 1.0)), 0.0, 0.0001)
 
 

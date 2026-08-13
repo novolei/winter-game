@@ -47,6 +47,10 @@ uniform float max_depth = 1.05;
 uniform float scour_hollow = 0.36;
 uniform float scour_crest = 0.72;
 uniform float mature_variation_m = 0.0;
+// A mature surface veneer: enough real cover for a boot cavity on a scoured
+// crest, but excluded from wade depth on the CPU. Packing/building carves apply
+// after max(), so a fully cleared surface remains exactly clear.
+uniform float minimum_imprintable_cover_m = 0.0;
 
 // The protected first-day routes remain an authored Resource on the CPU.  They
 // are flattened into these uniforms by TerrainRenderer, so a raw mature-noise
@@ -436,8 +440,10 @@ float ground_height(vec2 w) {
 	float terrain = terrain_at(w);
 	float ground = drift_relief(terrain - 0.5) * terrain_amplitude;
 	float scour = 1.0 - smoothstep(scour_hollow, scour_crest, terrain);
-	float mature_depth = clamp(max_depth * scour + mature_variation_at(w), 0.0, max_depth);
-	return ground + mature_depth * (1.0 - packed_at(w));
+	float structural_column = clamp(max_depth * scour + mature_variation_at(w), 0.0, max_depth);
+	float unpacked = 1.0 - packed_at(w);
+	float visible_depth = max(structural_column, minimum_imprintable_cover_m) * unpacked;
+	return ground + visible_depth;
 }
 
 // Centimetre-scale, and only ever seen through the normal.

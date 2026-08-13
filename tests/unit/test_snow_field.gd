@@ -83,6 +83,56 @@ func test_depth_stays_inside_the_declared_range() -> void:
 	assert_true(best >= 0.0, "shallowest sample %f is below zero" % best)
 
 
+## A wind-scoured crest may carry almost no structural snow, but the authored
+## opening valley is not bare ground.  The compressible surface veneer gives a
+## boot material to displace without charging that cosmetic cover to movement.
+func test_open_crests_keep_imprintable_cover_without_adding_wade() -> void:
+	assert_true(_field.has_method(&"visible_depth_at"),
+		"SnowField has no separate visible/compressible snow depth")
+	if not _field.has_method(&"visible_depth_at"):
+		return
+	var shallowest := Vector3.ZERO
+	var structural := INF
+	for z in range(-48, 49, 3):
+		for x in range(-48, 49, 3):
+			var spot := Vector3(float(x), 0.0, float(z))
+			var depth: float = _field.depth_at(spot)
+			if depth < structural:
+				structural = depth
+				shallowest = spot
+	assert_true(structural < 0.01,
+		"fixture found no scoured opening; shallowest structural depth was %.3f m" % structural)
+	var before_wade := _field.wade_factor(shallowest)
+	var visible: float = _field.call(&"visible_depth_at", shallowest)
+	assert_true(visible >= 0.079,
+		"scoured opening exposes only %.1f mm, so a boot cannot leave a cavity" % (visible * 1000.0))
+	assert_almost_eq(_field.wade_factor(shallowest), before_wade, 0.000001,
+		"the imprint veneer silently increased the movement penalty")
+
+
+func test_full_packing_removes_the_imprint_veneer() -> void:
+	assert_true(_field.has_method(&"visible_depth_at"))
+	if not _field.has_method(&"visible_depth_at"):
+		return
+	var spot := Vector3(9.0, 0.0, 9.0)
+	for _repeat in range(30):
+		_field.pack_at(spot, 0.5, 1.0)
+	assert_true(_field.packed_at(spot) >= 0.999)
+	assert_almost_eq(_field.call(&"visible_depth_at", spot), 0.0, 0.0001,
+		"packed/building-clear ground retained a false snow veneer")
+
+
+func test_visible_cover_is_world_anchored_across_recentre() -> void:
+	assert_true(_field.has_method(&"visible_depth_at"))
+	if not _field.has_method(&"visible_depth_at"):
+		return
+	var spot := Vector3(6.0, 0.0, 6.0)
+	var before: float = _field.call(&"visible_depth_at", spot)
+	assert_true(_field.follow(Vector3(35.0, 0.0, 24.0)))
+	assert_almost_eq(_field.call(&"visible_depth_at", spot), before, 0.01,
+		"the compressible opening cover moved with the raster window")
+
+
 ## W4-1 was based on the claim that no 12 m square had a mean depth in the
 ## intermediate band.  This is a characterization gate, not a balance target:
 ## final distribution thresholds need product approval before they belong here.

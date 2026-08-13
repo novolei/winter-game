@@ -396,7 +396,10 @@ func _stamp_mature_routes() -> void:
 func _stamp_marks() -> void:
 	if _material == null:
 		return
-	_material.set_shader_parameter("track_depth", track_depth)
+	var response_depth := track_depth
+	if _snow != null and _snow.has_method(&"footprint_response_depth_m"):
+		response_depth = float(_snow.call(&"footprint_response_depth_m"))
+	_material.set_shader_parameter("track_depth", response_depth)
 	_material.set_shader_parameter("track_tint", track_tint)
 	_material.set_shader_parameter("track_rim", track_rim)
 	_material.set_shader_parameter("track_rim_extent", track_rim_extent)
@@ -479,6 +482,7 @@ func _process(_delta: float) -> void:
 	_material.set_shader_parameter("snow_packed", _snow.packed_texture())
 	_material.set_shader_parameter("mature_snow", _snow.mature_snow_texture())
 	_material.set_shader_parameter("mature_variation_m", _snow.mature_variation_limit_m())
+	_material.set_shader_parameter("minimum_imprintable_cover_m", _snow.minimum_imprintable_cover_m())
 	_material.set_shader_parameter("track_mask", _tracks.texture())
 	_material.set_shader_parameter("field_origin", field_origin)
 	_material.set_shader_parameter("track_origin", track_origin)

@@ -17,11 +17,18 @@ const SnowShelterDefinitionScript := preload("res://src/definitions/snow_shelter
 
 func _initialize() -> void:
 	var profile: SnowFieldProfile = SnowFieldProfileScript.new()
+	# The sparse dynamic/persistence interpretation is unchanged: the veneer is
+	# derived at query/render time and stores no new per-tile state.
 	profile.persistence_version = 1
 	profile.mature_variation_m = 0.08
 	profile.variation_frequency_per_m = 0.025
 	profile.variation_octaves = 2
 	profile.variation_gain = 0.45
+	profile.minimum_imprintable_cover_m = 0.08
+	profile.full_imprint_depth_m = 0.08
+	profile.max_boot_depression_m = 0.035
+	profile.residual_cover_m = 0.02
+	profile.footprint_response_depth_m = 0.16
 	profile.protected_routes = [
 		_route(_points([
 			Vector3.ZERO,

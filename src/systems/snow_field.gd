@@ -15,9 +15,11 @@ extends Node
 ## and everything else is derived from them:
 ##
 ##   ground  = drift_relief(terrain - 0.5) * terrain_amplitude_m
-##   depth   = clamp(max_depth_m * scour(terrain) + mature_variation, 0, max_depth_m)
+##   structural = (clamp(max_depth_m * scour(terrain) + mature_variation,
+##                 0, max_depth_m) + dynamic_snow) * (1 - packed)
+##   visible = max(unpacked structural column, minimum imprintable cover)
 ##             * (1 - packed)
-##   surface = ground + depth
+##   surface = ground + visible
 ##
 ## `scour` is the part that makes the terrain mean something. Snow does not lie
 ## evenly: the wind strips the crests and dumps it in the hollows. So depth is a
@@ -1065,19 +1067,75 @@ func scour_at(world: Vector3) -> float:
 	return 1.0 - smoothstep(scour_hollow, scour_crest, terrain_normal_at(world))
 
 
-## Snow depth in metres -- the distance from the bare ground up to the surface.
-func depth_at(world: Vector3) -> float:
+## Raw snow column before packing.  Kept separate because a mature surface
+## veneer may raise what is drawn without increasing the column used by wading.
+func _structural_column_at(world: Vector3) -> float:
+	if _terrain == null:
+		return 0.0
+	var mature_depth := clampf(
+		max_depth_m * scour_at(world) + mature_variation_at(world), 0.0, max_depth_m
+	)
+	return mature_depth + dynamic_depth_at(world)
+
+
+## Pure CPU equivalent of the shader's compressible-cover formula.  The caller
+## passes an unpacked column: both authored and minimum cover then obey the same
+## packed/building carve, so a fully cleared interior remains exactly zero.
+static func visible_depth_from(
+	structural_column: float, packed: float, minimum_imprintable_cover_m: float
+) -> float:
+	var unpacked := 1.0 - clampf(packed, 0.0, 1.0)
+	return maxf(maxf(structural_column, 0.0), maxf(minimum_imprintable_cover_m, 0.0)) \
+		* unpacked
+
+
+## Gameplay/mobility snow depth.  This is the old `depth_at()` formula: adding
+## the visual veneer does not make a safe route slower or move a wade threshold.
+func structural_depth_at(world: Vector3) -> float:
 	if _terrain == null:
 		return 0.0
 	var cell := cell_of(Vector2(world.x, world.z))
 	var packed := sample_bilinear(_packed, cell.x, cell.y)
-	var mature_depth := clampf(
-		max_depth_m * scour_at(world) + mature_variation_at(world), 0.0, max_depth_m
+	return _structural_column_at(world) * (1.0 - packed)
+
+
+## Compatibility boundary for existing gameplay and measurement consumers.
+## New code should say `structural_depth_at()` or `visible_depth_at()` explicitly.
+func depth_at(world: Vector3) -> float:
+	return structural_depth_at(world)
+
+
+## Drawn/physical surface cover.  Open ground gets enough mature snow for a
+## shallow cavity; packing and building carves remove it through the same mask.
+func visible_depth_at(world: Vector3) -> float:
+	if _terrain == null:
+		return 0.0
+	var cell := cell_of(Vector2(world.x, world.z))
+	var packed := sample_bilinear(_packed, cell.x, cell.y)
+	return visible_depth_from(
+		_structural_column_at(world), packed, minimum_imprintable_cover_m()
 	)
-	# A footprint compacts the material at this location, not only the snow
-	# which happened to be present on day one.  New flakes therefore join the
-	# same physical column before the existing packed factor is applied.
-	return (mature_depth + dynamic_depth_at(world)) * (1.0 - packed)
+
+
+func minimum_imprintable_cover_m() -> float:
+	return 0.0 if _snow_profile == null else maxf(_snow_profile.minimum_imprintable_cover_m, 0.0)
+
+
+func footprint_response_depth_m() -> float:
+	return 0.16 if _snow_profile == null else maxf(_snow_profile.footprint_response_depth_m, 0.0001)
+
+
+func imprint_factor_at(world: Vector3) -> float:
+	if _snow_profile == null or _snow_profile.full_imprint_depth_m <= 0.0:
+		return 0.0
+	return clampf(visible_depth_at(world) / _snow_profile.full_imprint_depth_m, 0.0, 1.0)
+
+
+func allowed_boot_depression_at(world: Vector3) -> float:
+	if _snow_profile == null:
+		return 0.0
+	var available := maxf(visible_depth_at(world) - _snow_profile.residual_cover_m, 0.0)
+	return minf(available, maxf(_snow_profile.max_boot_depression_m, 0.0))
 
 
 ## The additional mature snow a run's opening weather history left at this
@@ -1096,7 +1154,7 @@ func mature_variation_at(world: Vector3) -> float:
 ## What you would stand on if the snow held your weight: ground plus snow. This
 ## is the height the ground mesh is drawn at.
 func surface_height_at(world: Vector3) -> float:
-	return terrain_height_at(world) + depth_at(world)
+	return terrain_height_at(world) + visible_depth_at(world)
 
 
 ## Slope of that surface as (d/dx, d/dz), pointing uphill. Its length is the
@@ -1119,7 +1177,7 @@ func surface_gradient_at(world: Vector3, epsilon := 0.6) -> Vector2:
 func wade_factor(world: Vector3) -> float:
 	if deep_depth_m <= 0.0:
 		return 0.0
-	return clampf(depth_at(world) / deep_depth_m, 0.0, 1.0)
+	return clampf(structural_depth_at(world) / deep_depth_m, 0.0, 1.0)
 
 
 ## Tread the snow down. `amount` is how much of what is left gets compacted at

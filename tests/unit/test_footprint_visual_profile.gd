@@ -197,12 +197,43 @@ func test_every_production_bite_leaves_a_readable_thin_boot_depression() -> void
 			% [tilt_degrees, tilt_degrees - readable_boundary])
 
 
-func _thin_boot_samples(profile: TrackProfileDefinition, strength: float) -> Dictionary:
+func test_mature_veneer_drives_a_bounded_physical_boot_depression() -> void:
+	var snow_profile = load("res://data/snow/valley_profile.tres")
+	var boot_profile = load(PROFILE_PATH)
+	assert_not_null(snow_profile)
+	assert_not_null(boot_profile)
+	if snow_profile == null or boot_profile == null:
+		return
+	assert_true("minimum_imprintable_cover_m" in snow_profile,
+		"the opening snow profile does not author compressible cover")
+	assert_true("footprint_response_depth_m" in snow_profile,
+		"footprint strength cannot be converted from metres without a response depth")
+	if not ("minimum_imprintable_cover_m" in snow_profile) \
+			or not ("footprint_response_depth_m" in snow_profile):
+		return
+	var response_m: float = snow_profile.footprint_response_depth_m
+	var base_strength: float = snow_profile.max_boot_depression_m / response_m
+	# At the authored 8 cm veneer imprint_factor is one, hence production scuff
+	# is zero. Exercise that exact call rather than the legacy dust endpoint.
+	var weakest := _thin_boot_samples(
+		boot_profile, base_strength * (1.0 - 0.30), 0.0
+	)
+	var actual_forefoot_m: float = weakest.forefoot * response_m
+	assert_true(actual_forefoot_m >= 0.022,
+		"weakest production step depresses only %.1f mm" % (actual_forefoot_m * 1000.0))
+	assert_true(actual_forefoot_m <= snow_profile.max_boot_depression_m + 0.0001,
+		"weakest step exceeds the authored %.1f mm snow budget"
+			% (snow_profile.max_boot_depression_m * 1000.0))
+
+
+func _thin_boot_samples(
+	profile: TrackProfileDefinition, strength: float, scuff := 1.0
+) -> Dictionary:
 	var mask: TrackMask = TrackMaskScript.new()
 	mask.build_at(Vector3.ZERO)
 	var radius := 0.28 * 0.74
 	mask.call(&"stamp_profiled", Vector3.ZERO, radius, strength, Vector2.RIGHT, 1.5,
-		0.74, 0.0, 17.0, Vector2.ZERO, 1.0, 1.0, profile)
+		0.74, 0.0, 17.0, Vector2.ZERO, 1.0, scuff, profile)
 	var along_scale: float = radius * float(profile.dust_length_scale)
 	var result := {
 		"heel": mask.value_at(Vector3(along_scale * float(profile.heel_centre_x), 0.0, 0.0)),

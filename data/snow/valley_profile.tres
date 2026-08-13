@@ -66,5 +66,10 @@ shelter_strength = 0.65
 
 [resource]
 script = ExtResource("2_35luj")
+minimum_imprintable_cover_m = 0.08
+full_imprint_depth_m = 0.08
+max_boot_depression_m = 0.035
+residual_cover_m = 0.02
+footprint_response_depth_m = 0.16
 protected_routes = Array[ExtResource("1_3rrh4")]([SubResource("Resource_cg5ic"), SubResource("Resource_0cjig"), SubResource("Resource_gojuo"), SubResource("Resource_0ussm"), SubResource("Resource_otl2o"), SubResource("Resource_g6a7x")])
 shelters = Array[ExtResource("3_4k0c1")]([SubResource("Resource_ejt5h"), SubResource("Resource_khjfp"), SubResource("Resource_g1ct0")])

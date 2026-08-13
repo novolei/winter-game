@@ -247,6 +247,14 @@ func test_the_depth_the_ground_cuts_a_mark_at_reaches_the_material() -> void:
 	)
 
 
+func test_the_shader_uses_the_same_compressible_cover_formula_as_snow_field() -> void:
+	var source := FileAccess.get_file_as_string("res://src/rendering/snow_ground.gdshader")
+	assert_true(source.contains("uniform float minimum_imprintable_cover_m"),
+		"the renderer cannot receive the profile's opening cover")
+	assert_true(source.contains("max(structural_column, minimum_imprintable_cover_m) * unpacked"),
+		"the shader's visible cover no longer matches SnowField.visible_depth_at()")
+
+
 ## ...and surviving in the MASK is not the same as surviving on the SCREEN.
 ##
 ## The test above proves the buried furrow still has a value. This one proves it
