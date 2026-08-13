@@ -31,7 +31,6 @@
 [ext_resource type="PackedScene" path="res://assets/models/props/evacuation_cart.glb" id="30_cart"]
 [ext_resource type="PackedScene" path="res://assets/models/props/synty_yard_cache.glb" id="43_yard_cache"]
 [ext_resource type="PackedScene" path="res://assets/models/props/synty_evacuation_cache.glb" id="44_evac_cache"]
-[ext_resource type="Script" path="res://src/entities/winter_wheat_cover.gd" id="45_wheat_cover"]
 [ext_resource type="Script" uid="uid://e7mudcc4vwc3" path="res://src/entities/interior/interior_reveal.gd" id="23_reveal"]
 [ext_resource type="PackedScene" uid="uid://dalphxjcfaohp" path="res://scenes/entities/stove/stove.tscn" id="24_stove"]
 [ext_resource type="Script" uid="uid://216pnar7cvau" path="res://src/entities/interior/door.gd" id="25_door"]
@@ -275,9 +274,6 @@ transform = Transform3D(0.9659258, 0, 0.25881904, 0, 1, 0, -0.25881904, 0, 0.965
 
 [node name="ChoppingBlock" parent="Farmstead" instance=ExtResource("29_chop")]
 transform = Transform3D(0.9063078, 0, -0.42261827, 0, 1, 0, 0.42261827, 0, 0.9063078, -14.5, 0, -23.2)
-
-[node name="WinterWheatCover" type="Node3D" parent="Farmstead"]
-script = ExtResource("45_wheat_cover")
 
 [node name="Fence" type="Node3D" parent="Farmstead" unique_id=1902244630]
 
