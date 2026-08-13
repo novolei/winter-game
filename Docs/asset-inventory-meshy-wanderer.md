@@ -217,11 +217,16 @@ Four reasons, in the order they would otherwise bite:
    for it would be a lie told to a gate. (Same reasoning that put the retarget donor in
    `assets/rigs/`.)
 4. **The game must not read it directly anyway.** Godot's FBX importer lands this rig in a
-   different space from the shipping `.glb` — measured here again: skeleton world scale
-   1.0 against 0.01, and read raw out of the skeleton the FBX's rest is Z-up. The same Hips
-   rest measures 85.07 on one path and 0.84 on the other. A track copied across that gap
-   scales the skeleton by a hundred and the visible result is not an error, it is a
-   character who has vanished because his bones are tens of metres apart.
+   different space from the shipping `.glb`. Measured on this delivery: **skeleton world
+   scale 1.0 against the model's 0.01**, and the two skeletons do not even agree which axis
+   is up — reading `get_bone_global_rest().origin.y` raw out of the FBX puts `headfront` at
+   **0.103** of body height where the model puts it at **0.770**, and putting the same
+   origins through each skeleton's own global transform (which carries Godot's axis
+   correction) makes every bone agree to 0.019. The pre-existing record in
+   `decimate_character.py` measured the same Hips rest at **85.07 on one path and 0.84 on
+   the other**. A track copied across that gap scales the skeleton by a hundred, and the
+   visible result is not an error message — it is a character who has vanished, because his
+   bones have been flung tens of metres apart.
 
 ### `Model@Clip` is Godot's convention, and it is not this project's
 
