@@ -179,6 +179,14 @@ uniform float footprint_shadow_wall_tone = 0.48;
 uniform float footprint_lip_start = 0.45;
 uniform float footprint_lip_full = 0.82;
 uniform float footprint_lip_tone_release = 0.72;
+// Mask value alone cannot distinguish the pushed shoulder of a fresh print
+// from the last, shallow core left as subtractive fill and slump erase it. The
+// former owns a spatial wall; the latter is flat. Gate the lip with the
+// four-neighbour track slope fragment() already reconstructed, so old cores do
+// not grow a false new rim while the real outer shoulder remains. These are
+// height-gradient magnitudes (metres per metre), not another TrackMask sample.
+uniform float footprint_lip_edge_start = 0.002;
+uniform float footprint_lip_edge_full = 0.010;
 
 // The signed-off pale-day cavity has to survive a tree shadow, but applying the
 // same ink and wall strength unchanged at every LightingPreset extreme makes a
@@ -583,8 +591,11 @@ void fragment() {
 	);
 	float skirt = clamp(centre_track / track_rim_extent, 0.0, 1.0);
 	float rim = 4.0 * skirt * (1.0 - skirt);
+	float footprint_lip_edge = smoothstep(
+		footprint_lip_edge_start, footprint_lip_edge_full, length(track_slope)
+	);
 	v_track_lip = smoothstep(footprint_lip_start, footprint_lip_full, rim)
-		* (1.0 - v_track_cavity);
+		* (1.0 - v_track_cavity) * footprint_lip_edge;
 	float footprint_presence = smoothstep(
 		0.01, max(footprint_cavity_start, 0.011), centre_track
 	);
