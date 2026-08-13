@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="TrackProfileDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/track_profile_definition.gd" id="1_ckxjy"]
+
+[resource]
+script = ExtResource("1_ckxjy")
+profile_id = &"human_winter_boot"
+subjects = Array[StringName]([&"player"])
+heel_centre_x = -0.48
+heel_half_length = 0.4
+heel_half_width = 0.7
+waist_centre_x = -0.05
+waist_half_length = 0.4
+waist_half_width = 0.52
+forefoot_centre_x = 0.44
+forefoot_half_length = 0.58
+forefoot_half_width = 1.0
+heel_weight = 0.88
+weight_transition_from_x = -0.3
+weight_transition_to_x = 0.28
+shallow_wade = 0.33
+medium_wade = 0.72
+sole_definition_dust = 0.25
+sole_definition_shallow = 0.85
+sole_definition_medium = 0.7
+sole_definition_deep = 0.3

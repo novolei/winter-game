@@ -139,6 +139,12 @@ uniform float track_depth = 0.05;
 // mask's falloff it sits. Small: a rim you can see the shape of, not a crater.
 uniform float track_rim = 0.014;
 uniform float track_rim_extent = 0.4;
+// A shallow scrape has no displaced bank high enough to rise above the snow.
+// The four normal samples share one gate based on their deepest neighbour: this
+// keeps a deep cavity's shoulder, removes the thin-snow halo, and costs exactly
+// the same four texture fetches as the ungated normal.
+uniform float track_rim_gate_start = 0.30;
+uniform float track_rim_gate_full = 0.58;
 
 // How far the print's colour shifts toward the track tones. Low on purpose:
 // with the normal doing the work a print reads as a dent, and leaning on
@@ -439,11 +445,10 @@ float ground_height(vec2 w) {
 // a print, where the value is low but not zero, and vanishes both at the centre
 // and inside the pressed core. It costs one extra line and it is most of what
 // makes a deep print read as displaced snow rather than as a dent.
-float track_height(vec2 w) {
-	float t = track_at(w);
+float track_height(float t, float rim_gate) {
 	float skirt = clamp(t / track_rim_extent, 0.0, 1.0);
 	float rim = 4.0 * skirt * (1.0 - skirt);
-	return -t * track_depth + rim * track_rim;
+	return -t * track_depth + rim_gate * rim * track_rim;
 }
 
 // Slope of the ground, by central difference at a scale wide enough to step
@@ -458,11 +463,16 @@ vec2 ground_gradient(vec2 w, float e) {
 
 // Slope of the footprints, at a scale small enough to resolve one.
 vec2 track_gradient(vec2 w, float e) {
-	float xr = track_height(w + vec2(e, 0.0));
-	float xl = track_height(w - vec2(e, 0.0));
-	float zr = track_height(w + vec2(0.0, e));
-	float zl = track_height(w - vec2(0.0, e));
-	return vec2(xr - xl, zr - zl) / (2.0 * e);
+	float xr = track_at(w + vec2(e, 0.0));
+	float xl = track_at(w - vec2(e, 0.0));
+	float zr = track_at(w + vec2(0.0, e));
+	float zl = track_at(w - vec2(0.0, e));
+	float local_peak = max(max(xr, xl), max(zr, zl));
+	float rim_gate = smoothstep(track_rim_gate_start, track_rim_gate_full, local_peak);
+	return vec2(
+		track_height(xr, rim_gate) - track_height(xl, rim_gate),
+		track_height(zr, rim_gate) - track_height(zl, rim_gate)
+	) / (2.0 * e);
 }
 
 void vertex() {

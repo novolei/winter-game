@@ -139,6 +139,7 @@ const RECENTER_SLACK_M := 3.0
 ## second event and a second mask.
 const FOOTPRINT_EVENT := &"track.footprint"
 const FURROW_EVENT := &"player.furrow"
+const TRACK_PROFILE_DIRECTORY := "res://data/tracks"
 
 ## ---------------------------------------------------------------------------
 ## What a print in snow actually looks like
@@ -331,6 +332,10 @@ var _total_upload_layer_count := 0
 var _total_upload_bytes := 0
 var _edge_noise: FastNoiseLite
 var _floor_noise: FastNoiseLite
+## Subject id -> authored shape resource, loaded once from data/tracks.  Unknown
+## subjects retain the legacy ellipse instead of silently inheriting a boot.
+var _profiles_by_subject: Dictionary = {}
+var _compiled_profiles: Dictionary = {}
 
 var _static_origin := Vector2.ZERO
 var _static: Image
@@ -375,6 +380,7 @@ func _exit_tree() -> void:
 ## Builds both layers centred on `centre`. Separate from _ready() so a test can
 ## drive it without a tree.
 func build_at(centre: Vector3 = Vector3.ZERO) -> void:
+	_load_profiles()
 	if _mask == null:
 		_mask = Image.create_empty(RESOLUTION, RESOLUTION, false, Image.FORMAT_R8)
 		_create_upload_texture()
@@ -422,6 +428,46 @@ func _create_upload_texture() -> void:
 	_texture = Texture2DArray.new()
 	var error := _texture.create_from_images(_upload_layers)
 	assert(error == OK, "TrackMask Texture2DArray creation failed: %s" % error_string(error))
+
+
+func _load_profiles() -> void:
+	if not _profiles_by_subject.is_empty():
+		return
+	var directory := DirAccess.open(TRACK_PROFILE_DIRECTORY)
+	if directory == null:
+		return
+	for file_name in directory.get_files():
+		if not file_name.ends_with(".tres"):
+			continue
+		var profile := load(TRACK_PROFILE_DIRECTORY.path_join(file_name)) as TrackProfileDefinition
+		if profile == null:
+			continue
+		_compiled_profiles[profile.get_instance_id()] = _compile_profile(profile)
+		for subject in profile.subjects:
+			if subject != &"":
+				_profiles_by_subject[subject] = profile
+
+
+func profile_for_subject(subject: StringName) -> TrackProfileDefinition:
+	_load_profiles()
+	return _profiles_by_subject.get(subject, null) as TrackProfileDefinition
+
+
+func _compile_profile(profile: TrackProfileDefinition) -> PackedFloat32Array:
+	return PackedFloat32Array([
+		profile.heel_centre_x, profile.heel_half_length, profile.heel_half_width,
+		profile.waist_centre_x, profile.waist_half_length, profile.waist_half_width,
+		profile.forefoot_centre_x, profile.forefoot_half_length, profile.forefoot_half_width,
+		profile.heel_weight, profile.forefoot_weight,
+		profile.weight_transition_from_x, profile.weight_transition_to_x,
+	])
+
+
+func _compiled_profile(profile: TrackProfileDefinition) -> PackedFloat32Array:
+	var key := profile.get_instance_id()
+	if not _compiled_profiles.has(key):
+		_compiled_profiles[key] = _compile_profile(profile)
+	return _compiled_profiles[key]
 
 
 ## Re-centres and clears the static layer, without touching the footprints.
@@ -525,7 +571,34 @@ func stamp(
 		_mask, RESOLUTION, CELL_M, cell_of(Vector2(world.x, world.z)),
 		Vector2(world.x, world.z),
 		radius_m, strength, forward, aspect, core, irregularity, edge_seed, fall,
-		downhill_scale, scuff
+		downhill_scale, scuff, null
+	))
+
+
+## The same pure stamp boundary with one authored silhouette.  Separate from
+## `stamp()` so anonymous threats, decay fixtures and baked marks preserve their
+## exact legacy semantics until data assigns them a profile.
+func stamp_profiled(
+	world: Vector3,
+	radius_m: float,
+	strength: float,
+	forward: Vector2,
+	aspect: float,
+	core: float,
+	irregularity: float,
+	edge_seed: float,
+	fall: Vector2,
+	downhill_scale: float,
+	scuff: float,
+	track_profile: TrackProfileDefinition
+) -> void:
+	if _mask == null or track_profile == null:
+		return
+	_written(_blob(
+		_mask, RESOLUTION, CELL_M, cell_of(Vector2(world.x, world.z)),
+		Vector2(world.x, world.z),
+		radius_m, strength, forward, aspect, core, irregularity, edge_seed, fall,
+		downhill_scale, scuff, track_profile
 	))
 
 
@@ -599,7 +672,8 @@ func _blob(
 	edge_seed: float,
 	fall: Vector2,
 	downhill_scale: float,
-	scuff: float
+	scuff: float,
+	track_profile: TrackProfileDefinition = null
 ) -> Rect2i:
 	var touched := Rect2i()
 	var scrape := clampf(scuff, 0.0, 1.0)
@@ -646,6 +720,73 @@ func _blob(
 		max_x = mini(int(ceilf(cell.x + reach)), resolution - 1)
 		min_y = maxi(int(floorf(cell.y - reach)), 0)
 		max_y = mini(int(ceilf(cell.y + reach)), resolution - 1)
+	elif along != Vector2.ZERO:
+		# The old square bound used the boot's long axis in both directions. A
+		# 1.5:1 footprint therefore visited almost twice as many untouched texels
+		# as its rotated ellipse can reach. This exact rotated AABB includes the
+		# full irregularity allowance and changes no mask value or overlap rule.
+		var edge_allowance := 1.0 + maxf(irregularity, 0.0)
+		var along_reach := radius * stretch * edge_allowance
+		var across_reach := radius * narrow / aspect * edge_allowance
+		var half_x := sqrt(
+			along.x * along.x * along_reach * along_reach
+			+ along.y * along.y * across_reach * across_reach
+		)
+		var half_y := sqrt(
+			along.y * along.y * along_reach * along_reach
+			+ along.x * along.x * across_reach * across_reach
+		)
+		min_x = maxi(int(floorf(cell.x - half_x)), 0)
+		max_x = mini(int(ceilf(cell.x + half_x)), resolution - 1)
+		min_y = maxi(int(floorf(cell.y - half_y)), 0)
+		max_y = mini(int(ceilf(cell.y + half_y)), resolution - 1)
+
+	# Resource dispatch inside the texel loop was four times more expensive than
+	# the whole legacy stamp. Resolve the snow band and copy the authored scalar
+	# profile once; the hot path below stays arithmetic-only.
+	var profiled := track_profile != null and along != Vector2.ZERO
+	var sole_definition := 0.0
+	var heel_centre_x := 0.0
+	var heel_half_length := 1.0
+	var heel_half_width := 1.0
+	var waist_centre_x := 0.0
+	var waist_half_length := 1.0
+	var waist_half_width := 1.0
+	var forefoot_centre_x := 0.0
+	var forefoot_half_length := 1.0
+	var forefoot_half_width := 1.0
+	var heel_weight := 1.0
+	var forefoot_weight := 1.0
+	var weight_transition_from_x := 0.0
+	var weight_transition_to_x := 1.0
+	var heel_inv_length := 1.0
+	var heel_inv_width := 1.0
+	var waist_inv_length := 1.0
+	var waist_inv_width := 1.0
+	var forefoot_inv_length := 1.0
+	var forefoot_inv_width := 1.0
+	if profiled:
+		sole_definition = track_profile.sole_definition_at(1.0 - scrape)
+		var compiled := _compiled_profile(track_profile)
+		heel_centre_x = compiled[0]
+		heel_half_length = compiled[1]
+		heel_half_width = compiled[2]
+		waist_centre_x = compiled[3]
+		waist_half_length = compiled[4]
+		waist_half_width = compiled[5]
+		forefoot_centre_x = compiled[6]
+		forefoot_half_length = compiled[7]
+		forefoot_half_width = compiled[8]
+		heel_weight = compiled[9]
+		forefoot_weight = compiled[10]
+		weight_transition_from_x = compiled[11]
+		weight_transition_to_x = compiled[12]
+		heel_inv_length = 1.0 / heel_half_length
+		heel_inv_width = 1.0 / heel_half_width
+		waist_inv_length = 1.0 / waist_half_length
+		waist_inv_width = 1.0 / waist_half_width
+		forefoot_inv_length = 1.0 / forefoot_half_length
+		forefoot_inv_width = 1.0 / forefoot_half_width
 
 	for y in range(min_y, max_y + 1):
 		for x in range(min_x, max_x + 1):
@@ -663,7 +804,39 @@ func _blob(
 					offset.dot(along) / (radius * stretch),
 					offset.dot(across) / (radius * narrow / aspect)
 				)
-			var distance := local.length()
+			var distance_squared := local.length_squared()
+			var distance := 0.0
+			if profiled:
+				# A dusting cannot hold a sole mould and a drift collapses back
+				# into a pocket. Only the middle snow band records the boot clearly.
+				# Three squared ellipse distances share one sqrt, then blend back
+				# toward the legacy pocket according to the authored snow band.
+				var waist_x := (local.x - waist_centre_x) * waist_inv_length
+				var waist_y := local.y * waist_inv_width
+				var sole_distance_squared := waist_x * waist_x + waist_y * waist_y
+				# The waist is the overlap seam. On either side only the adjacent
+				# lobe can own the union, so evaluating the distant end buys nothing
+				# except two multiplies per footprint texel.
+				if local.x < waist_centre_x:
+					var heel_x := (local.x - heel_centre_x) * heel_inv_length
+					var heel_y := local.y * heel_inv_width
+					sole_distance_squared = minf(
+						sole_distance_squared, heel_x * heel_x + heel_y * heel_y
+					)
+				else:
+					var forefoot_x := (local.x - forefoot_centre_x) * forefoot_inv_length
+					var forefoot_y := local.y * forefoot_inv_width
+					sole_distance_squared = minf(
+						sole_distance_squared,
+						forefoot_x * forefoot_x + forefoot_y * forefoot_y
+					)
+				# Morph squared fields and take one root. Apart from avoiding a second
+				# sqrt per texel this keeps every authored 1.0 contour pinned exactly.
+				distance = sqrt(lerpf(
+					distance_squared, sole_distance_squared, sole_definition
+				))
+			else:
+				distance = sqrt(distance_squared)
 			if irregularity > 0.0:
 				# Warping the distance rather than the radius means the outline
 				# is displaced in whatever direction the noise happens to run,
@@ -730,7 +903,16 @@ func _blob(
 				profile *= 1.0 + broken * out * 0.5 * _lobed(
 					_floor_noise.get_noise_2d(here.x, here.y)
 				)
-			var value := clamped * clampf(profile, 0.0, 1.0)
+			var compression := 1.0
+			if profiled and sole_definition > 0.0:
+				var weight := lerpf(
+					heel_weight, forefoot_weight,
+					smoothstep(weight_transition_from_x, weight_transition_to_x, local.x)
+				)
+				compression = lerpf(
+					1.0, weight, sole_definition
+				)
+			var value := clamped * compression * clampf(profile, 0.0, 1.0)
 			var current := image.get_pixel(x, y).r
 			if value > current:
 				image.set_pixel(x, y, Color(value, 0.0, 0.0, 1.0))
@@ -1494,19 +1676,25 @@ func _on_footprint(payload) -> void:
 	var subject = data.get("subject", &"")
 	if not (subject is StringName or subject is String) or StringName(subject) == &"":
 		return
-	stamp(
-		data.get("position", Vector3.ZERO),
-		data.get("radius", 0.28),
-		data.get("strength", 0.6),
-		data.get("forward", Vector2.ZERO),
-		data.get("aspect", 1.0),
-		data.get("core", 0.55),
-		data.get("irregularity", 0.0),
-		data.get("edge_seed", 0.0),
-		data.get("fall", Vector2.ZERO),
-		data.get("downhill_scale", 1.0),
-		data.get("scuff", 0.0)
-	)
+	var track_profile := profile_for_subject(StringName(subject))
+	if track_profile == null:
+		stamp(
+			data.get("position", Vector3.ZERO), data.get("radius", 0.28),
+			data.get("strength", 0.6), data.get("forward", Vector2.ZERO),
+			data.get("aspect", 1.0), data.get("core", 0.55),
+			data.get("irregularity", 0.0), data.get("edge_seed", 0.0),
+			data.get("fall", Vector2.ZERO), data.get("downhill_scale", 1.0),
+			data.get("scuff", 0.0)
+		)
+	else:
+		stamp_profiled(
+			data.get("position", Vector3.ZERO), data.get("radius", 0.28),
+			data.get("strength", 0.6), data.get("forward", Vector2.ZERO),
+			data.get("aspect", 1.0), data.get("core", 0.55),
+			data.get("irregularity", 0.0), data.get("edge_seed", 0.0),
+			data.get("fall", Vector2.ZERO), data.get("downhill_scale", 1.0),
+			data.get("scuff", 0.0), track_profile
+		)
 
 
 ## One tick of the walker's drag. Both ends are required rather than defaulted:
