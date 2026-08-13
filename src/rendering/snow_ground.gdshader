@@ -63,12 +63,19 @@ uniform float mature_route_half_widths[MATURE_ROUTE_CAPACITY];
 uniform float mature_route_feathers[MATURE_ROUTE_CAPACITY];
 uniform vec2 mature_route_points[MATURE_ROUTE_POINT_CAPACITY];
 
-// TrackMask, dynamic layer: one image, any number of prints. A thousand
-// footprints cost the same as one because they are all already composited into
-// this texture. The window follows the player.
-uniform sampler2D track_mask : filter_linear, repeat_disable;
+// TrackMask, dynamic layer: sixteen 512-square cores with a one-texel gutter
+// around each. A fresh print uploads one roughly 258 KiB layer rather than the
+// entire 4 MiB window. The gutter means hardware bilinear filtering remains
+// continuous across the 4x4 transport grid with one texture fetch per sample.
+// The CPU still keeps one continuous 2048-square image for decay and threat
+// reads; this array is only its cross-hardware-stable GPU transport.
+uniform sampler2DArray track_mask : filter_linear, repeat_disable;
 uniform vec2 track_origin = vec2(-45.0, -45.0);
 uniform float track_extent = 90.0;
+const float TRACK_RESOLUTION = 2048.0;
+const float TRACK_CHUNK_SIZE = 512.0;
+const float TRACK_LAYER_SIZE = 514.0;
+const int TRACK_CHUNKS_ACROSS = 4;
 
 // TrackMask, static layer: ploughed furrows and old tyre tracks, baked once
 // into a window that is fixed in the world (Art Bible section 3). Read exactly
@@ -361,6 +368,27 @@ float layer_at(sampler2D layer, vec2 w, vec2 layer_origin, float layer_extent) {
 	return textureLod(layer, uv, 0.0).r;
 }
 
+// Exact equivalent of sampling the former 2048-square filter_linear texture.
+// `full_texel` is expressed at texel boundaries, so +1 places it between the
+// gutter and the 512-square core. At a chunk boundary either neighbouring layer
+// therefore interpolates the same two source texels and no seam can appear.
+float dynamic_track_at(vec2 w) {
+	vec2 uv = (w - track_origin) / track_extent;
+	if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+		return 0.0;
+	}
+	vec2 full_texel = clamp(uv, vec2(0.0), vec2(1.0)) * TRACK_RESOLUTION;
+	ivec2 chunk = clamp(
+		ivec2(floor(full_texel / TRACK_CHUNK_SIZE)),
+		ivec2(0), ivec2(TRACK_CHUNKS_ACROSS - 1)
+	);
+	vec2 layer_uv = (
+		full_texel - vec2(chunk) * TRACK_CHUNK_SIZE + vec2(1.0)
+	) / TRACK_LAYER_SIZE;
+	int layer_index = chunk.y * TRACK_CHUNKS_ACROSS + chunk.x;
+	return textureLod(track_mask, vec3(layer_uv, float(layer_index)), 0.0).r;
+}
+
 // The baked layer, with however much snow has settled since it was cut. See
 // static_burial above for why this is a power and not a subtraction.
 //
@@ -375,7 +403,7 @@ float baked_at(vec2 w) {
 
 // What the SHAPE of the ground is asked for: the deeper of the two layers.
 float track_at(vec2 w) {
-	return max(layer_at(track_mask, w, track_origin, track_extent), baked_at(w));
+	return max(dynamic_track_at(w), baked_at(w));
 }
 
 // ...and what its COLOUR is asked for, which is not the same question. Only the
@@ -384,7 +412,7 @@ float track_at(vec2 w) {
 // weeks of traffic actually make it. See static_tint_boost.
 float track_tone_at(vec2 w) {
 	return clamp(
-		max(layer_at(track_mask, w, track_origin, track_extent), baked_at(w) * static_tint_boost),
+		max(dynamic_track_at(w), baked_at(w) * static_tint_boost),
 		0.0, 1.0
 	);
 }

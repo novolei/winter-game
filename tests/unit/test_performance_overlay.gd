@@ -91,6 +91,9 @@ func test_the_readout_includes_render_memory_and_snow_diagnostics() -> void:
 		"vram_bytes": 128.0 * 1024.0 * 1024.0,
 		"snow_tiles": 31,
 		"recenter_ms": 7.5,
+		"track_upload_layers": 1,
+		"track_upload_bytes": 264196,
+		"track_upload_ms": 0.24,
 	})
 	assert_true("FPS" in text)
 	assert_true("GPU draws" in text)
@@ -98,3 +101,6 @@ func test_the_readout_includes_render_memory_and_snow_diagnostics() -> void:
 	assert_true("VRAM 128 MiB" in text)
 	assert_true("Snow tiles   31" in text)
 	assert_true("recenter   7.5 ms" in text)
+	assert_true("Tracks  1 layers" in text)
+	assert_true("258 KiB" in text)
+	assert_true("upload  0.24 ms" in text)

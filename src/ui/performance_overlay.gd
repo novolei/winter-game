@@ -12,6 +12,7 @@ const TOGGLE_ACTION := &"toggle_performance_metrics"
 const SAMPLE_INTERVAL_SECONDS := 0.25
 const WORST_WINDOW_FRAMES := 240
 const SNOW_FIELD_SERVICE := &"snow_field"
+const TRACK_MASK_SERVICE := &"track_mask"
 
 var _tokens: UITokens = null
 var _fonts: UIFonts = null
@@ -127,6 +128,17 @@ func _metric_snapshot() -> Dictionary:
 			snow_tiles = int(snow.call("dynamic_tile_count"))
 		if snow.has_method("last_recentre_duration_ms"):
 			recenter_ms = float(snow.call("last_recentre_duration_ms"))
+	var track_upload_layers := 0
+	var track_upload_bytes := 0
+	var track_upload_ms := 0.0
+	var tracks = _service(TRACK_MASK_SERVICE)
+	if tracks != null:
+		if tracks.has_method("last_upload_layer_count"):
+			track_upload_layers = int(tracks.call("last_upload_layer_count"))
+		if tracks.has_method("last_upload_bytes"):
+			track_upload_bytes = int(tracks.call("last_upload_bytes"))
+		if tracks.has_method("last_upload_duration_ms"):
+			track_upload_ms = float(tracks.call("last_upload_duration_ms"))
 	return {
 		"fps": float(Engine.get_frames_per_second()),
 		"frame_ms": _latest_frame_ms(),
@@ -140,6 +152,9 @@ func _metric_snapshot() -> Dictionary:
 		"vram_bytes": _monitor_value(Performance.RENDER_VIDEO_MEM_USED),
 		"snow_tiles": snow_tiles,
 		"recenter_ms": recenter_ms,
+		"track_upload_layers": track_upload_layers,
+		"track_upload_bytes": track_upload_bytes,
+		"track_upload_ms": track_upload_ms,
 	}
 
 
@@ -166,12 +181,16 @@ func _monitor_value(monitor: Performance.Monitor) -> float:
 
 
 func _snow_field() -> Object:
+	return _service(SNOW_FIELD_SERVICE)
+
+
+func _service(service_name: StringName) -> Object:
 	var registry := _registry
 	if registry == null and is_inside_tree():
 		registry = get_node_or_null("/root/ServiceRegistry")
 	if registry == null or not registry.has_method("get_service"):
 		return null
-	return registry.call("get_service", SNOW_FIELD_SERVICE) as Object
+	return registry.call("get_service", service_name) as Object
 
 
 ## Pure formatting makes telemetry display testable without relying on a
@@ -193,6 +212,11 @@ static func format_metrics(metrics: Dictionary) -> String:
 		] \
 		+ "Snow tiles %4d   recenter %5.1f ms" % [
 			int(_number(metrics, "snow_tiles")), _number(metrics, "recenter_ms")
+		] \
+		+ "\nTracks %2d layers   %6s   upload %5.2f ms" % [
+			int(_number(metrics, "track_upload_layers")),
+			_transfer_bytes(_number(metrics, "track_upload_bytes")),
+			_number(metrics, "track_upload_ms")
 		]
 
 
@@ -210,6 +234,14 @@ static func _bytes(value: float) -> String:
 		return "n/a"
 	var mib := value / (1024.0 * 1024.0)
 	return "%.0f MiB" % mib
+
+
+static func _transfer_bytes(value: float) -> String:
+	if value <= 0.0:
+		return "0 KiB"
+	if value < 1024.0 * 1024.0:
+		return "%.0f KiB" % (value / 1024.0)
+	return "%.1f MiB" % (value / (1024.0 * 1024.0))
 
 
 func _build() -> void:

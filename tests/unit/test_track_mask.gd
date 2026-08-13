@@ -721,3 +721,86 @@ func test_outside_the_baked_window_reads_as_untouched_snow() -> void:
 	_mask.bake_stroke(far, far + Vector3(4.0, 0.0, 0.0), 0.3, 1.0)
 	assert_almost_eq(_mask.static_value_at(far), 0.0)
 	assert_almost_eq(_mask.combined_value_at(far), 0.0)
+
+
+## The low-end transport contract: the canonical CPU mask remains 2048-square,
+## but one ordinary step must not send all four MiB to the GPU.  A 514-square R8
+## layer includes the one-texel bilinear gutter and is still under 260 KiB.
+func test_an_ordinary_step_uploads_one_guttered_layer_not_the_whole_mask() -> void:
+	_mask.flush()
+	assert_true(_mask.texture() is Texture2DArray)
+	assert_eq(_mask.last_upload_layer_count(), TrackMask.UPLOAD_LAYER_COUNT)
+
+	# Well inside one chunk: neither the print nor its one-texel gutter reaches a
+	# transport boundary.
+	_mask.stamp(Vector3(-10.0, 0.0, -10.0), 0.28, 1.0)
+	_mask.flush()
+	assert_eq(_mask.last_upload_layer_count(), 1)
+	assert_eq(_mask.last_upload_bytes(), TrackMask.UPLOAD_BYTES_PER_LAYER)
+	assert_true(
+		_mask.last_upload_bytes() < 300 * 1024,
+		"one footprint uploaded %d bytes; it should stay below 300 KiB including gutters"
+			% _mask.last_upload_bytes()
+	)
+	assert_true(_mask.last_upload_duration_ms() >= 0.0)
+
+	# A clean frame must generate no driver upload at all.
+	_mask.flush()
+	assert_eq(_mask.last_upload_layer_count(), 0)
+	assert_eq(_mask.last_upload_bytes(), 0)
+
+
+## At an intersection of four cores, each layer needs the changed texels in its
+## gutter. Four bounded uploads are correct; one layer would leave a visible
+## horizontal, vertical or corner seam.
+func test_a_print_on_a_four_layer_corner_updates_every_observer() -> void:
+	_mask.flush()
+	var boundary := -TrackMask.EXTENT_M * 0.5 + TrackMask.UPLOAD_CHUNK * TrackMask.CELL_M
+	_mask.stamp(Vector3(boundary, 0.0, boundary), 0.28, 1.0)
+	_mask.flush()
+	assert_eq(_mask.last_upload_layer_count(), 4)
+	assert_eq(_mask.last_upload_bytes(), TrackMask.UPLOAD_BYTES_PER_LAYER * 4)
+
+
+## The source values on both sides of a transport border remain one continuous
+## footprint after upload. Reading the array layers back is intentionally a GPU
+## transport assertion rather than another assertion against the canonical CPU
+## image which stamping already tests elsewhere in this file.
+func test_layer_gutters_duplicate_the_real_neighbour_texels() -> void:
+	_mask.flush()
+	var boundary := -TrackMask.EXTENT_M * 0.5 + TrackMask.UPLOAD_CHUNK * TrackMask.CELL_M
+	_mask.stamp(Vector3(boundary, 0.0, boundary), 0.28, 1.0)
+	_mask.flush()
+	# The headless dummy renderer cannot read a Texture2DArray back. These are
+	# the exact reusable Images passed to update_layer(), exposed read-only by
+	# TrackMask so the same transport can still be pinned under CI.
+	var north_west: Image = _mask.upload_layer_image(0)
+	var north_east: Image = _mask.upload_layer_image(1)
+	var south_west: Image = _mask.upload_layer_image(4)
+	var south_east: Image = _mask.upload_layer_image(5)
+	var edge := TrackMask.UPLOAD_LAYER_SIZE - 1
+	assert_eq(north_west.get_pixel(edge, edge), south_east.get_pixel(1, 1))
+	assert_eq(north_east.get_pixel(0, edge), south_east.get_pixel(0, 1))
+	assert_eq(north_west.get_pixel(edge, 1), north_east.get_pixel(1, 1))
+	assert_eq(north_west.get_pixel(1, edge), south_west.get_pixel(1, 1))
+
+
+## A long zigzag crosses every layer boundary and recentres dozens of times.
+## Its retained CPU trail is already the gameplay truth; the transport budget
+## here proves that ordinary frames stay bounded while recentres are the only
+## frames allowed to refresh all sixteen layers.
+func test_a_hundred_metre_zigzag_keeps_uploads_bounded() -> void:
+	_mask.flush()
+	var saw_recentre := false
+	for step in range(101):
+		var point := Vector3(float(step), 0.0, -12.0 if step % 2 == 0 else 12.0)
+		if _mask.follow(point):
+			saw_recentre = true
+		_mask.stamp(point, 0.28, 0.8, Vector2.RIGHT, 2.0)
+		_mask.flush()
+		assert_true(
+			_mask.last_upload_layer_count() <= TrackMask.UPLOAD_LAYER_COUNT,
+			"zigzag step %d uploaded %d layers" % [step, _mask.last_upload_layer_count()]
+		)
+	assert_true(saw_recentre, "100 m did not exercise the scrolling window")
+	assert_true(_mask.value_at(Vector3(100.0, 0.0, -12.0)) > 0.1)

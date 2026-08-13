@@ -102,6 +102,23 @@ const RESOLUTION := 2048
 const EXTENT_M := 90.0
 const CELL_M := EXTENT_M / float(RESOLUTION)
 
+## The CPU keeps one canonical 2048-square image because stamping, decay and
+## threat reads all need a continuous world-space field.  The GPU transport is
+## split into sixteen layers instead: one changed footprint uploads one 512
+## square neighbourhood, not the four-megabyte world window.
+##
+## Each layer carries a one-texel gutter.  The shader selects one layer and lets
+## hardware bilinear filtering read through that gutter, so the optimisation
+## costs one texture fetch and remains bit-for-bit continuous at layer borders.
+## A gutterless array either clamps at every 22.5 m boundary or needs four
+## texture fetches per sample; both are worse contracts for a low-end GPU.
+const UPLOAD_CHUNK := 512
+const UPLOAD_GUTTER := 1
+const UPLOAD_LAYER_SIZE := UPLOAD_CHUNK + UPLOAD_GUTTER * 2
+const UPLOAD_CHUNKS_ACROSS := RESOLUTION / UPLOAD_CHUNK
+const UPLOAD_LAYER_COUNT := UPLOAD_CHUNKS_ACROSS * UPLOAD_CHUNKS_ACROSS
+const UPLOAD_BYTES_PER_LAYER := UPLOAD_LAYER_SIZE * UPLOAD_LAYER_SIZE
+
 ## The static layer. Wider than the dynamic window because it has to hold a
 ## whole ploughed field and the road that runs past it, and because it never
 ## moves -- 120 m is the same span SnowField covers, so a farmstead that fits in
@@ -303,8 +320,15 @@ const DEPTH_STEPS := 255.0
 
 var _origin := Vector2.ZERO
 var _mask: Image
-var _texture: ImageTexture
+var _texture: Texture2DArray
+var _upload_layers: Array[Image] = []
+var _dirty_upload_layers := PackedByteArray()
 var _dirty := false
+var _last_upload_layer_count := 0
+var _last_upload_bytes := 0
+var _last_upload_duration_ms := 0.0
+var _total_upload_layer_count := 0
+var _total_upload_bytes := 0
 var _edge_noise: FastNoiseLite
 var _floor_noise: FastNoiseLite
 
@@ -353,7 +377,7 @@ func _exit_tree() -> void:
 func build_at(centre: Vector3 = Vector3.ZERO) -> void:
 	if _mask == null:
 		_mask = Image.create_empty(RESOLUTION, RESOLUTION, false, Image.FORMAT_R8)
-		_texture = ImageTexture.create_from_image(_mask)
+		_create_upload_texture()
 	if _static == null:
 		_static = Image.create_empty(STATIC_RESOLUTION, STATIC_RESOLUTION, false, Image.FORMAT_R8)
 		_static_texture = ImageTexture.create_from_image(_static)
@@ -383,8 +407,21 @@ func build_at(centre: Vector3 = Vector3.ZERO) -> void:
 	_decay_cursor = 0
 	_mask.fill(Color(0.0, 0.0, 0.0, 1.0))
 	_origin = _snap(Vector2(centre.x, centre.z) - Vector2(EXTENT_M, EXTENT_M) * 0.5, CELL_M)
-	_dirty = true
+	_mark_all_upload_layers()
 	bake_at(centre)
+
+
+func _create_upload_texture() -> void:
+	_upload_layers.clear()
+	_dirty_upload_layers.resize(UPLOAD_LAYER_COUNT)
+	_dirty_upload_layers.fill(0)
+	for _layer_index in range(UPLOAD_LAYER_COUNT):
+		_upload_layers.append(Image.create_empty(
+			UPLOAD_LAYER_SIZE, UPLOAD_LAYER_SIZE, false, Image.FORMAT_R8
+		))
+	_texture = Texture2DArray.new()
+	var error := _texture.create_from_images(_upload_layers)
+	assert(error == OK, "TrackMask Texture2DArray creation failed: %s" % error_string(error))
 
 
 ## Re-centres and clears the static layer, without touching the footprints.
@@ -499,8 +536,31 @@ func stamp(
 func _written(box: Rect2i) -> void:
 	if box.size.x <= 0:
 		return
-	_dirty = true
+	_mark_upload_box(box)
 	_ink(box)
+
+
+## Marks the layers whose core OR one-texel gutter observes this rectangle.
+## Expanding by the gutter is what keeps a write to texel 511 visible from the
+## neighbouring layer that owns texel 512; missing that case draws a hairline
+## seam only when a footprint happens to cross a 22.5 m boundary.
+func _mark_upload_box(box: Rect2i) -> void:
+	if box.size.x <= 0 or box.size.y <= 0:
+		return
+	var first_x := clampi(box.position.x - UPLOAD_GUTTER, 0, RESOLUTION - 1)
+	var first_y := clampi(box.position.y - UPLOAD_GUTTER, 0, RESOLUTION - 1)
+	var last_x := clampi(box.end.x - 1 + UPLOAD_GUTTER, 0, RESOLUTION - 1)
+	var last_y := clampi(box.end.y - 1 + UPLOAD_GUTTER, 0, RESOLUTION - 1)
+	for chunk_y in range(first_y / UPLOAD_CHUNK, last_y / UPLOAD_CHUNK + 1):
+		for chunk_x in range(first_x / UPLOAD_CHUNK, last_x / UPLOAD_CHUNK + 1):
+			_dirty_upload_layers[chunk_y * UPLOAD_CHUNKS_ACROSS + chunk_x] = 1
+	_dirty = true
+
+
+func _mark_all_upload_layers() -> void:
+	_dirty_upload_layers.resize(UPLOAD_LAYER_COUNT)
+	_dirty_upload_layers.fill(1)
+	_dirty = true
 
 
 ## Flags every tile the box overlaps. Freshly inked tiles start their clock now;
@@ -1184,8 +1244,6 @@ func decay(delta: float) -> bool:
 		budget -= 1
 		if _sweep(index, rate):
 			changed = true
-	if changed:
-		_dirty = true
 	return changed
 
 
@@ -1269,6 +1327,7 @@ func _sweep(index: int, rate: float) -> bool:
 		_mask.blit_rect(
 			patch, Rect2i(inner_x, inner_y, inner_w, inner_h), Vector2i(tile_x, tile_y)
 		)
+		_mark_upload_box(Rect2i(tile_x, tile_y, inner_w, inner_h))
 	if not remaining:
 		_tile_inked[index] = 0
 		_tile_elapsed[index] = 0.0
@@ -1287,7 +1346,10 @@ func _shift(shift_x: int, shift_y: int) -> void:
 		var source := Rect2i(maxi(shift_x, 0), maxi(shift_y, 0), width, height)
 		_mask.blit_rect(previous, source, Vector2i(maxi(-shift_x, 0), maxi(-shift_y, 0)))
 	_shift_ink(shift_x, shift_y)
-	_dirty = true
+	# Every layer's contents move relative to its layer after a recenter.  This
+	# remains one four-megabyte upload only on that infrequent boundary crossing;
+	# ordinary deep-snow steps stay at one roughly 258 KiB layer.
+	_mark_all_upload_layers()
 
 
 ## The ink flags, carried through the same move the texels just made.
@@ -1325,20 +1387,104 @@ func _shift_ink(shift_x: int, shift_y: int) -> void:
 	_tile_elapsed = banked
 
 
-## One upload per frame at most, however many prints landed in it. The static
-## layer goes up the same way, which in practice means exactly once -- it is
-## dirty on the frame it was baked and never again.
+## One upload per dirty layer per frame at most, however many prints landed in
+## it. The static layer goes up the old way, which in practice means exactly
+## once -- it is dirty on the frame it was baked and never again.
 func flush() -> void:
+	_last_upload_layer_count = 0
+	_last_upload_bytes = 0
+	_last_upload_duration_ms = 0.0
 	if _dirty and _texture != null:
-		_texture.update(_mask)
+		var started_us := Time.get_ticks_usec()
+		for layer_index in range(UPLOAD_LAYER_COUNT):
+			if _dirty_upload_layers[layer_index] == 0:
+				continue
+			_refresh_upload_layer(layer_index)
+			_texture.update_layer(_upload_layers[layer_index], layer_index)
+			_dirty_upload_layers[layer_index] = 0
+			_last_upload_layer_count += 1
+		_last_upload_bytes = _last_upload_layer_count * UPLOAD_BYTES_PER_LAYER
+		_last_upload_duration_ms = float(Time.get_ticks_usec() - started_us) / 1000.0
+		_total_upload_layer_count += _last_upload_layer_count
+		_total_upload_bytes += _last_upload_bytes
 		_dirty = false
 	if _static_dirty and _static_texture != null:
 		_static_texture.update(_static)
 		_static_dirty = false
 
 
-func texture() -> ImageTexture:
+## Copies one 512-square core plus its one-texel neighbours into a reusable
+## layer image.  All work is native Image blits; no 264,196-iteration GDScript
+## loop is introduced on the upload path.
+func _refresh_upload_layer(layer_index: int) -> void:
+	var chunk_x := layer_index % UPLOAD_CHUNKS_ACROSS
+	var chunk_y := layer_index / UPLOAD_CHUNKS_ACROSS
+	var core_x := chunk_x * UPLOAD_CHUNK
+	var core_y := chunk_y * UPLOAD_CHUNK
+	var source_x := maxi(core_x - UPLOAD_GUTTER, 0)
+	var source_y := maxi(core_y - UPLOAD_GUTTER, 0)
+	var source_end_x := mini(core_x + UPLOAD_CHUNK + UPLOAD_GUTTER, RESOLUTION)
+	var source_end_y := mini(core_y + UPLOAD_CHUNK + UPLOAD_GUTTER, RESOLUTION)
+	var destination := Vector2i(
+		UPLOAD_GUTTER if chunk_x == 0 else 0,
+		UPLOAD_GUTTER if chunk_y == 0 else 0
+	)
+	var layer: Image = _upload_layers[layer_index]
+	layer.blit_rect(
+		_mask,
+		Rect2i(source_x, source_y, source_end_x - source_x, source_end_y - source_y),
+		destination
+	)
+	# The outer world edge matches repeat_disable on the original monolithic
+	# texture: duplicate its last valid texel into the missing gutter.
+	if chunk_x == 0:
+		layer.blit_rect(layer, Rect2i(UPLOAD_GUTTER, 0, 1, UPLOAD_LAYER_SIZE), Vector2i.ZERO)
+	elif chunk_x == UPLOAD_CHUNKS_ACROSS - 1:
+		layer.blit_rect(
+			layer, Rect2i(UPLOAD_LAYER_SIZE - 2, 0, 1, UPLOAD_LAYER_SIZE),
+			Vector2i(UPLOAD_LAYER_SIZE - 1, 0)
+		)
+	if chunk_y == 0:
+		layer.blit_rect(layer, Rect2i(0, UPLOAD_GUTTER, UPLOAD_LAYER_SIZE, 1), Vector2i.ZERO)
+	elif chunk_y == UPLOAD_CHUNKS_ACROSS - 1:
+		layer.blit_rect(
+			layer, Rect2i(0, UPLOAD_LAYER_SIZE - 2, UPLOAD_LAYER_SIZE, 1),
+			Vector2i(0, UPLOAD_LAYER_SIZE - 1)
+		)
+
+
+func texture() -> Texture2DArray:
 	return _texture
+
+
+func last_upload_layer_count() -> int:
+	return _last_upload_layer_count
+
+
+func last_upload_bytes() -> int:
+	return _last_upload_bytes
+
+
+func last_upload_duration_ms() -> float:
+	return _last_upload_duration_ms
+
+
+func total_upload_layer_count() -> int:
+	return _total_upload_layer_count
+
+
+func total_upload_bytes() -> int:
+	return _total_upload_bytes
+
+
+## The exact reusable image passed to Texture2DArray.update_layer(). Kept as a
+## read-only instrumentation hook because the dummy renderer cannot read a
+## Texture2DArray back, while boundary tests still need to prove what is sent to
+## the real renderer. Callers must not modify the returned image.
+func upload_layer_image(layer_index: int) -> Image:
+	if layer_index < 0 or layer_index >= _upload_layers.size():
+		return null
+	return _upload_layers[layer_index]
 
 
 func _on_footprint(payload) -> void:
