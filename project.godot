@@ -8,6 +8,12 @@
 
 config_version=5
 
+[WinterTime]
+
+config/ninetailsrabbit.interaction_kit_3d/update_notification_enabled=true
+config/ninetailsrabbit.interaction_kit_3d/interactables_collision_layer=6
+config/ninetailsrabbit.interaction_kit_3d/grabbables_collision_layer=7
+
 [application]
 
 config/name="WinterTime"
