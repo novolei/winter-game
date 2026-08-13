@@ -947,6 +947,65 @@ func bake_furrows(
 		)
 
 
+## A field remembered through a settled snow layer, rather than a comb stamped
+## over it.  The individual furrows are still laid out by the same field-space
+## arguments as `bake_furrows()`, but every pass is interrupted by independent
+## wind-packed drifts.  At an establishing distance the eye reads a worked
+## field from the shared direction and uneven density, not from a screen-wide
+## stack of perfectly continuous parallel strokes.
+##
+## This is deliberately a static-layer primitive: these are autumn furrows
+## partially buried by winter, not new tracks the wind should erase.  The
+## caller supplies every shaping value so a different farm or future biome can
+## choose its own evidence without adding a game noun to this system.
+func bake_broken_furrows(
+	origin: Vector3,
+	direction: Vector2,
+	length_m: float,
+	spacing_m: float,
+	count: int,
+	radius_m: float,
+	strength: float,
+	segment_min_m: float,
+	segment_max_m: float,
+	gap_min_m: float,
+	gap_max_m: float,
+	seed: int,
+	irregularity := 0.0
+) -> void:
+	if direction.length_squared() < 0.0001 or length_m <= 0.0 or count <= 0:
+		return
+	var along := direction.normalized()
+	var across := Vector2(-along.y, along.x)
+	var shortest_segment := maxf(minf(segment_min_m, segment_max_m), 0.001)
+	var longest_segment := maxf(maxf(segment_min_m, segment_max_m), shortest_segment)
+	var shortest_gap := maxf(minf(gap_min_m, gap_max_m), 0.0)
+	var longest_gap := maxf(maxf(gap_min_m, gap_max_m), shortest_gap)
+	for index in range(count):
+		var rng := RandomNumberGenerator.new()
+		# A prime stride makes adjacent rows independent without making the
+		# field reshuffle between loads.
+		rng.seed = seed + index * 104729
+		var offset := across * (spacing_m * float(index))
+		var row_start := origin + Vector3(offset.x, 0.0, offset.y)
+		# No shared first edge: a rectangular field of aligned stroke starts is
+		# nearly as visible as the continuous lines this primitive replaces.
+		var travelled := rng.randf_range(0.0, longest_gap)
+		while travelled < length_m:
+			var run := rng.randf_range(shortest_segment, longest_segment)
+			var end := minf(travelled + run, length_m)
+			bake_stroke(
+				row_start + Vector3(along.x, 0.0, along.y) * travelled,
+				row_start + Vector3(along.x, 0.0, along.y) * end,
+				radius_m,
+				strength * rng.randf_range(0.72, 1.0),
+				0.35,
+				irregularity,
+				rng.randf() * 97.0
+			)
+			travelled = end + rng.randf_range(shortest_gap, longest_gap)
+
+
 ## Nearest texel on the baked layer, matching value_at()'s contract.
 func static_value_at(world: Vector3) -> float:
 	if _static == null:

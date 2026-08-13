@@ -127,8 +127,8 @@ const POLE_CROSSARM_EAST := Vector3(1.0, 8.06, 0.0)
 ## checks every line below fits inside it.
 const BAKE_CENTRE := Vector3(6.0, 0.0, -22.0)
 
-## The ploughed field, upper left of the reference and the only texture in an
-## otherwise flat white field.
+## The ploughed field, upper left of the reference. It is *evidence* under
+## winter snow, not a technical hatch laid across an otherwise flat field.
 ##
 ## The furrows run along world +X because that is what the reference shows: its
 ## hatching climbs to the right at roughly the angle world +X reads at, and its
@@ -137,22 +137,23 @@ const BAKE_CENTRE := Vector3(6.0, 0.0, -22.0)
 @export var furrow_origin := Vector3(-26.0, 0.0, -62.0)
 @export var furrow_direction := Vector2(1.0, 0.0)
 @export var furrow_length := 62.0
-@export var furrow_spacing := 0.85
-@export var furrow_count := 44
-## 0.11 m half-width is 3.7 texels on the baked layer and about 3 px in a frame
-## of this width -- the same weight the reference draws them at. Wider reads as
-## ridges rather than as a worked field.
-##
-## The strength went from 0.6 to 0.85 when the terrain's band threshold came
-## down (see src/rendering/terrain_renderer.gd). That is not a coincidence and
-## it is worth writing down: the shader mixes a track two palette steps down
-## from *lit* snow and only one down from *shaded* snow, so the field used to
-## read strongest exactly where the ground happened to be dark. Now that the
-## whole field is lit, the same 0.6 produced a barely-there grey. Raising the
-## per-stroke strength is the local fix; raising `track_tint` would have been
-## the global one and would have coarsened every footprint in the game with it.
+## The field keeps its 36 m cross-span, but seven interrupted traces cannot
+## turn into a moire-like barcode at the wide gameplay camera.
+@export var furrow_spacing := 6.0
+@export var furrow_count := 7
+## Each surviving trace keeps the established, readable snow profile. Restraint
+## comes from its discontinuous coverage and sparse spacing, not by weakening
+## the global track palette or every other snow mark.
 @export var furrow_radius := 0.11
 @export var furrow_strength := 0.85
+## Snow does not settle equally in every autumn pass. These values form short,
+## deterministic surviving gestures with rounded ends, leaving broad clean snow
+## between them rather than drawing full-width parallel rules.
+@export var furrow_segment_min_m := 4.5
+@export var furrow_segment_max_m := 8.5
+@export var furrow_gap_min_m := 4.0
+@export var furrow_gap_max_m := 9.5
+@export var furrow_seed := 41077
 
 ## ---------------------------------------------------------------------------
 ## THE STUBBLE, AND WHY IT IS NOT GEOMETRY
@@ -170,10 +171,10 @@ const BAKE_CENTRE := Vector3(6.0, 0.0, -22.0)
 ## call at any framing -- a 25 cm stalk under this camera is a third of a pixel
 ## at the establishing shot and under two at gameplay.
 ##
-## What was missing was not geometry but *granularity*: `bake_furrows` draws 44
-## continuous passes, and the reference's field is broken. So the field gets a
-## second baked pass of short dashes scattered along the same lines, which is
-## the same thing the painting does and costs no triangles and no draw call.
+## What was missing was not geometry but *restraint*: a complete field of
+## continuous passes reads as screen-space hatching. The track mask instead
+## leaves only broken, settled traces; their direction says "old field" without
+## spending the scene's detail budget on an evenly spaced grid.
 ##
 ## Deterministic, from a seeded RNG, because the static layer is baked once and
 ## a field that reshuffled itself on every load would be a field nobody could
@@ -663,9 +664,11 @@ func _draw_the_lines() -> void:
 	# this node is the only thing that knows where the farmstead is.
 	tracks.bake_at(BAKE_CENTRE)
 
-	tracks.bake_furrows(
+	tracks.bake_broken_furrows(
 		furrow_origin, furrow_direction, furrow_length, furrow_spacing, furrow_count,
-		furrow_radius, furrow_strength, 0.22
+		furrow_radius, furrow_strength,
+		furrow_segment_min_m, furrow_segment_max_m, furrow_gap_min_m, furrow_gap_max_m,
+		furrow_seed, 0.22
 	)
 	_bake_stubble(tracks)
 	# The yard goes down first so the ruts and the prints composite over it. With

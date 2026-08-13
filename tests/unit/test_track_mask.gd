@@ -666,6 +666,42 @@ func test_furrows_are_separate_passes_with_clean_snow_between_them() -> void:
 		assert_almost_eq(_mask.static_value_at(between), 0.0, 0.02)
 
 
+## A winter field must retain the direction of its worked rows without becoming
+## an evenly spaced screen-wide hatch.  The long-run assertion is deliberately
+## in metres rather than pixels: the static mask is the shared source for every
+## camera framing, so the source itself must contain regular snow breaks.
+func test_broken_furrows_keep_worked_direction_without_continuous_rows() -> void:
+	var origin := Vector3(-24.0, 0.0, -18.0)
+	var length := 36.0
+	var segment_max := 6.0
+	_mask.bake_broken_furrows(
+		origin, Vector2.RIGHT, length, 4.0, 4, 0.16, 0.6,
+		3.0, segment_max, 3.0, 6.0, 41077, 0.2
+	)
+	var marked_rows := 0
+	var worst_continuous_run := 0.0
+	for row in range(4):
+		var marked := 0
+		var current_run := 0.0
+		for step in range(145):
+			var point := origin + Vector3(float(step) * 0.25, 0.0, float(row) * 4.0)
+			if _mask.static_value_at(point) > 0.08:
+				marked += 1
+				current_run += 0.25
+				worst_continuous_run = maxf(worst_continuous_run, current_run)
+			else:
+				current_run = 0.0
+		if marked > 0:
+			marked_rows += 1
+	assert_eq(marked_rows, 4, "each authored row needs at least one surviving winter trace")
+	assert_true(
+		worst_continuous_run < segment_max + 1.0,
+		"a %.2f m uninterrupted row exceeds the %.2f m gesture budget and will read as hatching" % [
+			worst_continuous_run, segment_max,
+		]
+	)
+
+
 ## Rebaking is how a composition is re-sited, and it has to be a clean slate --
 ## a second bake over the top of a first would accumulate every furrow the field
 ## ever had.
