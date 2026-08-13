@@ -21,16 +21,6 @@
 [ext_resource type="PackedScene" uid="uid://bh0jlvu5vmc8l" path="res://assets/models/vegetation/tree_bare_d.glb" id="20_tree_d"]
 [ext_resource type="PackedScene" uid="uid://8f6s67vpwpy8" path="res://assets/models/vegetation/tree_bare_e.glb" id="21_tree_e"]
 [ext_resource type="PackedScene" uid="uid://om3b6intvn5p" path="res://assets/models/props/flatbed_truck.glb" id="22_flatbed"]
-[ext_resource type="PackedScene" path="res://assets/models/props/woodpile.glb" id="23_woodpile"]
-[ext_resource type="PackedScene" path="res://assets/models/props/supply_cache.glb" id="24_supply"]
-[ext_resource type="PackedScene" path="res://assets/models/props/field_marker.glb" id="25_marker"]
-[ext_resource type="PackedScene" path="res://assets/models/props/fallen_limb.glb" id="26_limb"]
-[ext_resource type="PackedScene" path="res://assets/models/props/emergency_sled.glb" id="27_sled"]
-[ext_resource type="PackedScene" path="res://assets/models/props/departure_pack.glb" id="28_pack"]
-[ext_resource type="PackedScene" path="res://assets/models/props/chopping_block.glb" id="29_chop"]
-[ext_resource type="PackedScene" path="res://assets/models/props/evacuation_cart.glb" id="30_cart"]
-[ext_resource type="PackedScene" path="res://assets/models/props/synty_yard_cache.glb" id="43_yard_cache"]
-[ext_resource type="PackedScene" path="res://assets/models/props/synty_evacuation_cache.glb" id="44_evac_cache"]
 [ext_resource type="Script" uid="uid://e7mudcc4vwc3" path="res://src/entities/interior/interior_reveal.gd" id="23_reveal"]
 [ext_resource type="PackedScene" uid="uid://dalphxjcfaohp" path="res://scenes/entities/stove/stove.tscn" id="24_stove"]
 [ext_resource type="Script" uid="uid://216pnar7cvau" path="res://src/entities/interior/door.gd" id="25_door"]
@@ -211,69 +201,6 @@ transform = Transform3D(0.4539905, 0, -0.8910065, 0, 1, 0, 0.8910065, 0, 0.45399
 
 [node name="TreeJ" parent="Farmstead" unique_id=1902244626 instance=ExtResource("19_tree_c")]
 transform = Transform3D(0.656059, 0, 0.7547096, 0, 1, 0, -0.7547096, 0, 0.656059, -25, 0, -1.5)
-
-[node name="Woodpile" parent="Farmstead" instance=ExtResource("23_woodpile")]
-transform = Transform3D(0.9063078, 0, -0.42261827, 0, 1, 0, 0.42261827, 0, 0.9063078, -11, 0, -22)
-
-[node name="SupplyCache" parent="Farmstead" instance=ExtResource("24_supply")]
-transform = Transform3D(0.81915206, 0, 0.57357645, 0, 1, 0, -0.57357645, 0, 0.81915206, 8, 0, -16)
-
-[node name="FieldMarker" parent="Farmstead" instance=ExtResource("25_marker")]
-transform = Transform3D(0.9659258, 0, -0.25881904, 0, 1, 0, 0.25881904, 0, 0.9659258, 14, 0, -34)
-
-[node name="FallenLimbWest" parent="Farmstead" instance=ExtResource("26_limb")]
-transform = Transform3D(0.42261827, 0, -0.9063078, 0, 1, 0, 0.9063078, 0, 0.42261827, -20, 0, -29)
-
-[node name="FallenLimbEast" parent="Farmstead" instance=ExtResource("26_limb")]
-transform = Transform3D(0.57357645, 0, 0.81915206, 0, 1, 0, -0.81915206, 0, 0.57357645, 36, 0, 5)
-
-[node name="TreeK" parent="Farmstead" instance=ExtResource("17_tree_a")]
-transform = Transform3D(0.34202015, 0, -0.9396926, 0, 1, 0, 0.9396926, 0, 0.34202015, -31, 0, -18)
-
-[node name="TreeL" parent="Farmstead" instance=ExtResource("20_tree_d")]
-transform = Transform3D(0.81915206, 0, 0.57357645, 0, 1, 0, -0.57357645, 0, 0.81915206, -29, 0, -32)
-
-[node name="TreeM" parent="Farmstead" instance=ExtResource("18_tree_b")]
-transform = Transform3D(0.9396926, 0, -0.34202015, 0, 1, 0, 0.34202015, 0, 0.9396926, -14, 0, -43)
-
-[node name="TreeN" parent="Farmstead" instance=ExtResource("21_tree_e")]
-transform = Transform3D(0.5, 0, 0.8660254, 0, 1, 0, -0.8660254, 0, 0.5, 4, 0, -43)
-
-[node name="TreeO" parent="Farmstead" instance=ExtResource("19_tree_c")]
-transform = Transform3D(0.25881904, 0, -0.9659258, 0, 1, 0, 0.9659258, 0, 0.25881904, 21, 0, -40)
-
-[node name="TreeP" parent="Farmstead" instance=ExtResource("20_tree_d")]
-transform = Transform3D(0.76604444, 0, 0.64278764, 0, 1, 0, -0.64278764, 0, 0.76604444, 35, 0, -25)
-
-[node name="TreeQ" parent="Farmstead" instance=ExtResource("17_tree_a")]
-transform = Transform3D(0.9063078, 0, -0.42261827, 0, 1, 0, 0.42261827, 0, 0.9063078, 40, 0, -5)
-
-[node name="TreeR" parent="Farmstead" instance=ExtResource("18_tree_b")]
-transform = Transform3D(0.42261827, 0, 0.9063078, 0, 1, 0, -0.9063078, 0, 0.42261827, 22, 0, 16)
-
-[node name="FallenLimbNorth" parent="Farmstead" instance=ExtResource("26_limb")]
-transform = Transform3D(0.9063078, 0, 0.42261827, 0, 1, 0, -0.42261827, 0, 0.9063078, -24, 0, -38)
-
-[node name="FallenLimbField" parent="Farmstead" instance=ExtResource("26_limb")]
-transform = Transform3D(-0.42261827, 0, 0.9063078, 0, 1, 0, -0.9063078, 0, -0.42261827, -6, 0, -45)
-
-[node name="EmergencySled" parent="Farmstead" instance=ExtResource("27_sled")]
-transform = Transform3D(0.81915206, 0, -0.57357645, 0, 1, 0, 0.57357645, 0, 0.81915206, 14.1, 0, -28.6)
-
-[node name="EvacuationCart" parent="Farmstead" instance=ExtResource("30_cart")]
-transform = Transform3D(1.1328847, 0, 0.5282728, 0, 1.25, 0, -0.5282728, 0, 1.1328847, 21.3, 0, -32)
-
-[node name="SyntyYardCache" parent="Farmstead" instance=ExtResource("43_yard_cache")]
-transform = Transform3D(0.9659258, 0, -0.25881904, 0, 1, 0, 0.25881904, 0, 0.9659258, -1.5, 0, -22.4)
-
-[node name="SyntyEvacuationCache" parent="Farmstead" instance=ExtResource("44_evac_cache")]
-transform = Transform3D(1.0422995, 0, 0.5999983, 0, 1.2, 0, -0.5999983, 0, 1.0422995, 27.7, 0, -35.7)
-
-[node name="DeparturePack" parent="Farmstead" instance=ExtResource("28_pack")]
-transform = Transform3D(0.9659258, 0, 0.25881904, 0, 1, 0, -0.25881904, 0, 0.9659258, 7.3, 0, -20.5)
-
-[node name="ChoppingBlock" parent="Farmstead" instance=ExtResource("29_chop")]
-transform = Transform3D(0.9063078, 0, -0.42261827, 0, 1, 0, 0.42261827, 0, 0.9063078, -14.5, 0, -23.2)
 
 [node name="Fence" type="Node3D" parent="Farmstead" unique_id=1902244630]
 
