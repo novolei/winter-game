@@ -353,3 +353,57 @@ func test_the_grain_does_not_overwrite_the_band_the_preset_set() -> void:
 		float(material.get_shader_parameter("grain_amount")), _renderer.grain_amount, 0.0001,
 		"the grain is not a separate uniform, so the two cannot compose"
 	)
+
+
+## The playable terrain is deliberately high-density, but the camera must never
+## be able to see its finite edge. The horizon skirt starts exactly where the
+## dense mesh has already flattened, then continues with the same shader and
+## material. A background-coloured diamond here is a visible renderer boundary,
+## not an acceptable stylised snow shape.
+func test_the_horizon_skirt_is_a_continuous_shared_material_extension() -> void:
+	var skirt := _renderer.get_node_or_null("HorizonSkirt") as MeshInstance3D
+	assert_not_null(skirt, "TerrainRenderer did not create the horizon skirt")
+	if skirt == null:
+		return
+	assert_eq(
+		skirt.material_override, _material(),
+		"the horizon uses a different material, so it can reveal a colour seam at the dense terrain edge"
+	)
+	assert_not_null(skirt.mesh, "the horizon skirt has no mesh to cover the finite terrain plane")
+	if skirt.mesh == null:
+		return
+	var arrays := skirt.mesh.surface_get_arrays(0)
+	var vertices = arrays[Mesh.ARRAY_VERTEX]
+	var indices = arrays[Mesh.ARRAY_INDEX]
+	assert_eq(vertices.size(), 8, "the skirt should use the four inner and four outer ring corners")
+	assert_eq(indices.size(), 24, "four closed ring sides need eight triangles; a missing side exposes the world background")
+
+
+## This pins the geometry rather than a screenshot: the first ring is exactly
+## the dense mesh's outer edge, and the second is far enough beyond any shipped
+## framing that the player cannot turn the flat background into a hard diamond.
+func test_the_horizon_skirt_begins_at_the_flat_dense_mesh_edge_and_reaches_far_beyond_it() -> void:
+	assert_true(
+		_renderer.has_method("horizon_skirt_mesh"),
+		"TerrainRenderer needs a testable horizon ring builder rather than a hidden second plane"
+	)
+	if not _renderer.has_method("horizon_skirt_mesh"):
+		return
+	var skirt: ArrayMesh = _renderer.horizon_skirt_mesh(_renderer.ground_size, _renderer.horizon_size)
+	var arrays := skirt.surface_get_arrays(0)
+	var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var inner_half := _renderer.ground_size * 0.5
+	var outer_half: float = float(_renderer.get("horizon_size")) * 0.5
+	var inner_corners := 0
+	var outer_corners := 0
+	for vertex in vertices:
+		if is_equal_approx(absf(vertex.x), inner_half) and is_equal_approx(absf(vertex.z), inner_half):
+			inner_corners += 1
+		if is_equal_approx(absf(vertex.x), outer_half) and is_equal_approx(absf(vertex.z), outer_half):
+			outer_corners += 1
+	assert_eq(inner_corners, 4, "the skirt starts away from the dense mesh, leaving a visible gap")
+	assert_eq(outer_corners, 4, "the outer ring is incomplete, so an edge can still enter a wide shot")
+	assert_true(
+		float(_renderer.get("horizon_size")) >= _renderer.ground_size * 4.0,
+		"the horizon is too close to protect the widest capture/gameplay framing from the terrain edge"
+	)

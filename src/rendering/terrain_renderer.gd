@@ -18,6 +18,21 @@ const SHADER_PATH := "res://assets/shaders/snow_ground.gdshader"
 ## is what distant snow looks like anyway.
 @export var ground_size := 140.0
 
+## The dense terrain plane is deliberately finite: it needs 44 cm quads while
+## the player is nearby, but carrying that density all the way to the horizon
+## would spend triangles on snow the shader already makes perfectly flat. The
+## horizon skirt is a separate eight-triangle ring, made from the very same
+## material. It starts where the dense plane has already reached the shader's
+## flat outside-window result, so there is neither a geometric step nor a second
+## snow colour, and it carries that flat field well past the widest shipped
+## framing.
+##
+## 640 m is not a world-map boundary: the Terrain node follows the player. It
+## is enough clearance for the 100 m art capture that previously exposed the
+## finite 140 m plane as a hard diamond, while the only added geometry is eight
+## triangles rather than a larger high-density heightfield.
+@export var horizon_size := 640.0
+
 ## 140 m at 320 subdivisions is a 44 cm quad. That is set by the terrain, which
 ## is what the mesh draws: swells 28 m across need roughly half-metre quads
 ## before the silhouette stops looking polygonal. Footprints are deliberately
@@ -211,12 +226,68 @@ func _ready() -> void:
 	_material.set_shader_parameter("track_extent", TrackMask.EXTENT_M)
 	_material.set_shader_parameter("static_extent", TrackMask.STATIC_EXTENT_M)
 	material_override = _material
+	_build_horizon_skirt()
 
 	# The plane is displaced geometry whose bounding box the engine computes
 	# from the undisplaced mesh; without this it vanishes as soon as the flat
 	# plane leaves the frustum.
 	extra_cull_margin = ground_size
 	cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+
+
+## A low-density continuation of the terrain mesh, with a hole where the dense
+## plane already draws. A second full plane would z-fight with the dense terrain;
+## this ring shares its inner four vertices exactly and therefore has no overlap
+## and no drawable rectangle seam.
+func _build_horizon_skirt() -> void:
+	var existing := get_node_or_null("HorizonSkirt") as MeshInstance3D
+	if existing != null:
+		existing.mesh = horizon_skirt_mesh(ground_size, horizon_size)
+		existing.material_override = _material
+		return
+	var skirt := MeshInstance3D.new()
+	skirt.name = "HorizonSkirt"
+	skirt.mesh = horizon_skirt_mesh(ground_size, horizon_size)
+	skirt.material_override = _material
+	# The shader displaces every ring corner by the same flat outside-window
+	# snow height. Keep the culling bounds generous so its edge never vanishes
+	# while the parent follows the player.
+	skirt.extra_cull_margin = horizon_size
+	skirt.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(skirt)
+
+
+## The ring is intentionally exposed as pure mesh construction so the visual
+## no-edge contract has a deterministic regression test without pretending a
+## headless unit test can judge a rendered photograph.
+func horizon_skirt_mesh(inner_size: float, outer_size: float) -> ArrayMesh:
+	var inner_half := maxf(inner_size, 0.0) * 0.5
+	var outer_half := maxf(outer_size, inner_size + 0.001) * 0.5
+	var vertices := PackedVector3Array([
+		Vector3(-inner_half, 0.0, -inner_half),
+		Vector3(inner_half, 0.0, -inner_half),
+		Vector3(inner_half, 0.0, inner_half),
+		Vector3(-inner_half, 0.0, inner_half),
+		Vector3(-outer_half, 0.0, -outer_half),
+		Vector3(outer_half, 0.0, -outer_half),
+		Vector3(outer_half, 0.0, outer_half),
+		Vector3(-outer_half, 0.0, outer_half),
+	])
+	# Four counter-clockwise strips when viewed from above: bottom, right, top,
+	# left. The front faces are all upward, exactly like PlaneMesh.
+	var indices := PackedInt32Array([
+		0, 1, 5, 0, 5, 4,
+		1, 2, 6, 1, 6, 5,
+		2, 3, 7, 2, 7, 6,
+		3, 0, 4, 3, 4, 7,
+	])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var skirt := ArrayMesh.new()
+	skirt.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return skirt
 
 
 ## How a mark in the snow is SHAPED -- how deep, how tinted, the rim around it,
