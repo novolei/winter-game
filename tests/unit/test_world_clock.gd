@@ -271,8 +271,26 @@ func test_shipped_schedule_matches_the_gdd() -> void:
 	## [daylight, night, forced_weather_event, beacon_unlocked], from GDD section 4.
 	## primary_lighting_preset and allowed_weather_events are deliberately left
 	## unguarded here -- those are Wave 3's to pin down.
+	##
+	## DAY 1 NOW FORCES 短暂放晴, and this row was changed rather than relaxed.
+	## Section 7's 编排层 is 每天的天气预算与强制节拍, and it names day 7's
+	## blizzard as an example of a forced beat rather than as the only one
+	## permitted. Day 1 forced nothing, which meant `plan_phase()` queued nothing,
+	## which meant the first lighting change of a new game was the dusk crossfade
+	## at t = 600 s -- measured 601.0 s on five seeds, with the ten samples before
+	## it inside 0.57 % of each other. The owner read that as a lighting system
+	## that was never wired.
+	##
+	## It is the FORCED column and not the allowed column because
+	## `allowed_weather_events` is drawn in both phases: with 短暂放晴 in it,
+	## night 1 measured running NIGHTFALL -> PALE DAY -> SUNRISE, exposure 0.780
+	## climbing to 1.100 in the middle of the dark. `plan_phase()` adds the forced
+	## beat only when `not night`.
+	##
+	## The assertion is still exact on all seven days, so a schedule that drifts
+	## from what the table says still turns this red.
 	var expected := {
-		1: [600.0, 300.0, &"", &"farmhouse_chimney"],
+		1: [600.0, 300.0, &"clear_break", &"farmhouse_chimney"],
 		2: [600.0, 300.0, &"", &"fuel_station"],
 		3: [480.0, 420.0, &"", &"church_tower"],
 		4: [480.0, 420.0, &"", &"logging_camp"],

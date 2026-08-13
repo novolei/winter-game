@@ -31,6 +31,9 @@ extends TestCase
 const PRESET_DIRECTORY := "res://data/lighting"
 const SCHEDULE_DIRECTORY := "res://data/schedule"
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
+## WeatherSystem carries no class_name, so it is preloaded the same way
+## tests/unit/test_weather.gd preloads it.
+const WeatherSystemScript := preload("res://src/systems/weather_system.gd")
 
 ## Art Bible section 4.2, in the order of its own table.
 const EXPECTED := {
@@ -557,3 +560,94 @@ func test_no_day_in_the_run_uses_the_debug_reference() -> void:
 			schedules[day].night_lighting_preset != &"flat",
 			"the night of day %d plays in FLAT" % day
 		)
+
+
+# --- and day 1 has something that moves them ---------------------------------
+
+## THE FIRST TEN MINUTES OF A NEW GAME, AND WHY THEY USED TO HOLD STILL.
+##
+## `data/schedule/day_01.tres` shipped with an empty `allowed_weather_events` and
+## no forced beat. `WeatherSystem.plan_phase()` builds its draw from that array,
+## so `wanted = min(events_per_phase, 0) = 0` and day 1 queued no weather in
+## either phase. Nothing else in the data can move a preset inside a phase --
+## Art Bible section 4.2 assigns the six looks to DAYS -- so the first lighting
+## change of a fresh run was the dusk crossfade at t = 600 s.
+##
+## Measured at 8f2043f on five seeds: 601.0 s every time, and the ten samples
+## before it inside 0.57 % of each other. The owner played it, saw a frame that
+## never moved, and concluded the lighting was not wired. It is: 67 correct state
+## changes across a seven-day run and a 4.641x spread between the extremes. The
+## defect was that day 1's data gave it nothing to do.
+##
+## Day 1 is still authored calm -- section 4 writes it `PALE DAY 无事挂心` with
+## 教学 as its intent -- so what it forces is 短暂放晴, the one event of the six
+## whose whole GDD line is benign. Measured after: the first lighting change lands
+## at 80.0 / 96.7 / 97.3 s on three seeds, and night 1 is untouched.
+##
+## This gate is the relationship, not the number: it reads the gap and the tell
+## off the systems that own them, so a change to either turns it red rather than
+## silently moving the first change back out of reach.
+func test_day_one_moves_the_light_well_inside_its_first_daylight() -> void:
+	var schedule = ResourceLoader.load(
+		SCHEDULE_DIRECTORY.path_join("day_01.tres"), "", ResourceLoader.CACHE_MODE_IGNORE
+	)
+	assert_not_null(schedule, "no res://data/schedule/day_01.tres")
+	if schedule == null:
+		return
+	var daylight_preset: StringName = schedule.primary_lighting_preset
+
+	# What day 1's DAYLIGHT phase can queue: the forced beat, which plan_phase()
+	# adds only when `not night`, plus whatever it draws from the allowed pool.
+	var candidates: Array[StringName] = []
+	if schedule.forced_weather_event != &"":
+		candidates.append(schedule.forced_weather_event)
+	for id in schedule.allowed_weather_events:
+		if not candidates.has(id):
+			candidates.append(id)
+	assert_false(
+		candidates.is_empty(),
+		"day 1 queues no weather at all, so nothing can move the light until the dusk "
+			+ "crossfade at %.0f s. A new player's first impression of this game is a "
+				% schedule.daylight_seconds
+			+ "frame that does not change."
+	)
+
+	var longest_tell := 0.0
+	for id in candidates:
+		var event = ResourceLoader.load(
+			"res://data/weather/event_%s.tres" % String(id), "", ResourceLoader.CACHE_MODE_IGNORE
+		)
+		assert_not_null(event, "day 1 queues '%s' and there is no event file for it" % id)
+		if event == null:
+			continue
+		longest_tell = maxf(longest_tell, event.tell_duration_range.y)
+		var arrival_moves: bool = \
+			event.lighting_preset != &"" and event.lighting_preset != daylight_preset
+		var tell_moves: bool = event.tell != null \
+			and event.tell.lighting_preset != &"" \
+			and event.tell.lighting_preset != daylight_preset
+		assert_true(
+			arrival_moves or tell_moves,
+			"day 1 can draw '%s', which wears '%s' -- the same preset the day already "
+				% [id, daylight_preset]
+				+ "wears. It would arrive and change nothing, which is the defect this "
+				+ "gate exists for rather than a fix for it."
+		)
+
+	# The worst case a player can be dealt, read off the system that deals it
+	# rather than written down here -- the briefing's rule that a number which
+	# only means something next to another number is a relationship, not a
+	# constant.
+	var weather := WeatherSystemScript.new()
+	var gap: float = weather.first_gap_seconds.y
+	# Node, not RefCounted (briefing constraint 2).
+	weather.free()
+	var latest: float = gap + longest_tell
+	assert_true(
+		latest <= schedule.daylight_seconds / 3.0,
+		"day 1's weather can take up to %.0f s to reach the light (%.0f s of gap plus "
+			% [latest, gap]
+			+ "%.0f s of warning), which is past the first third of its %.0f s of "
+				% [longest_tell, schedule.daylight_seconds]
+			+ "daylight. Measured at 80-134 s on five seeds when this was written."
+	)
