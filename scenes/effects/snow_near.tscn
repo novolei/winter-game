@@ -20,6 +20,24 @@
 ; see the note in snow_distant.tscn, which carries the reasoning and the
 ; measurements for both world layers. 35.6 x 24.3 x 35.6 is the old 22 x 15 x 22
 ; at that frame, and 1073 is the old 520 scaled by the box's cross-section.
+;
+; AND THE BOX WAS UNDERGROUND. pullback_m was 14.6, which put the bottom of the
+; birth box at y = -0.83 -- below world zero, and 3.8 m below the highest snow
+; surface SnowField can produce. Flakes were being born inside the ground and
+; were invisible from birth. 20.1 is what lifts it clear:
+;
+;   centre.y = ground_height + sin(45 deg) * pullback = 1.0 + 0.7071 * 20.1
+;   bottom   = centre.y - volume_size.y / 2 = 15.21 - 12.15 = 3.06 m
+;   ceiling  = SnowField.terrain_amplitude_m + max_depth_m = 2.4 + 0.6 = 3.0 m
+;
+; It costs NOTHING ON SCREEN, and that is the whole reason it is spent on the
+; pullback rather than on a height: under a parallel projection, sliding a volume
+; along the view axis does not move it in frame at all. Lifting it world-
+; vertically would have carried it up and out of the top of the picture.
+;
+; tests/unit/test_snowfall.gd asserts the bottom against the field's own ceiling,
+; so a later change to the box, the pitch or the drift depth turns red here
+; instead of silently burying the snow again.
 
 [ext_resource type="Script" path="res://src/rendering/snowfall_layer.gd" id="1_layer"]
 
@@ -28,7 +46,7 @@ script = ExtResource("1_layer")
 camera_space = false
 volume_size = Vector3(35.6, 24.3, 35.6)
 authored_frame = Vector2(27.2, 17)
-pullback_m = 14.6
+pullback_m = 20.1
 flakes_clear = 124
 flakes_blizzard = 1073
 life_seconds = 7.0

@@ -122,6 +122,19 @@ const GROUP := &"snowfall_layer"
 ## fade lands on screen. tests/unit/test_snowfall.gd measures exactly that.
 const FADE_IN_FRACTION := 0.08
 
+## ...and how much is spent fading back down to nothing at the end of it.
+##
+## Named for the same reason its sibling is, and it took longer to earn the name:
+## this is ALSO a distance, and until the birth boxes were lifted off the ground
+## it was a distance spent underground. A flake that meets the snow surface is
+## deleted by the depth buffer at whatever opacity it happened to have, so the
+## ramp only does its job for the part of the buffer born high enough to reach it
+## -- which on the near layer was 5.9% of the box, and which nothing measured
+## because 0.82 was a literal inside a gradient rather than a number with a name.
+##
+## tests/unit/test_snowfall.gd holds the birth box against it.
+const FADE_OUT_FRACTION := 0.18
+
 ## ON THE LENS RATHER THAN IN THE WORLD. Layers 1 and 2 are false: the emitter
 ## follows the camera and its particles must NOT, or the whole snowfall slides
 ## along with the player. Layer 3 is true and is the deliberate opposite -- it
@@ -719,7 +732,9 @@ func _flake_texture() -> GradientTexture2D:
 ## obvious tell that snow is particles.
 func _fade_ramp() -> GradientTexture1D:
 	var gradient := Gradient.new()
-	gradient.offsets = PackedFloat32Array([0.0, FADE_IN_FRACTION, 0.82, 1.0])
+	gradient.offsets = PackedFloat32Array(
+		[0.0, FADE_IN_FRACTION, 1.0 - FADE_OUT_FRACTION, 1.0]
+	)
 	gradient.colors = PackedColorArray([
 		Color(1.0, 1.0, 1.0, 0.0),
 		Color(1.0, 1.0, 1.0, 1.0),

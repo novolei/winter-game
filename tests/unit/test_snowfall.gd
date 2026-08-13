@@ -17,6 +17,7 @@ extends TestCase
 const SnowfallLayerScript := preload("res://src/rendering/snowfall_layer.gd")
 const SnowfallScript := preload("res://src/rendering/snowfall.gd")
 const CameraRigScript := preload("res://src/rendering/camera_rig.gd")
+const SnowFieldScript := preload("res://src/systems/snow_field.gd")
 
 const DISTANT_SCENE := "res://scenes/effects/snow_distant.tscn"
 const NEAR_SCENE := "res://scenes/effects/snow_near.tscn"
@@ -713,6 +714,133 @@ func test_the_volume_sits_over_what_the_camera_is_looking_at() -> void:
 		(raised - centre).dot(screen_right), 0.0, 0.01,
 		"the pullback slid the volume sideways across the frame"
 	)
+
+
+## THE HIGHEST THE GROUND CAN GET: the deepest drift on the tallest rise. Read
+## off SnowField rather than written down here -- a copy would go stale the first
+## time somebody retuned the relief, and it would go stale in silence.
+func _snow_ceiling() -> float:
+	var field = SnowFieldScript.new()
+	var ceiling: float = field.terrain_amplitude_m + field.max_depth_m
+	field.free()
+	return ceiling
+
+
+## Where the camera looks, as a unit vector. The pitch is the rig's, so a change
+## of camera moves this test with it.
+func _view_forward() -> Vector3:
+	var rig: CameraRig = CameraRigScript.new()
+	var basis := Basis.from_euler(
+		Vector3(-deg_to_rad(rig.pitch_degrees), deg_to_rad(rig.yaw_degrees), 0.0)
+	)
+	rig.free()
+	return -basis.z
+
+
+## WHERE A FLAKE IS BORN, AGAINST WHERE THE GROUND CAN BE.
+##
+## `SnowNear` shipped with the floor of its birth box at y = -0.83 -- below world
+## zero, and 3.8 m below the highest surface SnowField can present. Flakes were
+## being born INSIDE the hill: alive, simulating, drawn nowhere, and invisible
+## from birth for the whole of a seven-second life. Measured on the near layer,
+## the loss was 5.3% of the buffer born underground, and hiding the terrain
+## revealed 17% more of the layer's ink at any instant.
+##
+## Nothing failed. The layer emitted its full count, every printed number was
+## correct, and the only symptom was a layer quietly drawing less snow than it
+## was authored to -- which reads as tuning rather than as a defect, and which is
+## why it survived two waves.
+##
+## THE FIX IS SPENT ON `pullback_m`, WHICH IS WHY IT IS FREE. Under a parallel
+## projection, sliding a volume along the view axis does not move it on screen at
+## all, so the box lifts clear of the terrain without the snow moving a pixel. A
+## world-vertical lift would have carried it out of the top of the picture.
+##
+## Asserted across every framing, because `geometry_scale()` scales the pullback
+## and the box together and a guarantee that held only at the authored frame
+## would be no guarantee at all.
+func test_no_world_layer_is_born_inside_the_ground() -> void:
+	var ceiling := _snow_ceiling()
+	var forward := _view_forward()
+	var director := _director()
+	var camera_position := Vector3(0.0, 90.0, 0.0)
+	for path in [DISTANT_SCENE, NEAR_SCENE]:
+		var layer := _layer(path)
+		for height in _framing_samples():
+			layer.set_frame_size(_frame(float(height)))
+			var centre: Vector3 = SnowfallScript.volume_centre(
+				camera_position, forward, director.ground_height, director.pullback_for(layer)
+			)
+			var bottom: float = centre.y - layer.emission_extents().y
+			assert_true(
+				bottom >= ceiling,
+				"%s is born from y=%.2f at a %.1f m frame, and the snow surface reaches %.2f"
+					% [path.get_file(), bottom, float(height), ceiling]
+			)
+		layer.free()
+	director.free()
+
+
+## ...and the reason that fix is worth anything: a flake that meets the snow
+## surface is DELETED by the depth buffer at whatever opacity it had, which is
+## precisely the abrupt disappearance the fade ramp exists to prevent. The ramp
+## was running underground.
+##
+## SO THE ASSERTION IS ABOUT THE RAMP GETTING ANY OF THE BUFFER AT ALL, and the
+## bar is taken from the ramp itself rather than picked: a layer should give the
+## fade at least as large a share of its BIRTH BOX as the ramp gives it of a LIFE.
+## `FADE_OUT_FRACTION` is 18% of a life; the near layer was handing it 5.9% of the
+## box, and after the lift it hands it 21.9%.
+##
+## ---------------------------------------------------------------------------
+## AND IT DELIBERATELY DOES NOT ASK THAT THE FADE FINISH, BECAUSE IT CANNOT
+## ---------------------------------------------------------------------------
+## The box's height was authored AS the distance a flake falls in one life --
+## 24.3 m of box against 24.3 m of fall on the near layer, 35.6 against 35.2 on
+## the distant one. A flake born at the floor therefore always ends its life a
+## whole box-height lower, so the share that completes its ramp above the surface
+## is (box_top - surface - fall) / box_height, which is near zero wherever the box
+## is put. Lifting it far enough to fix that would stand the box 25 m up and take
+## the near snow out of the picture entirely.
+##
+## Measured against the worst surface the field can present, the lift moved
+## "finishes the fade" from 0.0% to 0.2%. That is not the fix and is not claimed
+## as one. The rest of that handoff -- a flake decelerating near the surface and
+## being absorbed into the ground sheet rather than deleted by the depth buffer --
+## needs a per-particle response to the terrain height, which is a particle
+## process shader, and is not this.
+func test_the_fade_ramp_gets_a_real_share_of_the_birth_box() -> void:
+	var ceiling := _snow_ceiling()
+	var forward := _view_forward()
+	var director := _director()
+	var camera_position := Vector3(0.0, 90.0, 0.0)
+	var share: float = SnowfallLayerScript.FADE_OUT_FRACTION
+	for path in [DISTANT_SCENE, NEAR_SCENE]:
+		var layer := _layer(path)
+		layer.set_frame_size(layer.authored_frame)
+		var centre: Vector3 = SnowfallScript.volume_centre(
+			camera_position, forward, director.ground_height, director.pullback_for(layer)
+		)
+		var half: float = layer.emission_extents().y
+		var life: float = layer.life_seconds
+		# How far a flake has fallen by the moment its ramp begins, at the storm's
+		# speed plus the sag. Derived from the ramp rather than from a literal, so
+		# retuning the ramp moves this test with it.
+		var to_fade: float = life * (1.0 - share)
+		var fallen: float = layer.fall_speed_blizzard * to_fade \
+			+ 0.5 * layer.fall_accel * to_fade * to_fade
+		var reaching: float = clampf(
+			(centre.y + half - ceiling - fallen) / maxf(2.0 * half, 0.001), 0.0, 1.0
+		)
+		assert_true(
+			reaching >= share,
+			"%s: only %.1f%% of the birth box reaches the fade before the snow "
+				% [path.get_file(), 100.0 * reaching]
+				+ "surface at %.2f m, against a ramp that occupies %.0f%% of a life"
+				% [ceiling, 100.0 * share]
+		)
+		layer.free()
+	director.free()
 
 
 ## A camera that is not looking down never meets the ground, and the arithmetic

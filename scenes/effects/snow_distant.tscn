@@ -25,6 +25,15 @@
 ;
 ; The document asks for 1000-1800 flakes in a 60 x 25 x 60 box; this is a larger
 ; box than that now, and the density is what was preserved rather than the count.
+;
+; pullback_m was 25.9, which put the bottom of the birth box at y = 1.51 -- above
+; world zero, but still 1.5 m below the highest snow surface SnowField can
+; produce (terrain_amplitude_m 2.4 + max_depth_m 0.6 = 3.0), so over a crest the
+; far snow was being born inside the hill. 28.1 lifts the bottom to 3.07 m, and
+; the whole of that is spent on the PULLBACK rather than on a height because
+; sliding a volume along the view axis of a parallel projection does not move it
+; on screen. See the longer note in snow_near.tscn, which had the same defect
+; four times as deep.
 
 [ext_resource type="Script" path="res://src/rendering/snowfall_layer.gd" id="1_layer"]
 
@@ -33,7 +42,7 @@ script = ExtResource("1_layer")
 camera_space = false
 volume_size = Vector3(58.3, 35.6, 58.3)
 authored_frame = Vector2(27.2, 17)
-pullback_m = 25.9
+pullback_m = 28.1
 flakes_clear = 186
 flakes_blizzard = 2477
 life_seconds = 11.0
