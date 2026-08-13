@@ -620,7 +620,12 @@ func refresh_fires() -> void:
 	for key in _fire_voices.keys():
 		if seen.has(key):
 			continue
-		var voice: AudioStreamPlayer3D = _fire_voices[key]
+		# Untyped, then checked -- the shape `_stop_everything()` above already
+		# uses on this same dictionary, and briefing trap 18. A typed local
+		# validates the instance AT the assignment, so it would throw on exactly
+		# the freed voice this `is_instance_valid()` exists to catch, and abort
+		# the function before the guard could run.
+		var voice = _fire_voices[key]
 		if is_instance_valid(voice):
 			voice.stop()
 			voice.queue_free()
@@ -640,9 +645,12 @@ func _drive_fires() -> void:
 	if _map == null:
 		return
 	for key in _fire_voices:
-		var voice: AudioStreamPlayer3D = _fire_voices[key]
-		if not is_instance_valid(voice):
+		# Checked before it is narrowed, briefing trap 18. The typed local is
+		# kept, but only on the far side of the guard.
+		var raw = _fire_voices[key]
+		if raw == null or not is_instance_valid(raw):
 			continue
+		var voice: AudioStreamPlayer3D = raw
 		var fire = instance_from_id(key)
 		if not _is_alight(fire):
 			voice.stop()

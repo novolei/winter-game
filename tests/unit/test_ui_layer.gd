@@ -152,3 +152,62 @@ func test_clearing_takes_everything_at_once() -> void:
 	assert_eq(_layer.live_count(), 2)
 	_layer.clear()
 	assert_eq(_layer.live_count(), 0)
+
+# --- an element freed by its owner, and the guard that could not see it -------
+#
+# THE SAME SHAPE AS THE CROW CRASH -- briefing trap 18.
+#
+# `bloom()`'s own contract is "whoever blooms one owns dismissing it", so an
+# owner is entitled to free its element. `_live` still holds the pointer, and
+# `advance()` read it back with `var control: Control = entry["control"]` -- a
+# type-checked assignment whose source is a `Dictionary` value, i.e. statically
+# `Variant`. GDScript validates the instance AT that assignment, so it threw and
+# aborted the function. `_release()`'s own `is_instance_valid()` guard is correct
+# and was unreachable for exactly the same reason: its parameter is typed, so the
+# check happened at the CALL.
+
+func test_an_element_freed_by_its_owner_does_not_stop_the_rest_breathing() -> void:
+	var doomed := _panel()
+	var still_here := _panel()
+	# Order matters: the freed one has to sit AHEAD of the survivor, because the
+	# damage is the abort taking the rest of the list with it.
+	_layer.bloom(doomed)
+	_layer.surface(still_here, 1.0)
+	_layer.advance(0.001)
+	var before := still_here.modulate.a
+	doomed.free()
+	_layer.advance(0.05)
+	assert_true(
+		still_here.modulate.a != before,
+		"the second element is still at opacity %.4f after 0.05 s -- the freed element in front of it aborted advance() before its turn" % still_here.modulate.a
+	)
+
+## Dropped, not carried. `_live` is walked every frame, and an element that has
+## been freed can never breathe again.
+func test_a_freed_element_is_dropped_from_the_layer() -> void:
+	var doomed := _panel()
+	var still_here := _panel()
+	_layer.bloom(doomed)
+	_layer.bloom(still_here)
+	assert_eq(_layer.live_count(), 2, "the two bloomed elements were not both adopted")
+	doomed.free()
+	_layer.advance(0.05)
+	assert_eq(
+		_layer.live_count(), 1,
+		"the layer is still driving %d element(s); one of them no longer exists" % _layer.live_count()
+	)
+
+## `clear()` hands each control straight into `_release()`, whose parameter is
+## typed -- so a freed element threw at the call site and `_live.clear()` on the
+## line below never ran. A layer asked to take everything away kept everything.
+func test_clearing_a_layer_holding_a_freed_element_still_empties_it() -> void:
+	var doomed := _panel()
+	var still_here := _panel()
+	_layer.bloom(doomed)
+	_layer.bloom(still_here)
+	doomed.free()
+	_layer.clear()
+	assert_eq(
+		_layer.live_count(), 0,
+		"clear() left %d element(s) on the layer" % _layer.live_count()
+	)

@@ -1212,3 +1212,39 @@ func test_the_hiss_never_outweighs_the_body_of_the_air() -> void:
 		"wind_high is authored at %.1f dB against wind_low's %.1f -- the top would sit over the body" % [high.gain_db, low.gain_db])
 	assert_true(snow.gain_db < low.gain_db,
 		"the falling snow is authored over the wind")
+
+
+# --- a fire voice freed underneath the director ------------------------------
+
+## THE SAME SHAPE AS THE CROW CRASH -- briefing trap 18 -- and two lines out of
+## step with their own file: `_stop_everything()` already reads this same
+## dictionary with an untyped `var voice = _fire_voices[key]`, which is the form
+## whose `is_instance_valid()` guard can actually run.
+##
+## HONEST ABOUT WHAT THIS DOES AND DOES NOT REPRODUCE. No production path frees a
+## fire voice while its key is still in `_fire_voices`: `refresh_fires()` erases
+## the key in the same iteration that queue_free()s the voice. So this is not a
+## live defect being reproduced -- it is the guard's OWN PRECONDITION being made
+## reachable. `if is_instance_valid(voice)` was written because a voice may be
+## invalid; until this change it could not run when one was, which means the
+## branch had never once been executed.
+func test_a_fire_voice_freed_underneath_the_director_is_let_go_of() -> void:
+	var fire := _fire(Vector3(2.0, 0.0, 2.0))
+	var map := _playable_map()
+	var director := _director(map)
+	director.refresh_fires()
+	assert_eq(director.fire_voice_count(), 1, "the lit fire opened no voice")
+	var voice: AudioStreamPlayer3D = null
+	for child in director.get_children():
+		if child.name.begins_with("Fire"):
+			voice = child
+	assert_not_null(voice, "no fire voice was built")
+	if voice == null:
+		return
+	voice.free()
+	fire.lit = false
+	director.refresh_fires()
+	assert_eq(
+		director.fire_voice_count(), 0,
+		"the director still holds %d fire voice(s) that no longer exist" % director.fire_voice_count()
+	)

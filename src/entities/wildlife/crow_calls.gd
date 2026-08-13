@@ -205,6 +205,15 @@ func announce(birds: Array) -> int:
 	if not enabled or birds.is_empty():
 		return 0
 	for bird in birds:
+		# Checked BEFORE the cast, not after it. `as` is type-checked too: on a
+		# bird the caller's list still names but the flock has already freed, it
+		# throws `Trying to cast a freed object` and aborts this whole function --
+		# so one dead bird costs the entire burst rather than one caw, and
+		# `announce()` returns 0 having scheduled nothing. `_birds` is
+		# `Array[Crow]`, and pushing a freed instance into a typed array is a
+		# second error of the same family a line later.
+		if bird == null or not is_instance_valid(bird):
+			continue
 		var crow := bird as Crow
 		if crow != null:
 			_birds.append(crow)
@@ -265,6 +274,17 @@ func voices() -> Array[AudioStreamPlayer3D]:
 	return _voices
 
 
+## How many emitters are still tracking a bird. Public because "the list drains"
+## is an invariant that cannot be asserted from the outside otherwise, and an
+## entry that is only ever skipped rather than removed is walked for the rest of
+## the session -- which is a cost and an error that nothing else can see.
+##
+## The count, not the list: handing out `_following` would hand out the raw node
+## references this file exists to stop being careless with.
+func following_count() -> int:
+	return _following.size()
+
+
 func _process(delta: float) -> void:
 	advance(delta)
 
@@ -287,14 +307,53 @@ func advance(delta: float) -> void:
 ## Every voice tracks the bird that opened it, so the sound scatters with the
 ## flock and recedes as it climbs out. A bird that has been freed leaves its
 ## voice where it last was rather than dragging it to the origin.
+##
+## ---------------------------------------------------------------------------
+## WHY EVERY REFERENCE IS READ AS `Variant` AND NARROWED ONLY AFTER THE CHECK
+## ---------------------------------------------------------------------------
+## This used to read `var crow: Crow = pair["crow"]` and check validity on the
+## next line, and it threw in the owner's own play session -- `CrowCalls._follow:
+## Trying to assign invalid previously freed instance`, every frame from 0:04:32
+## onwards. **GDScript validates the instance AT the assignment** when the source
+## expression is statically `Variant`, which a `Dictionary` value always is. So
+## the assignment threw and aborted `_follow()`, and the guard on the next line
+## -- correct, deliberate, and visible in review -- could never run.
+##
+## Worse than one silent emitter: the abort took the REST of the list with it,
+## so one freed bird at the head stopped every other bird's voice from being
+## followed at all.
+##
+## A `Variant` local takes no check, so the guard below is reachable. Measured on
+## 4.7.1; briefing trap 18 carries the table of which shapes throw and which do
+## not.
+##
+## ---------------------------------------------------------------------------
+## AND THE ENTRY IS DROPPED, NOT SKIPPED
+## ---------------------------------------------------------------------------
+## Nothing can make a freed bird followable again, so an entry that is only
+## `continue`d is walked on every frame for the rest of the run. `_following` had
+## no removal path at all -- one flight's worth of caws left permanent residents,
+## which is why the owner's log repeats rather than fires once.
+##
+## Iterated backwards so a `remove_at()` cannot shift an index this pass has not
+## reached yet.
 func _follow() -> void:
-	for index in range(_following.size()):
+	for index in range(_following.size() - 1, -1, -1):
 		var pair: Dictionary = _following[index]
-		var voice: AudioStreamPlayer3D = pair["voice"]
-		if not is_instance_valid(voice):
+		var raw_voice: Variant = pair["voice"]
+		var raw_crow: Variant = pair["crow"]
+		var voice_lost: bool = raw_voice == null or not is_instance_valid(raw_voice)
+		var crow_lost: bool = raw_crow == null or not is_instance_valid(raw_crow)
+		if voice_lost or crow_lost:
+			_following.remove_at(index)
 			continue
-		var crow: Crow = pair["crow"]
-		if crow == null or not is_instance_valid(crow) or crow.is_gone():
+		var voice: AudioStreamPlayer3D = raw_voice
+		var crow: Crow = raw_crow
+		# Gone but not yet freed. The bird is on its last frame and the flock
+		# frees it at the end of this one, so it is skipped here and removed by
+		# the branch above on the next pass. Not dropped now, because GONE is a
+		# state and a freed instance is a fact -- only the second cannot be undone.
+		if crow.is_gone():
 			continue
 		voice.global_position = crow.where()
 
@@ -302,6 +361,15 @@ func _follow() -> void:
 func _speak(bird: int) -> void:
 	if bird < 0 or bird >= _birds.size():
 		return
+	# THIS ONE IS SAFE AS WRITTEN AND IT DOES NOT LOOK IT -- do not rewrite it to
+	# match `_follow()`. `_birds` is `Array[Crow]`, so the subscript is ALREADY
+	# statically typed and the compiler emits no instance check at all; a bird
+	# freed since `announce()` filed it arrives here as `<Freed Object>`, and the
+	# guard on the next line catches it exactly as written. Measured on 4.7.1.
+	#
+	# The rule is about the SOURCE being `Variant`, not about the destination
+	# being typed -- which is why the two lines in `_follow()` threw and this one
+	# never has.
 	var crow := _birds[bird]
 	if crow == null or not is_instance_valid(crow):
 		return

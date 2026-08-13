@@ -582,3 +582,68 @@ for f in DirAccess.get_files_at(path):
 **做法：对着内容做一次能判真伪的测量，再接线。**低吼验低频带高出基底多少；风的分层验能量落在哪个频段；动画验骨骼是否真的动（本项目已有先例：121 个空节点、没有骨架、导入零报错）；图标验它在实际显示尺寸下认不认得出。
 
 **这类错误不会报错，只会让系统安静地做错事**——而且因为名字是对的，回头排查时那个文件是最不会被怀疑的地方。
+
+### Trap 18 — the freed-instance guard that runs after the check that kills it
+
+**Symptom.** From the owner's own play session, four and a half minutes in, then on every frame after it:
+
+```
+E 0:04:32:132   CrowCalls._follow: Trying to assign invalid previously freed instance.
+  crow_calls.gd:296 @ _follow()
+  crow_calls.gd:277 @ advance()
+  crow_calls.gd:269 @ _process()
+```
+
+`_speak()` files `{voice, crow}` in `_following` so an emitter can track its bird. The bird finishes its flight, `BirdFlock._advance_birds()` sees `is_gone()` and `queue_free()`s it, and the free lands at the end of the frame. `_following` still holds the pointer.
+
+**What was measured.** The rule is **not** "typed locals are unsafe". Measured on 4.7.1 with a standalone probe, one case per function so an abort could not hide the next:
+
+| Shape | Result |
+|---|---|
+| `var x: T = dict["k"]` | **throws** `Trying to assign invalid previously freed instance`, aborts the function |
+| `var x: T = untyped_array[i]` | **throws**, same message |
+| `member = dict["k"]` (member typed `T`) | **throws**, same message |
+| `dict["k"] as T` | **throws** `Trying to cast a freed object` |
+| `f(dict["k"])` into `func f(x: T)` | **throws** `Invalid type in function … (previously freed) is not a subclass` |
+| `typed_array.append(<already freed>)` | **throws** `Attempted to push_back an invalid … object` — and the array stays **empty**, so the next subscript is out of bounds |
+| `var raw: Variant = dict["k"]` | fine — `raw == null` is **true**, `is_instance_valid(raw)` is **false** |
+| `var x := typed_array[i]` (`Array[T]`) | **fine, no check emitted** — arrives as `<Freed Object>`, `== null` true |
+| `for x in Array[T]` / `for x in Array` | fine — the loop variable is not statically typed |
+
+So the check fires on the **source being statically `Variant`**, not on the destination being typed. A `Dictionary` value is always `Variant`; an `Array[T]` subscript never is. And the abort is local: the **caller resumes**, which is why the game kept running and printed the same line sixty times a second instead of crashing.
+
+**Why it fools people.** *The guard is present, correct, and visible in review — it reads as handled.*
+
+```gdscript
+var crow: Crow = pair["crow"]                    # line 296: throws HERE
+if crow == null or not is_instance_valid(crow):  # line 297: never runs
+    continue
+```
+
+Anyone reviewing `_follow()` ticks it off: the author clearly anticipated a freed bird, and the doc comment directly above says so in words — *"A bird that has been freed leaves its voice where it last was."* The failure is that a type-checked assignment validates **before** the guard, so the safety check is dead code that looks alive. Three separate authors in this repository wrote the same guard one line too late, and one of them wrote the reachable form in the same file eleven lines earlier.
+
+Two things make it worse than one lost reference:
+
+- **The abort takes the rest of the list.** One freed bird at the head of `_following` stopped *every other* bird's voice being followed. The symptom is not "one caw sits still", it is "the positional audio doesn't work" — which reads as a feature that was never finished rather than as a defect.
+- **Nothing pruned the list.** `_following` had no removal path at all, so the entry, the per-frame cost and the error were permanent for the session.
+
+**What to do.**
+
+1. **Read untyped, check, then narrow.** Measured working, on live and freed instances both:
+
+   ```gdscript
+   var raw: Variant = pair["crow"]
+   if raw == null or not is_instance_valid(raw):
+       continue
+   var crow: Crow = raw
+   ```
+
+2. **Guard before `as`, not after.** `as` is a type-checked conversion; it throws on a freed object rather than returning `null`.
+
+3. **Untyped parameters for anything that receives a possibly-dead reference.** `func _release(control: Control)` validates at the **call**, so the `is_instance_valid()` inside is unreachable. `ThresholdSurfacing._release(note)` had it right.
+
+4. **Drop the entry, do not `continue` past it.** Nothing makes a freed object valid again, so a skipped entry is walked forever.
+
+5. **`var x := typed_array[i]` is already safe — do not "fix" it.** `CrowCalls._speak()` was reported as the third instance of this bug and is not one; its existing guard catches a dangling element exactly as written. Changing it would be churn on a false premise.
+
+**Where it was found.** `crow_calls.gd:293, 296` (the report) and `:208` (`bird as Crow`); `ui_layer.gd:151` and `_release()`'s typed parameter at `:195`, reached from `:140` and `:162`; `ambience_director.gd:623, 643`, two lines out of step with `:185` in their own file. Every other candidate the sweep turned up held a `Resource`, `RefCounted` or value type, which a container keeps alive and which therefore cannot dangle.

@@ -146,9 +146,25 @@ func advance(delta: float) -> void:
 	var step := delta / _time_scale
 	var finished: Array = []
 	for entry in _live:
+		# READ UNTYPED, CHECKED, THEN NARROWED -- briefing trap 18.
+		#
+		# `bloom()`'s contract is "whoever blooms one owns dismissing it", so an
+		# owner is entitled to free its own element. `var control: Control =
+		# entry["control"]` is a type-checked assignment from a `Dictionary`
+		# value, and GDScript validates the instance AT the assignment: it threw
+		# `Trying to assign invalid previously freed instance` and aborted this
+		# whole function, so every element BEHIND the freed one stopped breathing
+		# too. `Breath` is `RefCounted` and the entry holds it alive, so only the
+		# `Control` needs this.
+		var raw: Variant = entry["control"]
+		if raw == null or not is_instance_valid(raw):
+			# Finished, not skipped: an element that no longer exists can never
+			# breathe again, and `_live` is walked every frame.
+			finished.append(entry)
+			continue
+		var control: Control = raw
 		entry["elapsed"] = float(entry["elapsed"]) + step
 		var breath: Breath = entry["breath"]
-		var control: Control = entry["control"]
 		var t: float = entry["elapsed"]
 		if breath.is_finished(t):
 			finished.append(entry)
@@ -192,7 +208,13 @@ func _adopt(control: Control, breath: Breath) -> void:
 ## MontageDirector does: a deferred free never arrives for a layer advanced by a
 ## test or a screenshot harness, and live_count() has to be true on the frame the
 ## element ended rather than at the end of one.
-func _release(control: Control) -> void:
+##
+## THE PARAMETER IS UNTYPED ON PURPOSE, and it is the same shape
+## `ThresholdSurfacing._release()` already uses. Typed, the instance is validated
+## AT THE CALL -- `_release(entry["control"])` threw on a control its owner had
+## already freed, and the `is_instance_valid()` guard on the line below could
+## never run. Briefing trap 18.
+func _release(control) -> void:
 	if control == null or not is_instance_valid(control):
 		return
 	if control.get_parent() == self:
