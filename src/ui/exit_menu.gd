@@ -90,6 +90,8 @@ var _camera_base_boom_factor := 1.0
 var _camera_pose_captured := false
 var _spatial_mode := false
 
+var _choreography = null   # PauseChoreography，打开/关闭期间持有
+
 
 func _ready() -> void:
 	if _root == null:
@@ -405,17 +407,13 @@ func close(play_back_sound := false) -> void:
 		_finish_close()
 		return
 	_kill_animation()
-	_animation = create_tween().set_parallel(true)
+	_choreography = PauseChoreography.closing(_tokens, _cascade_ids())
+	_animation = create_tween()
 	_animation.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
-	_animation.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-	_animation.tween_property(_content, "modulate:a", 0.0, _tokens.drift_fast_seconds)
-	_animation.tween_property(_content, "position:y",
-		_content_home.y - 8.0 * _frame_scale, _tokens.drift_fast_seconds)
-	_animation.tween_method(_set_cinematic_factor, _camera_factor, 1.0,
-		_tokens.drift_fast_seconds)
-	if _spatial != null and _spatial.visible:
-		_animation.tween_method(_spatial.set_alpha, _spatial.alpha(), 0.0,
-			_tokens.drift_fast_seconds)
+	_animation.tween_method(_apply_choreography, 0.0,
+		_choreography.total_seconds(), _choreography.total_seconds())
+	_animation.parallel().tween_method(_set_cinematic_factor, _camera_factor, 1.0,
+		_choreography.total_seconds())
 	_animation.chain().tween_callback(_finish_close)
 
 
@@ -670,21 +668,16 @@ func _show_confirmation(show: bool, animate: bool) -> void:
 		_hint_label.text = "ESC   返回暂停" if show else "ESC   返回风雪"
 	if _spatial != null:
 		_spatial.set_state(STATE_CONFIRM if show else STATE_MENU)
-	var arriving: Control = _confirm_panel if show else _menu_panel
-	if animate and is_inside_tree() and arriving != null:
-		arriving.modulate.a = 0.0
-		var home := arriving.position
-		arriving.position.y = home.y + 8.0 * _frame_scale
-		var transition := create_tween().set_parallel(true)
+	if animate and is_inside_tree():
+		_choreography = PauseChoreography.opening(_tokens, _cascade_ids())
+		_apply_choreography(0.0)
+		var transition := create_tween()
 		transition.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
-		transition.set_trans(Tween.TRANS_QUINT).set_ease(Tween.EASE_OUT)
-		transition.tween_property(arriving, "modulate:a", 1.0, _tokens.bloom_seconds)
-		transition.tween_property(arriving, "position:y", home.y, _tokens.bloom_seconds)
+		transition.tween_method(_apply_choreography, 0.0,
+			_choreography.total_seconds(), _choreography.total_seconds())
 	else:
-		if _menu_panel != null:
-			_menu_panel.modulate.a = 1.0
-		if _confirm_panel != null:
-			_confirm_panel.modulate.a = 1.0
+		_choreography = PauseChoreography.opening(_tokens, _cascade_ids())
+		_apply_choreography(_choreography.total_seconds())
 
 
 func _show_settings(show: bool, animate: bool) -> void:
@@ -702,21 +695,16 @@ func _show_settings(show: bool, animate: bool) -> void:
 			_settings_row_buttons.size() - 1)
 	if _spatial != null:
 		_spatial.set_state(STATE_SETTINGS if show else STATE_MENU)
-	var arriving: Control = _settings_panel if show else _menu_panel
-	if animate and is_inside_tree() and arriving != null:
-		arriving.modulate.a = 0.0
-		var home := arriving.position
-		arriving.position.y = home.y + 8.0 * _frame_scale
-		var transition := create_tween().set_parallel(true)
+	if animate and is_inside_tree():
+		_choreography = PauseChoreography.opening(_tokens, _cascade_ids())
+		_apply_choreography(0.0)
+		var transition := create_tween()
 		transition.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
-		transition.set_trans(Tween.TRANS_QUINT).set_ease(Tween.EASE_OUT)
-		transition.tween_property(arriving, "modulate:a", 1.0, _tokens.bloom_seconds)
-		transition.tween_property(arriving, "position:y", home.y, _tokens.bloom_seconds)
+		transition.tween_method(_apply_choreography, 0.0,
+			_choreography.total_seconds(), _choreography.total_seconds())
 	else:
-		if _menu_panel != null:
-			_menu_panel.modulate.a = 1.0
-		if _settings_panel != null:
-			_settings_panel.modulate.a = 1.0
+		_choreography = PauseChoreography.opening(_tokens, _cascade_ids())
+		_apply_choreography(_choreography.total_seconds())
 	if show and not _settings_row_buttons.is_empty():
 		_focus(_settings_row_buttons[_settings_focus_index])
 	elif not show:
@@ -774,31 +762,86 @@ func _settings_row_text(entry: AccessibilitySetting) -> String:
 	return "%s　%s" % [entry.label, entry.format_value(value)]
 
 
+## The lines the open cascade breathes in, in order. Spatial ids; the canvas
+## fallback maps them in _cascade_canvas_line().
+func _cascade_ids() -> Array[StringName]:
+	var ids: Array[StringName] = [
+		SpatialPauseMenu.STATUS, SpatialPauseMenu.CONTEXT_LINE,
+		SpatialPauseMenu.CAPTION, SpatialPauseMenu.TIME,
+	]
+	if _state == STATE_SETTINGS:
+		var row_ids: Array[StringName] = _spatial.row_label_ids() if _spatial != null else []
+		for row_id in row_ids:
+			ids.append(row_id)
+	elif _state == STATE_CONFIRM:
+		ids.append_array([SpatialPauseMenu.QUESTION, SpatialPauseMenu.CONSEQUENCE,
+			SpatialPauseMenu.RETURN, SpatialPauseMenu.CONFIRM])
+	else:
+		ids.append_array([SpatialPauseMenu.CONTINUE, SpatialPauseMenu.SETTINGS,
+			SpatialPauseMenu.EXIT])
+	ids.append(SpatialPauseMenu.HINT)
+	return ids
+
+
+func _apply_choreography(t: float) -> void:
+	if _choreography == null:
+		return
+	for i in range(_choreography.lines.size()):
+		var id: StringName = _choreography.lines[i]
+		var alpha: float = _choreography.alpha_at(i, t)
+		var offset: float = _choreography.offset_at(i, t)
+		if _spatial_mode and _spatial != null:
+			_spatial.set_line_envelope(id, alpha * _spatial.alpha(), offset)
+		else:
+			_cascade_canvas_line(id, alpha, offset)
+
+
+func _cascade_canvas_line(id: StringName, alpha: float, offset: float) -> void:
+	# 非 spatial 模式（无相机）：Canvas 控件自己做级联。
+	var control: Control = null
+	match id:
+		SpatialPauseMenu.STATUS: control = _status_label
+		SpatialPauseMenu.CONTEXT_LINE: control = _context_line
+		SpatialPauseMenu.CAPTION: control = _remaining_caption
+		SpatialPauseMenu.TIME: control = _remaining_value
+		SpatialPauseMenu.CONTINUE: control = _continue_button
+		SpatialPauseMenu.SETTINGS: control = _settings_button
+		SpatialPauseMenu.EXIT: control = _exit_button
+		SpatialPauseMenu.QUESTION: control = _confirmation_label
+		SpatialPauseMenu.HINT: control = _hint_label
+	if control == null:
+		return
+	control.modulate.a = alpha
+	# 位置由容器管理的控件只调透明度；自由定位的（hint）带位移。
+	if control == _hint_label:
+		control.position.y = 392.0 * _frame_scale + offset
+
+
 func _animate_open() -> void:
 	_set_cinematic_factor(CINEMATIC_FRAME_FACTOR)
 	_content.modulate.a = 1.0
 	_content.position = _content_home
+	# The schedule exists in canvas mode too -- without a camera the Canvas
+	# controls run the cascade themselves in _cascade_canvas_line().
+	_choreography = PauseChoreography.opening(_tokens, _cascade_ids())
 	if _spatial != null and _spatial.has_camera():
 		_spatial.visible = true
 		_spatial.set_alpha(1.0)
 	if not is_inside_tree():
+		# 无树（测试/截图具）：级联直接落终态。
+		_apply_choreography(_choreography.total_seconds())
 		return
 	_kill_animation()
 	_set_cinematic_factor(1.0)
-	_content.modulate.a = 0.0
-	_content.position.y = _content_home.y + 8.0 * _frame_scale
 	if _spatial != null and _spatial.has_camera():
-		_spatial.visible = true
-		_spatial.set_alpha(0.0)
-	_animation = create_tween().set_parallel(true)
+		_spatial.set_alpha(1.0)
+	_apply_choreography(0.0)
+	_animation = create_tween()
 	_animation.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
-	_animation.set_trans(Tween.TRANS_QUINT).set_ease(Tween.EASE_OUT)
-	_animation.tween_property(_content, "modulate:a", 1.0, _tokens.bloom_seconds)
-	_animation.tween_property(_content, "position:y", _content_home.y, _tokens.bloom_seconds)
-	_animation.tween_method(_set_cinematic_factor, 1.0, CINEMATIC_FRAME_FACTOR,
-		_tokens.bloom_heavy_seconds)
-	if _spatial != null and _spatial.has_camera():
-		_animation.tween_method(_spatial.set_alpha, 0.0, 1.0, _tokens.bloom_heavy_seconds)
+	_animation.tween_method(_apply_choreography, 0.0,
+		_choreography.total_seconds(), _choreography.total_seconds())
+	_animation.parallel().tween_method(_set_cinematic_factor, 1.0,
+		CINEMATIC_FRAME_FACTOR, _choreography.total_seconds())
 
 
 func _finish_close() -> void:
@@ -810,7 +853,9 @@ func _finish_close() -> void:
 	_release_camera_push()
 	_content.modulate.a = 1.0
 	_content.position = _content_home
+	_choreography = null
 	if _spatial != null:
+		_spatial.reset_envelopes(_cascade_ids())
 		_spatial.visible = false
 		_spatial.set_alpha(1.0)
 	_resume_game()

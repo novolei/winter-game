@@ -78,6 +78,9 @@ var _track_layouts: Dictionary = {}           # id -> Rect2（屏幕像素）
 var _state: StringName = STATE_MENU
 var _frame_scale := 1.0
 
+var _envelope_alpha: Dictionary = {}    # id -> 0..1 乘子（默认 1）
+var _envelope_offset: Dictionary = {}   # id -> y 像素偏移（默认 0）
+
 
 func setup(tokens: UITokens, fonts: UIFonts) -> void:
 	_tokens = tokens
@@ -299,6 +302,31 @@ func alpha() -> float:
 	return _alpha
 
 
+## The cascade's handle on one line. Alpha multiplies every colour channel the
+## line owns; offset shifts its projected home in screen pixels.
+func set_line_envelope(id: StringName, alpha: float, y_offset: float) -> void:
+	_envelope_alpha[id] = clampf(alpha, 0.0, 1.0)
+	_envelope_offset[id] = y_offset
+	_apply_alpha()
+	_update_projection()
+
+
+func reset_envelopes(ids: Array) -> void:
+	for id in ids:
+		_envelope_alpha[id] = 1.0
+		_envelope_offset[id] = 0.0
+	_apply_alpha()
+	_update_projection()
+
+
+func _envelope_alpha_for(id: StringName) -> float:
+	return float(_envelope_alpha.get(id, 1.0))
+
+
+func _envelope_offset_for(id: StringName) -> float:
+	return float(_envelope_offset.get(id, 0.0))
+
+
 func labels() -> Array[Label3D]:
 	var result: Array[Label3D] = []
 	for raw in _labels.values():
@@ -474,10 +502,10 @@ func _apply_alpha() -> void:
 		var fill: Color = _label_colours[id]
 		# Keep the charcoal fill dark over snow. The paired snow edge below is the
 		# second contrast channel when a depth-composited word crosses scenery.
-		fill.a *= _alpha
+		fill.a *= _alpha * _envelope_alpha_for(id)
 		label.modulate = fill
 		var outline := _tokens.ink_primary
-		outline.a *= _alpha
+		outline.a *= _alpha * _envelope_alpha_for(id)
 		label.outline_modulate = outline
 	for id in _line_materials.keys():
 		var material := _line_materials[id] as StandardMaterial3D
@@ -485,7 +513,7 @@ func _apply_alpha() -> void:
 		colour.r *= PAUSE_TREATMENT_COMPENSATION
 		colour.g *= PAUSE_TREATMENT_COMPENSATION
 		colour.b *= PAUSE_TREATMENT_COMPENSATION
-		colour.a *= _alpha
+		colour.a *= _alpha * _envelope_alpha_for(id)
 		material.albedo_color = colour
 	for id in _ornament_materials.keys():
 		var ornament_material := _ornament_materials[id] as StandardMaterial3D
@@ -529,7 +557,8 @@ func _update_projection() -> void:
 		# box. Adding half the measured width here was a double-centering error and
 		# separated the visible glyphs from their accessible Canvas hit targets.
 		var label_transform := label.global_transform
-		label_transform.origin = _camera.project_position(_targets[id] as Vector2, _depth)
+		label_transform.origin = _camera.project_position(
+			(_targets[id] as Vector2) + Vector2(0.0, _envelope_offset_for(id)), _depth)
 		label_transform.basis = _camera.global_transform.basis.orthonormalized() \
 			* Basis.from_euler(_label_tilts[id] as Vector3)
 		label.global_transform = label_transform
