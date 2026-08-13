@@ -372,15 +372,34 @@ func _load_face(glyph: StringName) -> Texture2D:
 	return ResourceLoader.load(path) as Texture2D
 
 
-## The interface chain with section 2.2's tracking on it.
+## The interface chain at the BREATH LAYER'S weight, with section 2.2's tracking
+## on it.
 ##
-## Wrapped in its own FontVariation rather than set on UIFonts.interface, because
-## that object is shared by the whole interface and spacing is per-size: writing
-## to it here would silently re-space the menus.
+## Not UIFonts.interface, for the reason UITokens.breath_cjk_weight records at
+## length: section 2.2's 300 Light assumes the interface owns the background, and
+## this element stands in the bottom margin over open snow with no plate allowed
+## under it. This word is the WORST specimen in the game for it -- it is Body 17
+## like the threshold note's sentence AND it is drawn one rung down section 2.1's
+## opacity ladder, so measured on lit `pale_day` snow at 300 it delivered
+## 1.77 : 1 at the stroke core against a nominal 4.36 : 1, with not one pixel
+## reaching its own ink.
+##
+## The day number beside it is NOT affected and does not need to be: it is the
+## instrument face at full strength, and the same capture measured it at
+## 4.71 : 1. A monospaced Latin digit has a stem several times the width of a CJK
+## hairline at the same size, which is why one line of type can hold two very
+## different legibilities and why they are measured apart.
+##
+## A CHAIN OF ITS OWN, not UIFonts.interface with spacing written onto it: that
+## object is shared by the whole interface and spacing is per-size, so writing to
+## it here would silently re-space the menus. The tracking is asked of UIFonts
+## rather than applied to what it hands back, because a FontVariation wrapped
+## around another one drops the inner one's weight axis -- see
+## UIFonts._variation().
 func _build_label_font() -> FontVariation:
-	if _fonts == null or _fonts.interface == null or _data == null:
+	if _fonts == null or _fonts.interface == null or _data == null or _tokens == null:
 		return null
-	var variation := FontVariation.new()
-	variation.base_font = _fonts.interface
-	variation.spacing_glyph = int(roundf(_data.label_tracking_em * _data.label_design_px))
-	return variation
+	return _fonts.interface_at(
+		_tokens.breath_latin_weight,
+		_tokens.breath_cjk_weight,
+		int(roundf(_data.label_tracking_em * _data.label_design_px)))

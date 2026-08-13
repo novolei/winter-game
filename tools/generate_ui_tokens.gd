@@ -86,6 +86,24 @@ func _initialize() -> void:
 	tokens.interface_cjk_weight = 300
 	tokens.instrument_path = FONT_DIR + "IBMPlexMono-Light.ttf"
 
+	# Section 3's breath layer, which owns no background and may have no plate
+	# under it. THESE ARE SECTION 5.9'S OWN TWO NUMBERS: the document already made
+	# this call for the same layer's world-space form -- 一行字立在山谷里，背后是一
+	# 整片 62% 亮度的雪，没有任何底 -- and moved that type to 600 CJK / 500 Latin.
+	# The screen-space half of the layer stands on the same snow, so it is the same
+	# decision rather than a new one.
+	#
+	# Confirmed by measurement rather than assumed: tools/measure_type_weight.tscn
+	# swept the axis at the shipped Body 17 on lit `pale_day` snow, and 600 is
+	# where the threshold note's sentence delivers 7.03 : 1 at its stroke core
+	# against a nominal 8.09, and the time prompt's word 4.10 against its own
+	# ceiling of 4.36. 700 buys 0.4 more and costs the family its character; 300
+	# reaches the ink on no pixel at all. The sweep is in
+	# .superpowers/sdd/wave3/task-w3-type-weight-report.md and the relationships
+	# the suite holds are in tests/unit/test_breath_type_weight.gd.
+	tokens.breath_cjk_weight = 600
+	tokens.breath_latin_weight = 500
+
 	var missing: Array[String] = []
 	for path in tokens.font_paths():
 		if not FileAccess.file_exists(path):

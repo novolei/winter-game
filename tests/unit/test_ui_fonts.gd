@@ -49,13 +49,41 @@ func test_all_three_families_build() -> void:
 	assert_not_null(_fonts.interface, "interface family")
 	assert_not_null(_fonts.instrument, "instrument family")
 
-## Section 2.2's weights, on the variations rather than in the document. 200 is
-## the floor of NotoSerifSC-VF's axis, not a preference.
-func test_the_weights_are_set_on_the_variations() -> void:
-	assert_eq(int(_fonts.display.variation_opentype.get(&"wght", 0)), 300, "Cormorant Light")
-	assert_eq(int(_fonts.display_cjk.variation_opentype.get(&"wght", 0)), 200, "Noto Serif SC ExtraLight")
-	assert_eq(int(_fonts.interface.variation_opentype.get(&"wght", 0)), 300, "Inter Light")
-	assert_eq(int(_fonts.interface_cjk.variation_opentype.get(&"wght", 0)), 300, "Noto Sans SC Light")
+## Section 2.2's weights, asked of the TEXT SERVER rather than of the request.
+##
+## This test used to read `variation_opentype` back and compare it to the
+## document, and it passed for the whole of wave 3 while every one of these
+## weights was inert: `variation_opentype` keys the axis by its integer TAG CODE,
+## and the StringName key this file's subject used was stored, read back
+## perfectly, and never applied. Each face rendered at its own file's default --
+## Noto Sans SC at 100 THIN where the document asks for 300 Light.
+##
+## A configuration read back from the object that was configured cannot fail. The
+## assertions below ask what will actually be drawn. 200 is the floor of
+## NotoSerifSC-VF's axis, not a preference.
+func test_the_weights_are_what_the_faces_will_actually_render_at() -> void:
+	var ts := TextServerManager.get_primary_interface()
+	var tag := ts.name_to_tag("wght")
+	var expected := [
+		[_fonts.display_latin_only, 300, "Cormorant Light"],
+		[_fonts.display_cjk, 200, "Noto Serif SC ExtraLight"],
+		[_fonts.interface_latin_only, 300, "Inter Light"],
+		[_fonts.interface_cjk, 300, "Noto Sans SC Light"],
+	]
+	for row in expected:
+		var font: Font = row[0]
+		var rids := font.get_rids()
+		assert_true(rids.size() > 0, "%s has no RID at all" % row[2])
+		if rids.is_empty():
+			continue
+		# Godot omits a coordinate that equals the file's own default, so an
+		# absent coordinate means the default -- and the default is what renders.
+		var coordinates: Dictionary = ts.font_get_variation_coordinates(rids[0])
+		var applied := int(coordinates[tag]) if coordinates.has(tag) else int(
+			(ts.font_supported_variation_list(rids[0]).get(tag, Vector3i(0, 0, 0)) as Vector3i).z)
+		assert_eq(applied, int(row[1]),
+			"%s: the document asks for %d and the face will render %d"
+				% [row[2], int(row[1]), applied])
 
 func test_the_cjk_face_is_the_fallback_and_not_the_base() -> void:
 	assert_true(_fonts.display.fallbacks.has(_fonts.display_cjk),

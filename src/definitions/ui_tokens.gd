@@ -99,6 +99,32 @@ extends Resource
 @export_file("*.ttf", "*.otf") var interface_cjk_path: String = ""
 @export var interface_cjk_weight: int = 300
 
+## THE BREATH LAYER'S OWN WEIGHT, AND WHY IT IS NOT THE ONE ABOVE
+##
+## Section 2.2 sets the interface family at 300 Light, and that is right for type
+## the FRAME layer draws: a menu, a settings row, an item name -- all of them on a
+## background the interface controls.
+##
+## The BREATH layer (section 3) controls nothing. Its default state is zero
+## pixels; it wakes on an event and draws straight onto whatever the valley
+## happens to be, and rule 1 forbids putting a plate behind it. Section 5.9
+## already found this and already answered it, for the same layer in its world-
+## space form: 一行字立在山谷里，背后是一整片 62% 亮度的雪，没有任何底 -- 200 会
+## 直接洗进它站着的地面, and its table moves that type from 200/300 to 600/500.
+##
+## The screen-space form of the same layer stands on the same snow. Measured with
+## tools/measure_type_weight.tscn at the shipped Body 17, on lit `pale_day` snow:
+## at 300 the strokes of 呼吸变快了 deliver 2.23 : 1 at their core and NOT ONE
+## PIXEL of them ever reaches the ink's own value, against a nominal 8.10 : 1.
+## A stroke thinner than a pixel never receives the full ink; antialiasing hands
+## the player a blend of ink and snow, and the blend is what he has to read.
+##
+## So this is section 5.9's finding applied to the medium it was written beside,
+## and it is a WEIGHT and not a SIZE: section 2.2's 字号阶梯 is untouched, and the
+## advance widths of both faces are identical across the axis, so no layout moves.
+@export var breath_cjk_weight: int = 300
+@export var breath_latin_weight: int = 300
+
 ## Static, single weight, so it carries no weight field. It only ever sets
 ## numbers, and it must do so with tabular figures -- see UIFonts.
 @export_file("*.ttf", "*.otf") var instrument_path: String = ""

@@ -1,0 +1,9 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://tools/measure_type_weight.gd" id="1_measure"]
+[ext_resource type="PackedScene" path="res://scenes/main.tscn" id="2_main"]
+
+[node name="MeasureTypeWeight" type="Node"]
+script = ExtResource("1_measure")
+
+[node name="Main" parent="." instance=ExtResource("2_main")]

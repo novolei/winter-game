@@ -18,4 +18,6 @@ display_latin_path = "res://assets/fonts/CormorantGaramond-VF.ttf"
 display_cjk_path = "res://assets/fonts/NotoSerifSC-VF.otf"
 interface_latin_path = "res://assets/fonts/Inter-VF.ttf"
 interface_cjk_path = "res://assets/fonts/NotoSansSC-VF.otf"
+breath_cjk_weight = 600
+breath_latin_weight = 500
 instrument_path = "res://assets/fonts/IBMPlexMono-Light.ttf"

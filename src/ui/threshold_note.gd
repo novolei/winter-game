@@ -323,18 +323,34 @@ func _text_width() -> float:
 	).x
 
 
-## The interface chain with section 2.2's tracking on it.
+## The interface chain at the BREATH LAYER'S weight, with section 2.2's tracking
+## on it.
 ##
-## Wrapped in its own FontVariation rather than set on UIFonts.interface,
-## because that object is shared by the whole interface and spacing is per-size:
-## writing to it here would silently re-space the menus.
+## Not UIFonts.interface. Section 2.2's 300 Light is for type on a background the
+## interface owns; this element owns nothing -- it wakes on an event, stands on
+## the valley, and rule 1 forbids a plate under it. At 300 the strokes of a Body
+## 17 glyph are thinner than a pixel, so every pixel of them is a blend of ink and
+## snow: measured on lit `pale_day` snow, a nominal 8.10 : 1 was delivered as
+## 2.23 : 1 at the stroke core with NOT ONE PIXEL reaching the ink. See
+## UITokens.breath_cjk_weight and section 5.9, which found this first for the same
+## layer's world-space form.
+##
+## A CHAIN OF ITS OWN, not UIFonts.interface with spacing written onto it: that
+## object is shared by the whole interface and spacing is per-size, so writing to
+## it here would silently re-space the menus.
+##
+## And the tracking is asked of UIFonts rather than applied to what it hands back.
+## A FontVariation wrapped around another FontVariation drops the inner one's
+## weight axis for the base face -- measured, and recorded in UIFonts._variation()
+## -- so the obvious two-line form here would have quietly undone the weight this
+## function exists to set.
 func _build_body_font() -> FontVariation:
-	if _fonts == null or _fonts.interface == null:
+	if _fonts == null or _fonts.interface == null or _tokens == null:
 		return null
-	var variation := FontVariation.new()
-	variation.base_font = _fonts.interface
-	variation.spacing_glyph = int(roundf(BODY_TRACKING_EM * BODY_DESIGN_PX))
-	return variation
+	return _fonts.interface_at(
+		_tokens.breath_latin_weight,
+		_tokens.breath_cjk_weight,
+		int(roundf(BODY_TRACKING_EM * BODY_DESIGN_PX)))
 
 
 ## Icons are named for the stat they belong to -- assets/ui/icons/hunger.png --
