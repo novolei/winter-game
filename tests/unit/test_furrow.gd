@@ -25,6 +25,7 @@ const PlayerScript := preload("res://src/entities/player/player_controller.gd")
 ## the sampling fine: 2.3 cm of ground per tick.
 const TICK := 1.0 / 60.0
 const PACE := 1.4
+const TRACK_RESPONSE_DEPTH_M := 0.16
 
 var _player: PlayerController
 
@@ -150,6 +151,56 @@ func test_deeper_snow_ploughs_deeper_and_wider() -> void:
 	assert_true(
 		_mean(deep, "half_width") > _mean(shallow, "half_width") + 0.01,
 		"...and wider: %f vs %f" % [_mean(deep, "half_width"), _mean(shallow, "half_width")]
+	)
+
+
+## The old square-root onset made the first centimetre past the wading gate dig
+## almost as strongly as a mature channel.  The transition must instead be
+## continuous in virtual millimetres: twice the snow excess gives twice the
+## nominal visual height, with no visible step at 0.42 m.
+func test_furrow_depth_starts_continuously_at_the_gate() -> void:
+	_player.furrow_depth_wobble = 0.0
+	var gate: float = _player.furrow_depth_start_m
+	var first_mm := _nominal_visual_height_m(gate + 0.001)
+	var second_mm := _nominal_visual_height_m(gate + 0.002)
+	assert_true(
+		first_mm > 0.0 and first_mm < 0.001,
+		"one millimetre over the gate must begin below 1 virtual mm, got %.3f virtual mm"
+			% (first_mm * 1000.0)
+	)
+	assert_almost_eq(
+		second_mm / maxf(first_mm, 0.000001), 2.0, 0.02,
+		"the onset is not linear and continuous: %.3f then %.3f virtual mm"
+			% [first_mm * 1000.0, second_mm * 1000.0]
+	)
+
+
+## These two depths bracket the problem seen in play: 0.43 m is only just into
+## wading snow and must not read as a trench, while 0.58 m is a real drift and
+## still needs a clearly traceable channel.  Values are the TrackMask response
+## converted to virtual height, with longitudinal wobble disabled.
+func test_furrow_visual_height_matches_shallow_and_deep_drift_targets() -> void:
+	_player.furrow_depth_wobble = 0.0
+	var onset_depth := _nominal_visual_height_m(0.43)
+	var deep_depth := _nominal_visual_height_m(0.58)
+	assert_almost_eq(
+		onset_depth, 0.0041, 0.0006,
+		"0.43 m snow must leave about 4 virtual mm, got %.2f virtual mm"
+			% (onset_depth * 1000.0)
+	)
+	assert_almost_eq(
+		deep_depth, 0.0654, 0.002,
+		"0.58 m snow must retain about 65 virtual mm, got %.2f virtual mm"
+			% (deep_depth * 1000.0)
+	)
+	assert_true(
+		deep_depth >= 0.06,
+		"deep drift furrows must remain trackable, got %.2f virtual mm"
+			% (deep_depth * 1000.0)
+	)
+	assert_almost_eq(
+		_player.furrow_half_width_m, 0.17, 0.0001,
+		"depth tuning must not narrow the accepted 34 cm channel"
 	)
 
 
@@ -329,3 +380,10 @@ func _mean(samples: Array[Dictionary], key: String) -> float:
 	for sample in samples:
 		total += float(sample[key])
 	return total / float(samples.size())
+
+
+func _nominal_visual_height_m(snow_depth_m: float) -> float:
+	var sample: Dictionary = _player._furrow_sample(
+		Vector3.ZERO, Vector3(0.05, 0.0, 0.0), snow_depth_m, _max_depth()
+	)
+	return float(sample.get("depth", 0.0)) * TRACK_RESPONSE_DEPTH_M

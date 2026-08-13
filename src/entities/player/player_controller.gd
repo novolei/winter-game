@@ -616,10 +616,10 @@ const AUTO_RUN_SETTING := "winter_time/controls/auto_run_delay_seconds"
 ## second rule: `bite` below goes to zero on its own.
 @export var furrow_depth_start_m := 0.42
 
-## Peak depth on the centre line, in mask units, in the deepest snow. Against a
-## footprint's 1.0 at the same depth -- so the boot pockets still win outright
-## wherever they overlap the channel, which is what keeps their outlines.
-@export var furrow_strength := 0.72
+## Peak depth on the centre line, in mask units, in the deepest snow. 0.46 keeps
+## a 0.58 m drift near 65 virtual mm of visual height response while leaving the
+## footprint's 1.0 pockets dominant wherever they overlap the channel.
+@export var furrow_strength := 0.46
 
 ## Half-width in the deepest snow. About a 34 cm channel, which is the width of
 ## a pair of legs dragged through a drift, and the number that sets how steep the
@@ -631,11 +631,10 @@ const AUTO_RUN_SETTING := "winter_time/controls/auto_run_delay_seconds"
 ## this fraction of the width at the gate.
 @export var furrow_narrow_at_gate := 0.55
 
-## How fast the furrow bites once it bites at all. Below 1 it rises steeply just
-## past the gate and flattens off deeper in -- which is what stops the third
-## pass's failure from coming back, because a linear ramp across the 0.42 .. 0.60
-## band spends its first metres of drift drawing something invisible.
-@export var furrow_onset := 0.5
+## How fast the furrow bites once it bites at all. A linear onset keeps the
+## 0.42 m wading boundary visually continuous: the first centimetre produces
+## about 4 virtual mm instead of the old square-root ramp's 27 mm trench.
+@export var furrow_onset := 1.0
 
 ## How far the walker travels between furrow samples. Small ENOUGH IS THE WHOLE
 ## POINT: it has to stay under furrow_half_width_m, because that is what makes
@@ -2668,8 +2667,8 @@ func _furrow_sample(from: Vector3, to: Vector3, depth: float, max_depth: float) 
 	var bite := clampf((depth - furrow_depth_start_m) / span, 0.0, 1.0)
 	if bite <= 0.0:
 		return {}
-	# See furrow_onset: below 1 this rises steeply off the gate, so the first
-	# metres of a drift draw something you can actually see.
+	# See furrow_onset: the linear response makes the gate visually continuous
+	# while preserving a traceable channel in a mature drift.
 	bite = pow(bite, furrow_onset)
 	return {
 		"from": from,
