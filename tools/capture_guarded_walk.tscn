@@ -1,0 +1,9 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="PackedScene" path="res://scenes/main.tscn" id="1_main"]
+[ext_resource type="Script" path="res://tools/capture_guarded_walk.gd" id="2_gait"]
+
+[node name="CaptureGuardedWalk" type="Node"]
+script = ExtResource("2_gait")
+
+[node name="Main" parent="." instance=ExtResource("1_main")]

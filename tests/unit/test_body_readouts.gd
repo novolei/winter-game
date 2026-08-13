@@ -281,6 +281,43 @@ func test_the_guarded_walk_is_three_cycles_and_not_one() -> void:
 	)
 
 
+## The speed constant is measured off ONE take, and nothing tied it to the take.
+##
+## WALK_GUARDED_SPEED = 0.924 m/s is the rate Limping_Walk_inplace's stance foot
+## slides backwards under the hips. Injured_Walk's is 0.523, and which source take
+## feeds the `walk_guarded` slot is one line of TAKES.
+##
+## The cadence guard above catches the NAIVE swap: Injured_Walk read as three
+## cycles works out at 2.90 s a stride, outside the band. It does not catch the
+## swap made carefully -- set WALK_GUARDED_CYCLES to 6 as well and the cadence
+## lands at 1.45 s, inside the band, while WALK_GUARDED_SPEED still claims 0.924.
+## The graph would then play a 0.523 m/s take at 2.58x on bare ground, 214 steps a
+## minute, and test_the_guarded_walk_stays_inside_the_pace_guard would not see it
+## either -- because pace_for() reads the CONSTANT and never the clip.
+##
+## 一个必须与别的值相关的常量，要对着那个值测. The slip rate cannot be re-derived
+## from an AnimationLibrary (it needs a posed skeleton), so what is pinned instead
+## is the one fact that makes the constant true: which source take is in the slot.
+## Change it deliberately and this test tells you the other half of the job.
+##
+## Measured for the wave 3 guarded-walk report: swapping to Injured_Walk buys no
+## legibility either -- 0.83 against 0.48 on the same silhouette test, both under
+## the 1.0 a reading has to clear -- so the trade is a cost with no benefit.
+func test_the_guarded_walk_speed_names_the_take_it_was_measured_on() -> void:
+	var source := ""
+	for row in WandererAnimations.TAKES:
+		if StringName(String(row[2])) == WandererAnimations.WALK_GUARDED:
+			source = String(row[1])
+	assert_eq(
+		source,
+		"Limping_Walk_inplace",
+		"WALK_GUARDED_SPEED = %.3f m/s was measured on Limping_Walk_inplace and "
+			% WandererAnimations.WALK_GUARDED_SPEED
+			+ "the guarded slot now plays '%s'. Re-measure the stance-foot " % source
+			+ "slip rate and update the constant before changing this."
+	)
+
+
 func test_the_graph_carries_the_guarded_walk_on_its_own_rate_node() -> void:
 	var graph := PlayerControllerScript.build_blend_tree()
 	for name in ["walk_guarded", "guarded_rate", "footing"]:
