@@ -1,6 +1,7 @@
 [gd_resource type="Resource" script_class="WeatherEventDefinition" format=3]
 
 [ext_resource type="Script" path="res://src/definitions/weather_event_definition.gd" id="1_d8ccj"]
+[ext_resource type="Resource" path="res://data/snow/responses/wind_shift.tres" id="2_ceuvd"]
 [ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="2_iqswk"]
 [ext_resource type="Script" path="res://src/definitions/weather_tell.gd" id="3_ceuvd"]
 [ext_resource type="Resource" path="res://data/weather/wind_map_calm.tres" id="4_8g8ci"]
@@ -22,4 +23,5 @@ active_duration_range = Vector2(90, 160)
 fade_duration = 12.0
 tell = SubResource("Resource_w3ron")
 wind_speed_multiplier = 1.15
+snow_response = ExtResource("2_ceuvd")
 wind_map = ExtResource("5_0vurl")

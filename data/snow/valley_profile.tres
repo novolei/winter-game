@@ -1,44 +1,70 @@
 [gd_resource type="Resource" script_class="SnowFieldProfile" format=3]
 
-[ext_resource type="Script" path="res://src/definitions/snow_route_constraint.gd" id="1_q4ifj"]
-[ext_resource type="Script" path="res://src/definitions/snow_field_profile.gd" id="2_3rrh4"]
+[ext_resource type="Script" path="res://src/definitions/snow_route_constraint.gd" id="1_3rrh4"]
+[ext_resource type="Script" path="res://src/definitions/snow_field_profile.gd" id="2_35luj"]
+[ext_resource type="Script" path="res://src/definitions/snow_shelter_definition.gd" id="3_4k0c1"]
 
-[sub_resource type="Resource" id="Resource_35luj"]
-script = ExtResource("1_q4ifj")
+[sub_resource type="Resource" id="Resource_cg5ic"]
+script = ExtResource("1_3rrh4")
 points = PackedVector2Array(0, 0, 14.8, -10.8)
 half_width_m = 2.6
 feather_m = 1.8
 
-[sub_resource type="Resource" id="Resource_4k0c1"]
-script = ExtResource("1_q4ifj")
+[sub_resource type="Resource" id="Resource_0cjig"]
+script = ExtResource("1_3rrh4")
 points = PackedVector2Array(45, -59, 30, -46, 20, -37, 11, -29.5, 2.7, -25.6, -9, -28.5, -24, -34, -41, -40)
 half_width_m = 3.2
 feather_m = 1.8
 
-[sub_resource type="Resource" id="Resource_cg5ic"]
-script = ExtResource("1_q4ifj")
+[sub_resource type="Resource" id="Resource_gojuo"]
+script = ExtResource("1_3rrh4")
 points = PackedVector2Array(2.7, -25.6, 4.6, -22.2, 4.85, -18.16)
 half_width_m = 2.2
 feather_m = 1.5
 
-[sub_resource type="Resource" id="Resource_0cjig"]
-script = ExtResource("1_q4ifj")
+[sub_resource type="Resource" id="Resource_0ussm"]
+script = ExtResource("1_3rrh4")
 points = PackedVector2Array(4.2, -20.6, 6.4, -16.4, 10.6, -12.4, 14.4, -9.6)
 half_width_m = 4.0
 feather_m = 1.8
 
-[sub_resource type="Resource" id="Resource_gojuo"]
-script = ExtResource("1_q4ifj")
+[sub_resource type="Resource" id="Resource_otl2o"]
+script = ExtResource("1_3rrh4")
 points = PackedVector2Array(16.5, -8.5, 24, 3, 30, 13, 37.2, 24.9)
 half_width_m = 0.75
 feather_m = 1.25
 
-[sub_resource type="Resource" id="Resource_0ussm"]
-script = ExtResource("1_q4ifj")
+[sub_resource type="Resource" id="Resource_g6a7x"]
+script = ExtResource("1_3rrh4")
 points = PackedVector2Array(13.5, -8, 8.6, -0.4, 4.4, 3.2, -1, 10.5, -4.6, 17.5)
 half_width_m = 0.75
 feather_m = 1.25
 
+[sub_resource type="Resource" id="Resource_ejt5h"]
+script = ExtResource("3_4k0c1")
+centre = Vector2(21, -13)
+radius_m = 3.0
+lee_length_m = 10.0
+lee_half_width_m = 5.0
+shelter_strength = 0.75
+
+[sub_resource type="Resource" id="Resource_khjfp"]
+script = ExtResource("3_4k0c1")
+centre = Vector2(-18, -10)
+radius_m = 2.0
+lee_length_m = 8.0
+lee_half_width_m = 4.0
+shelter_strength = 0.6
+
+[sub_resource type="Resource" id="Resource_g1ct0"]
+script = ExtResource("3_4k0c1")
+centre = Vector2(30, 18)
+radius_m = 2.5
+lee_length_m = 12.0
+lee_half_width_m = 5.0
+shelter_strength = 0.65
+
 [resource]
-script = ExtResource("2_3rrh4")
-protected_routes = Array[ExtResource("1_q4ifj")]([SubResource("Resource_35luj"), SubResource("Resource_4k0c1"), SubResource("Resource_cg5ic"), SubResource("Resource_0cjig"), SubResource("Resource_gojuo"), SubResource("Resource_0ussm")])
+script = ExtResource("2_35luj")
+protected_routes = Array[ExtResource("1_3rrh4")]([SubResource("Resource_cg5ic"), SubResource("Resource_0cjig"), SubResource("Resource_gojuo"), SubResource("Resource_0ussm"), SubResource("Resource_otl2o"), SubResource("Resource_g6a7x")])
+shelters = Array[ExtResource("3_4k0c1")]([SubResource("Resource_ejt5h"), SubResource("Resource_khjfp"), SubResource("Resource_g1ct0")])

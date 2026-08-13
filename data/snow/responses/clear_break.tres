@@ -6,3 +6,7 @@
 script = ExtResource("1_3pyhm")
 deposition_m_per_second = 8e-06
 maximum_added_depth_m = 0.08
+wind_transport_m_per_second = 4e-06
+wind_minimum_strength = 0.08
+wind_sample_distance_m = 3.75
+wind_shelter_deposition_gain = 1.35

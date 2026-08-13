@@ -189,11 +189,15 @@ const BUILDING_FOOTPRINT_EVENT := &"building.footprint"
 @export_file("*.tres") var snow_profile_path := SNOW_PROFILE_PATH
 
 ## Dynamic accumulation advances at this fixed cadence, never from a render
-## frame.  Wind transport, shelter and thaw deliberately have no hook here yet;
-## Phase C is only falling snow plus the existing footprint compaction.
+## frame.  Every weather contribution, including directional wind transport,
+## is consumed here rather than turning a render frame into a terrain update.
 @export_range(0.1, 5.0, 0.1, "suffix:s") var dynamic_tick_seconds := 0.5
 @export_range(1.0, 16.0, 0.25, "suffix:m") var dynamic_tile_size_m := 3.75
 @export_range(64, 8192, 1) var maximum_dynamic_tiles := 2048
+## The wind only inspects this many nearby sparse cells on one fixed tick.  It
+## is intentionally independent of `maximum_dynamic_tiles`: a long run can
+## remember many altered places without revisiting every one when the air moves.
+@export_range(1, 512, 1) var wind_transport_tile_budget := 121
 
 ## Cycles per metre. 0.036 is a swell about 28 m across.
 ##
@@ -314,6 +318,10 @@ var _dynamic_snow: SnowDynamicDepthLayer
 var _snow_response: SnowResponseDefinition
 var _snow_intensity := 0.0
 var _dynamic_tick_elapsed := 0.0
+var _dynamic_focus := Vector2.ZERO
+var _wind_direction := Vector2.ZERO
+var _wind_strength := 0.0
+var _last_wind_transport_tile_work := 0
 ## Cached while the field is in the tree. `_exit_tree()` is also reached when a
 ## test removes this node, when absolute scene paths are no longer valid.
 ## Keeping these two event-boundary references avoids an exit-time engine error
@@ -363,6 +371,7 @@ func build_at(centre: Vector3 = Vector3.ZERO) -> void:
 	_packed.fill(Color(0.0, 0.0, 0.0, 1.0))
 	_packed_dirty = true
 	_origin = _snap(Vector2(centre.x, centre.z) - Vector2(EXTENT_M, EXTENT_M) * 0.5)
+	_dynamic_focus = Vector2(centre.x, centre.z)
 	_regenerate_terrain()
 
 
@@ -425,8 +434,15 @@ func set_snow_response(response: SnowResponseDefinition, intensity: float) -> vo
 func _on_snow_inputs_changed(payload) -> void:
 	if not (payload is Dictionary):
 		return
-	var response = (payload as Dictionary).get("response", null) as SnowResponseDefinition
-	set_snow_response(response, float((payload as Dictionary).get("snowfall", 0.0)))
+	var snapshot := payload as Dictionary
+	var response = snapshot.get("response", null) as SnowResponseDefinition
+	set_snow_response(response, float(snapshot.get("snowfall", 0.0)))
+	var direction: Variant = snapshot.get("wind_direction", Vector2.ZERO)
+	if direction is Vector3:
+		var vector3 := direction as Vector3
+		set_wind_input(Vector2(vector3.x, vector3.z), float(snapshot.get("wind_strength", 0.0)))
+	elif direction is Vector2:
+		set_wind_input(direction as Vector2, float(snapshot.get("wind_strength", 0.0)))
 
 
 ## Advance exactly as many fixed ticks as the elapsed time contains. Public for
@@ -446,29 +462,121 @@ func advance_dynamic(delta: float) -> void:
 ## this is at most 32 x 32 scalar additions every half-second, and empty weather
 ## allocates nothing at all.
 func _apply_dynamic_tick(delta: float) -> void:
+	_last_wind_transport_tile_work = 0
 	if _dynamic_snow == null or _snow_response == null:
 		return
 	var rate := _snow_response.deposition_m_per_second * _snow_intensity
 	var cap := _snow_response.maximum_added_depth_m
-	if rate <= 0.0 or cap <= 0.0:
+	if cap <= 0.0:
 		return
 	_dynamic_snow.tile_size_m = dynamic_tile_size_m
 	_dynamic_snow.maximum_tiles = maximum_dynamic_tiles
 	_dynamic_snow.begin_tick()
-	var low := _dynamic_snow.tile_key(_origin)
-	var high := _dynamic_snow.tile_key(_origin + Vector2(EXTENT_M, EXTENT_M))
-	for y in range(low.y, high.y + 1):
-		for x in range(low.x, high.x + 1):
-			var tile := Vector2i(x, y)
-			var world_xz := _dynamic_snow.tile_centre(tile)
-			# Protected routes are an authored Day-1 guarantee, not merely an
-			# opening-noise exception.  Feathering comes from the same profile as
-			# the seeded field, avoiding a hard snow-depth seam around a road.
-			var writable := _open_snow_weight(world_xz)
-			if writable <= 0.0:
-				continue
-			_dynamic_snow.add_at(world_xz, rate * delta * writable, cap)
+	if rate > 0.0:
+		var low := _dynamic_snow.tile_key(_origin)
+		var high := _dynamic_snow.tile_key(_origin + Vector2(EXTENT_M, EXTENT_M))
+		for y in range(low.y, high.y + 1):
+			for x in range(low.x, high.x + 1):
+				var tile := Vector2i(x, y)
+				var world_xz := _dynamic_snow.tile_centre(tile)
+				# Protected routes are an authored Day-1 guarantee, not merely an
+				# opening-noise exception.  Feathering comes from the same profile as
+				# the seeded field, avoiding a hard snow-depth seam around a road.
+				var writable := _open_snow_weight(world_xz)
+				if writable <= 0.0:
+					continue
+				_dynamic_snow.add_at(world_xz, rate * delta * writable, cap)
+	_apply_wind_transport(delta, cap)
 	_dynamic_snow.trim_to_limit()
+
+
+## A directionally finite redistribution.  It intentionally samples a bounded
+## local square around the latest follow target, stages every delta, then writes
+## once.  There is no all-valley scan, no wind event per tile and no global
+## snow loss disguised as scouring.
+func _apply_wind_transport(delta: float, cap: float) -> void:
+	if _snow_response == null or _dynamic_snow == null:
+		return
+	if _snow_response.wind_transport_m_per_second <= 0.0 \
+			or _snow_response.wind_sample_distance_m <= 0.0 \
+			or _wind_direction.length_squared() <= 0.000001:
+		return
+	var minimum := clampf(_snow_response.wind_minimum_strength, 0.0, 1.0)
+	if _wind_strength <= minimum:
+		return
+	var strength := clampf((_wind_strength - minimum) / maxf(1.0 - minimum, 0.000001), 0.0, 1.0)
+	if strength <= 0.0:
+		return
+	var direction := _wind_direction.normalized()
+	var deltas := {}
+	for source_key in _local_wind_tile_keys():
+		_last_wind_transport_tile_work += 1
+		var source_xz := _dynamic_snow.tile_centre(source_key)
+		# Read the pre-tick field only.  A tile may be somebody else's receiver
+		# later in the stable ordering, but it must not then become a second-hop
+		# source in this same tick: that would make transport order-dependent and
+		# allow one gust to travel several tile lengths in half a second.
+		var source_depth := _dynamic_snow.depth_at_key(source_key)
+		if source_depth <= 0.0000001:
+			continue
+		var source_open := _open_snow_weight(source_xz)
+		if source_open <= 0.0:
+			continue
+		var receiver_xz := source_xz + direction * _snow_response.wind_sample_distance_m
+		var receiver_open := _open_snow_weight(receiver_xz)
+		if receiver_open <= 0.0:
+			continue
+		var receiver_key := _dynamic_snow.tile_key(receiver_xz)
+		if receiver_key == source_key:
+			continue
+		var receiver_depth := _dynamic_snow.depth_at_key(receiver_key) + float(deltas.get(receiver_key, 0.0))
+		var receiver_capacity := maxf(cap - receiver_depth, 0.0)
+		if receiver_capacity <= 0.0000001:
+			continue
+		var exposure := _wind_exposure_at(source_xz, direction)
+		var lee := shelter_weight_at(receiver_xz, direction)
+		var lee_gain := lerpf(1.0, _snow_response.wind_shelter_deposition_gain, lee)
+		var requested := _snow_response.wind_transport_m_per_second * delta \
+			* strength * exposure * source_open * receiver_open * lee_gain
+		var moved := minf(requested, minf(source_depth, receiver_capacity))
+		if moved <= 0.0000001:
+			continue
+		deltas[source_key] = float(deltas.get(source_key, 0.0)) - moved
+		deltas[receiver_key] = float(deltas.get(receiver_key, 0.0)) + moved
+	_dynamic_snow.apply_depth_deltas(deltas, cap)
+
+
+## A compact square centred on the player/follow target.  Its side is derived
+## from the explicit budget, so even a misconfigured huge sparse store cannot
+## turn a half-second weather tick into a historical-world scan.
+func _local_wind_tile_keys() -> Array[Vector2i]:
+	var budget := maxi(wind_transport_tile_budget, 1)
+	var side := maxi(int(floorf(sqrt(float(budget)))), 1)
+	var centre := _dynamic_snow.tile_key(_dynamic_focus)
+	var start_x := centre.x - side / 2
+	var start_y := centre.y - side / 2
+	var keys: Array[Vector2i] = []
+	for y in range(side):
+		for x in range(side):
+			keys.append(Vector2i(start_x + x, start_y + y))
+	return keys
+
+
+## A broad terrain-facing term makes a crest surrender snow before a hollow;
+## authored shelters then reduce that exposure in their lee.  The 0.35 floor
+## avoids making a gently rolling valley physically inert at ordinary wind.
+func _wind_exposure_at(world_xz: Vector2, direction: Vector2) -> float:
+	var point := Vector3(world_xz.x, 0.0, world_xz.y)
+	var gradient := Vector2(
+		terrain_height_at(point + Vector3(0.8, 0.0, 0.0)) - terrain_height_at(point - Vector3(0.8, 0.0, 0.0)),
+		terrain_height_at(point + Vector3(0.0, 0.0, 0.8)) - terrain_height_at(point - Vector3(0.0, 0.0, 0.8))
+	) / 1.6
+	var slope := clampf(gradient.length() / 0.25, 0.0, 1.0)
+	var windward := 0.0
+	if gradient.length_squared() > 0.000001:
+		windward = maxf(gradient.normalized().dot(-direction), 0.0) * slope
+	var sheltered := shelter_weight_at(world_xz, direction)
+	return clampf(0.35 + windward * 0.65 - sheltered * 0.30, 0.05, 1.0)
 
 
 func clear_dynamic_snow() -> void:
@@ -488,6 +596,33 @@ func dynamic_depth_at(world: Vector3) -> float:
 
 func dynamic_tile_count() -> int:
 	return 0 if _dynamic_snow == null else _dynamic_snow.tile_count()
+
+
+func dynamic_total_depth_m() -> float:
+	return 0.0 if _dynamic_snow == null else _dynamic_snow.total_depth_m()
+
+
+func set_dynamic_focus(world: Vector3) -> void:
+	_dynamic_focus = Vector2(world.x, world.z)
+
+
+func set_wind_input(direction: Vector2, strength: float) -> void:
+	_wind_direction = direction.normalized() if direction.length_squared() > 0.000001 else Vector2.ZERO
+	_wind_strength = clampf(strength, 0.0, 1.0)
+
+
+func last_wind_transport_tile_work() -> int:
+	return _last_wind_transport_tile_work
+
+
+func shelter_weight_at(world_xz: Vector2, wind_direction: Vector2) -> float:
+	if _snow_profile == null:
+		return 0.0
+	var sheltered := 0.0
+	for shelter in _snow_profile.shelters:
+		if shelter != null:
+			sheltered = maxf(sheltered, shelter.lee_weight_at(world_xz, wind_direction))
+	return sheltered
 
 
 func _snap(point: Vector2) -> Vector2:
@@ -824,6 +959,9 @@ func follow(world: Vector3) -> bool:
 		return false
 	var centre := _origin + Vector2(EXTENT_M, EXTENT_M) * 0.5
 	var here := Vector2(world.x, world.z)
+	# Wind's bounded sparse window follows the same player fact as the terrain
+	# field, even on an ordinary step which does not need a terrain recentre.
+	_dynamic_focus = here
 	if here.distance_to(centre) <= RECENTER_SLACK_M:
 		return false
 	var target := _snap(here - Vector2(EXTENT_M, EXTENT_M) * 0.5)

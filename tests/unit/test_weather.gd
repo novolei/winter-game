@@ -336,6 +336,29 @@ func test_every_ground_depositing_weather_has_an_authored_snow_response() -> voi
 			event.snow_response.maximum_added_depth_m > 0.0,
 			"%s names a response with no bounded dynamic depth" % id
 		)
+		assert_true(
+			event.snow_response.wind_sample_distance_m > 0.0,
+			"%s names a response without a finite wind transport distance" % id
+		)
+
+
+## A wind-only event is allowed to carry a zero snowfall rate, but it still
+## needs an authored transport response so a veer moves finite existing snow
+## rather than becoming a special case in SnowField code.
+func test_every_authored_ground_response_has_a_finite_wind_contract() -> void:
+	_system.load_events_from_directory(EVENTS_DIRECTORY)
+	for id in THE_SIX:
+		var event: WeatherEventDefinition = _system.definition(id)
+		if event == null or event.snow_response == null:
+			continue
+		assert_true(
+			event.snow_response.wind_sample_distance_m > 0.0,
+			"%s has a ground response without a finite wind sample distance" % id
+		)
+		assert_true(
+			event.snow_response.wind_transport_m_per_second >= 0.0,
+			"%s has a negative wind transport rate" % id
+		)
 
 
 ## The event boundary is a semantic weather snapshot, not a direct SnowField
@@ -355,6 +378,8 @@ func test_weather_publishes_its_response_as_a_snow_input_snapshot() -> void:
 	if snapshot is Dictionary:
 		assert_eq(snapshot["response"], response)
 		assert_true(float(snapshot["snowfall"]) >= 0.0)
+		assert_true(snapshot.has("wind_direction"), "the snow input omitted wind direction")
+		assert_true(snapshot.has("wind_strength"), "the snow input omitted wind strength")
 
 
 ## THE TEST THIS TASK IS JUDGED ON. A tell carried only by `sound` announces

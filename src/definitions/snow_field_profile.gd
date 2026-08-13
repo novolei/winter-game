@@ -10,3 +10,7 @@ extends Resource
 @export var variation_octaves := 2
 @export var variation_gain := 0.45
 @export var protected_routes: Array[SnowRouteConstraint] = []
+## Sparse, authored wind breaks.  They represent large fixed world forms (a
+## building mass, tree stand or rock rise) rather than querying live scene
+## meshes per simulation tile.
+@export var shelters: Array[SnowShelterDefinition] = []

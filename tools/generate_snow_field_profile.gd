@@ -12,6 +12,7 @@ const OUTPUT_PATH := "res://data/snow/valley_profile.tres"
 const FarmsteadScript := preload("res://src/entities/farmstead.gd")
 const SnowFieldProfileScript := preload("res://src/definitions/snow_field_profile.gd")
 const SnowRouteConstraintScript := preload("res://src/definitions/snow_route_constraint.gd")
+const SnowShelterDefinitionScript := preload("res://src/definitions/snow_shelter_definition.gd")
 
 
 func _initialize() -> void:
@@ -37,6 +38,14 @@ func _initialize() -> void:
 		_route(_points(FarmsteadScript.TRAIL_TO_THE_EAST), 0.75, 1.25),
 		_route(_points(FarmsteadScript.TRAIL_TO_THE_WELL), 0.75, 1.25),
 	]
+	# These are fixed, large wind breaks authored as location facts rather than
+	# discovered by an every-tick scene query.  The corridor itself stays safe;
+	# the nearby lee pockets merely give optional open snow a readable drift.
+	profile.shelters = [
+		_shelter(Vector2(21.0, -13.0), 3.0, 10.0, 5.0, 0.75),
+		_shelter(Vector2(-18.0, -10.0), 2.0, 8.0, 4.0, 0.60),
+		_shelter(Vector2(30.0, 18.0), 2.5, 12.0, 5.0, 0.65),
+	]
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://data/snow"))
 	var error := ResourceSaver.save(profile, OUTPUT_PATH)
 	if error != OK:
@@ -53,6 +62,18 @@ func _route(points: PackedVector2Array, half_width_m: float, feather_m: float) -
 	route.half_width_m = half_width_m
 	route.feather_m = feather_m
 	return route
+
+
+func _shelter(
+	centre: Vector2, radius_m: float, lee_length_m: float, lee_half_width_m: float, strength: float
+) -> SnowShelterDefinition:
+	var shelter: SnowShelterDefinition = SnowShelterDefinitionScript.new()
+	shelter.centre = centre
+	shelter.radius_m = radius_m
+	shelter.lee_length_m = lee_length_m
+	shelter.lee_half_width_m = lee_half_width_m
+	shelter.shelter_strength = strength
+	return shelter
 
 
 func _points(world_points: Array) -> PackedVector2Array:

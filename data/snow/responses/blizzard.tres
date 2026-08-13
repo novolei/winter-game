@@ -6,3 +6,7 @@
 script = ExtResource("1_lgqx7")
 deposition_m_per_second = 8e-05
 maximum_added_depth_m = 0.18
+wind_transport_m_per_second = 3e-05
+wind_minimum_strength = 0.08
+wind_sample_distance_m = 3.75
+wind_shelter_deposition_gain = 1.35

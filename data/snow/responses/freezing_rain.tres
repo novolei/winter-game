@@ -6,3 +6,7 @@
 script = ExtResource("1_ipvbv")
 deposition_m_per_second = 6e-06
 maximum_added_depth_m = 0.04
+wind_transport_m_per_second = 2e-06
+wind_minimum_strength = 0.08
+wind_sample_distance_m = 3.75
+wind_shelter_deposition_gain = 1.35

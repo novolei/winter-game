@@ -839,9 +839,18 @@ func _drive() -> void:
 	# this system.  This can be published every weather frame because it changes
 	# only one scalar; SnowField's own fixed tick decides when sparse ground tiles
 	# are actually rewritten.
+	var wind_direction := Vector3.ZERO
+	var wind_strength := 0.0
+	if _wind != null:
+		if _wind.has_method("direction"):
+			wind_direction = _wind.direction()
+		if _wind.has_method("strength"):
+			wind_strength = float(_wind.strength())
 	_publish(EVENT_SNOW_INPUTS_CHANGED, {
 		"response": _event.snow_response if _event != null else null,
 		"snowfall": _applied_snow,
+		"wind_direction": wind_direction,
+		"wind_strength": wind_strength,
 	})
 
 

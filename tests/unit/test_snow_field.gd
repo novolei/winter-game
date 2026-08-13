@@ -6,6 +6,7 @@ extends TestCase
 ## are not things you can see by looking.
 
 const SnowFieldScript := preload("res://src/systems/snow_field.gd")
+const SnowShelterScript := preload("res://src/definitions/snow_shelter_definition.gd")
 
 var _field: SnowField
 
@@ -389,6 +390,159 @@ func test_a_real_footprint_event_compacts_deposited_dynamic_snow() -> void:
 	)
 	tree.root.remove_child(field)
 	field.free()
+
+
+## Wind transport is deliberately a transfer, not a global subtraction.  A
+## single exposed tile carries a finite amount only to the tile downwind of it;
+## reversing the wind reverses that destination without creating material.
+func test_wind_transport_reverses_with_the_wind_direction_and_conserves_mass() -> void:
+	var response := _wind_response()
+	var source_key := Vector2i(8, 8)
+	var source: Vector2 = _field._dynamic_snow.tile_centre(source_key)
+	_field._dynamic_snow.add_at(source, 0.10, response.maximum_added_depth_m)
+	_field.wind_transport_tile_budget = 1
+	_field.set_dynamic_focus(Vector3(source.x, 0.0, source.y))
+	_field.set_snow_response(response, 0.0)
+	_field.set_wind_input(Vector2.RIGHT, 1.0)
+	var east_before: float = _field.dynamic_total_depth_m()
+	_field.advance_dynamic(_field.dynamic_tick_seconds)
+	var east_destination := source + Vector2.RIGHT * response.wind_sample_distance_m
+	assert_true(
+		_field.dynamic_depth_at(Vector3(east_destination.x, 0.0, east_destination.y)) > 0.0,
+		"an east wind did not deposit finite snow in the eastward tile"
+	)
+	assert_almost_eq(_field.dynamic_total_depth_m(), east_before, 0.000001,
+		"an in-window wind transfer created or destroyed snow")
+
+	_field.clear_dynamic_snow()
+	_field._dynamic_snow.add_at(source, 0.10, response.maximum_added_depth_m)
+	_field.set_wind_input(Vector2.LEFT, 1.0)
+	_field.advance_dynamic(_field.dynamic_tick_seconds)
+	var west_destination := source + Vector2.LEFT * response.wind_sample_distance_m
+	assert_true(
+		_field.dynamic_depth_at(Vector3(west_destination.x, 0.0, west_destination.y)) > 0.0,
+		"a west wind did not reverse the downwind destination"
+	)
+
+
+## A lee behind an authored shelter is a physical preference, not an arbitrary
+## snow bonus: the same exposed source gives more of its finite material to the
+## sheltered downwind pocket than to equally distant open snow.
+func test_wind_transport_prefers_a_sheltered_lee_over_open_downwind_snow() -> void:
+	var response := _wind_response()
+	var shelter: SnowShelterDefinition = SnowShelterScript.new()
+	shelter.centre = Vector2(15.0, 15.0)
+	shelter.radius_m = 1.0
+	shelter.lee_length_m = 8.0
+	shelter.lee_half_width_m = 3.0
+	shelter.shelter_strength = 1.0
+	_field._snow_profile.shelters = [shelter]
+	var source_key := _field._dynamic_snow.tile_key(Vector2(11.25, 15.0))
+	var source := _field._dynamic_snow.tile_centre(source_key)
+	_field._dynamic_snow.add_at(source, 0.10, response.maximum_added_depth_m)
+	_field.wind_transport_tile_budget = 1
+	_field.set_dynamic_focus(Vector3(source.x, 0.0, source.y))
+	_field.set_snow_response(response, 0.0)
+	_field.set_wind_input(Vector2.RIGHT, 1.0)
+	var lee := source + Vector2.RIGHT * response.wind_sample_distance_m
+	assert_true(
+		_field.shelter_weight_at(lee, Vector2.RIGHT) > 0.5,
+		"test setup did not place the receiver in the shelter's lee"
+	)
+	_field.advance_dynamic(_field.dynamic_tick_seconds)
+	var sheltered_depth := _field.dynamic_depth_at(Vector3(lee.x, 0.0, lee.y))
+	var open_field: SnowField = SnowFieldScript.new()
+	open_field.build_at(Vector3.ZERO)
+	open_field._snow_profile.shelters = []
+	open_field._dynamic_snow.add_at(source, 0.10, response.maximum_added_depth_m)
+	open_field.wind_transport_tile_budget = 1
+	open_field.set_dynamic_focus(Vector3(source.x, 0.0, source.y))
+	open_field.set_snow_response(response, 0.0)
+	open_field.set_wind_input(Vector2.RIGHT, 1.0)
+	open_field.advance_dynamic(open_field.dynamic_tick_seconds)
+	var open_depth := open_field.dynamic_depth_at(Vector3(lee.x, 0.0, lee.y))
+	open_field.free()
+	assert_true(
+		sheltered_depth > open_depth,
+		"a sheltered lee received %.6f m, no more than the equally distant open snow %.6f m" % [
+			sheltered_depth, open_depth,
+		]
+	)
+
+
+## The response cap bounds new deposits, not material already deposited by a
+## stronger earlier front.  A lower-cap wind-shift event must transfer it, not
+## erase the difference while staging a source delta.
+func test_wind_transport_keeps_mass_when_the_next_response_has_a_lower_cap() -> void:
+	var deep_response := _wind_response()
+	deep_response.maximum_added_depth_m = 0.20
+	var shift_response := _wind_response()
+	shift_response.maximum_added_depth_m = 0.12
+	var key := Vector2i(8, 8)
+	var source := _field._dynamic_snow.tile_centre(key)
+	_field._dynamic_snow.add_at(source, 0.18, deep_response.maximum_added_depth_m)
+	_field.wind_transport_tile_budget = 1
+	_field.set_dynamic_focus(Vector3(source.x, 0.0, source.y))
+	_field.set_snow_response(shift_response, 0.0)
+	_field.set_wind_input(Vector2.RIGHT, 1.0)
+	var before := _field.dynamic_total_depth_m()
+	_field.advance_dynamic(_field.dynamic_tick_seconds)
+	assert_almost_eq(_field.dynamic_total_depth_m(), before, 0.000001,
+		"a lower-cap response destroyed snow deposited by the earlier storm")
+
+
+## The authored Day-1 corridors are hard constraints for wind as well as for
+## snowfall.  A route cannot become unsafe just because a gale turned.
+func test_wind_transport_does_not_scour_or_deposit_on_a_protected_route() -> void:
+	var response := _wind_response()
+	var protected_key := _field._dynamic_snow.tile_key(Vector2.ZERO)
+	var protected_centre := _field._dynamic_snow.tile_centre(protected_key)
+	_field._dynamic_snow.add_at(protected_centre, 0.10, response.maximum_added_depth_m)
+	_field.wind_transport_tile_budget = 1
+	_field.set_dynamic_focus(Vector3(protected_centre.x, 0.0, protected_centre.y))
+	_field.set_snow_response(response, 0.0)
+	_field.set_wind_input(Vector2.RIGHT, 1.0)
+	_field.advance_dynamic(_field.dynamic_tick_seconds)
+	assert_almost_eq(
+		_field.dynamic_depth_at(Vector3(protected_centre.x, 0.0, protected_centre.y)), 0.10, 0.000001,
+		"wind modified a protected Day-1 route"
+	)
+
+
+## Sparse means bounded work.  A long-lived world may hold many dynamic tiles,
+## but one fixed wind tick must inspect only its local budget, never every tile
+## ever touched elsewhere in the valley.
+func test_wind_transport_work_is_bounded_by_the_local_tile_budget() -> void:
+	var response := _wind_response()
+	_field.wind_transport_tile_budget = 9
+	for x in range(-15, 16):
+		for y in range(-15, 16):
+			_field._dynamic_snow.add_at(Vector2(float(x) * 4.0, float(y) * 4.0), 0.02,
+				response.maximum_added_depth_m)
+	_field.set_dynamic_focus(Vector3.ZERO)
+	_field.set_snow_response(response, 0.0)
+	_field.set_wind_input(Vector2.RIGHT, 1.0)
+	_field.advance_dynamic(_field.dynamic_tick_seconds)
+	assert_true(
+		_field.last_wind_transport_tile_work() <= _field.wind_transport_tile_budget,
+		"wind inspected %d tiles with a budget of %d" % [
+			_field.last_wind_transport_tile_work(), _field.wind_transport_tile_budget,
+		]
+	)
+	assert_true(
+		_field.last_wind_transport_tile_work() < _field.dynamic_tile_count(),
+		"wind transport walked every sparse tile instead of the local activity window"
+	)
+
+
+func _wind_response() -> SnowResponseDefinition:
+	var response: SnowResponseDefinition = SnowResponseDefinition.new()
+	response.maximum_added_depth_m = 0.20
+	response.wind_transport_m_per_second = 0.03
+	response.wind_minimum_strength = 0.05
+	response.wind_sample_distance_m = 3.75
+	response.wind_shelter_deposition_gain = 1.5
+	return response
 
 
 func _authored_safe_routes() -> Array:

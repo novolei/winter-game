@@ -1,12 +1,11 @@
 [gd_resource type="Resource" script_class="SnowResponseDefinition" format=3]
 
-[ext_resource type="Script" path="res://src/definitions/snow_response_definition.gd" id="1_33pid"]
+[ext_resource type="Script" path="res://src/definitions/snow_response_definition.gd" id="1_48dbl"]
 
 [resource]
-script = ExtResource("1_33pid")
-deposition_m_per_second = 3e-05
+script = ExtResource("1_48dbl")
 maximum_added_depth_m = 0.12
-wind_transport_m_per_second = 6e-06
+wind_transport_m_per_second = 1.8e-05
 wind_minimum_strength = 0.08
 wind_sample_distance_m = 3.75
 wind_shelter_deposition_gain = 1.35
