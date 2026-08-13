@@ -9,6 +9,9 @@ extends CanvasLayer
 
 const TOKENS_PATH := "res://data/ui/tokens.tres"
 const SETTINGS_PATH := "res://data/ui/accessibility_settings.tres"
+const STATE_MENU := &"menu"
+const STATE_SETTINGS := &"settings"
+const STATE_CONFIRM := &"confirm"
 const LAYER_ORDER := 90
 const CONFIRM_GUARD_MSEC := 180
 const QUIT_SOUND_SECONDS := 0.12
@@ -64,8 +67,12 @@ var _choice_lines: Dictionary = {}
 var _choice_line_widths: Dictionary = {}
 var _settings_catalog: AccessibilityCatalog = null
 var _settings_row_buttons: Array[Button] = []
+# Parallel to _settings_row_buttons: the entry each row adjusts. Rows are built
+# from the catalog but must never re-index it -- null catalog slots are skipped
+# at build time, so a row index is not an entries index.
+var _settings_row_settings: Array[AccessibilitySetting] = []
 var _settings_focus_index := 0
-var _state: StringName = &"menu"
+var _state: StringName = STATE_MENU
 var _ui_layer = null
 
 var _quit_action: Callable
@@ -289,6 +296,7 @@ func _build_settings_rows() -> void:
 		row.focus_entered.connect(_set_settings_focus_index.bind(index))
 		_settings_panel.add_child(row)
 		_settings_row_buttons.append(row)
+		_settings_row_settings.append(entry)
 
 
 func _build_hint() -> void:
@@ -423,7 +431,7 @@ func handle_cancel() -> void:
 
 
 func open_settings() -> void:
-	if not _is_open or _quit_accepted or _state != &"menu" or _settings_panel == null:
+	if not _is_open or _quit_accepted or _state != STATE_MENU or _settings_panel == null:
 		return
 	_play(&"ui.confirm")
 	_show_settings(true, is_inside_tree())
@@ -437,7 +445,7 @@ func close_settings() -> void:
 
 
 func request_exit() -> void:
-	if not _is_open or _quit_accepted or _state != &"menu":
+	if not _is_open or _quit_accepted or _state != STATE_MENU:
 		return
 	_play(&"ui.confirm")
 	_confirmation_started_msec = Time.get_ticks_msec()
@@ -555,11 +563,11 @@ func is_open() -> bool:
 
 
 func is_confirming() -> bool:
-	return _state == &"confirm"
+	return _state == STATE_CONFIRM
 
 
 func is_adjusting() -> bool:
-	return _state == &"settings"
+	return _state == STATE_SETTINGS
 
 
 func state() -> StringName:
@@ -591,6 +599,8 @@ func settings_row_buttons() -> Array[Button]:
 
 
 func adjust_focused(direction: int) -> bool:
+	if direction == 0:
+		return false
 	return _adjust_setting_at(_settings_focus_index, direction)
 
 
@@ -649,7 +659,7 @@ func safe_edge(viewport_size: Vector2) -> float:
 
 
 func _show_confirmation(show: bool, animate: bool) -> void:
-	_state = &"confirm" if show else &"menu"
+	_state = STATE_CONFIRM if show else STATE_MENU
 	if _menu_panel != null:
 		_menu_panel.visible = not show
 	if _settings_panel != null:
@@ -678,7 +688,7 @@ func _show_confirmation(show: bool, animate: bool) -> void:
 
 
 func _show_settings(show: bool, animate: bool) -> void:
-	_state = &"settings" if show else &"menu"
+	_state = STATE_SETTINGS if show else STATE_MENU
 	if _menu_panel != null:
 		_menu_panel.visible = not show
 	if _settings_panel != null:
@@ -720,11 +730,11 @@ func _set_settings_focus_index(index: int) -> void:
 
 
 func _adjust_setting_at(index: int, direction: int) -> bool:
-	if not is_adjusting() or _settings_catalog == null:
+	if not is_adjusting() or direction == 0:
 		return false
-	if index < 0 or index >= _settings_row_buttons.size():
+	if index < 0 or index >= _settings_row_settings.size():
 		return false
-	var entry := _settings_catalog.entries[index]
+	var entry := _settings_row_settings[index]
 	var old_value := SettingsStore.value(entry.id, entry.default_value)
 	var new_value := entry.stepped(old_value, direction)
 	if is_equal_approx(old_value, new_value):
@@ -759,7 +769,7 @@ func _resolve_ui_layer() -> void:
 
 func _settings_row_text(entry: AccessibilitySetting) -> String:
 	var value := SettingsStore.value(entry.id, entry.default_value)
-	return "%s　　%s" % [entry.label, entry.format_value(value)]
+	return "%s　%s" % [entry.label, entry.format_value(value)]
 
 
 func _animate_open() -> void:

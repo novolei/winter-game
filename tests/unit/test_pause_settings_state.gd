@@ -60,6 +60,8 @@ func test_adjusting_writes_through_and_clamps() -> void:
 	_menu.toggle()
 	_menu.open_settings()
 	# 焦点默认在第一行（prompt_hold，默认 1.0）
+	assert_false(_menu.adjust_focused(0), "a zero direction is a no-op, not a boundary")
+	assert_almost_eq(StoreScript.value(&"prompt_hold", 1.0), 1.0)
 	assert_true(_menu.adjust_focused(1))
 	assert_almost_eq(StoreScript.value(&"prompt_hold", 1.0), 1.25)
 	for i in range(20):
@@ -73,3 +75,5 @@ func test_row_text_reflects_the_stored_value() -> void:
 	_menu.adjust_focused(1)
 	var rows: Array = _menu.settings_row_buttons()
 	assert_true((rows[0] as Button).text.contains("1.25×"))
+	# One ideographic space between label and value, per the spec.
+	assert_eq((rows[0] as Button).text, "提示停留时长　1.25×")
