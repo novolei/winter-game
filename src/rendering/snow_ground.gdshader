@@ -179,31 +179,6 @@ uniform float footprint_shadow_wall_tone = 0.48;
 uniform float footprint_lip_start = 0.45;
 uniform float footprint_lip_full = 0.82;
 uniform float footprint_lip_tone_release = 0.72;
-// Mask value alone cannot distinguish the pushed shoulder of a fresh print
-// from the last, shallow core left as subtractive fill and slump erase it. The
-// former owns a spatial wall; the latter is flat. Gate the lip with the
-// four-neighbour track slope fragment() already reconstructed, so old cores do
-// not grow a false new rim while the real outer shoulder remains. These are
-// height-gradient magnitudes (metres per metre), not another TrackMask sample.
-uniform float footprint_lip_edge_start = 0.002;
-uniform float footprint_lip_edge_full = 0.010;
-
-// The signed-off pale-day cavity has to survive a tree shadow, but applying the
-// same ink and wall strength unchanged at every LightingPreset extreme makes a
-// low-exposure night read as a black hole and a soft whiteout read as a decal.
-// The ground already receives the preset's continuously blended cel threshold
-// and softness, so use those existing inputs instead of adding a preset id,
-// branch, texture fetch or upload.  Threshold isolates deep night from dusk;
-// softness isolates whiteout from sunrise.  These are uniforms so art can tune
-// the response without changing the light-pass structure.
-uniform float footprint_night_threshold_start = 0.19;
-uniform float footprint_night_threshold_full = 0.26;
-uniform float footprint_night_tone_scale = 0.55;
-uniform float footprint_night_wall_scale = 0.82;
-uniform float footprint_whiteout_softness_start = 0.16;
-uniform float footprint_whiteout_softness_full = 0.28;
-uniform float footprint_whiteout_tone_scale = 0.44;
-uniform float footprint_whiteout_wall_scale = 0.35;
 
 // The two scales the normal is rebuilt at. The wide one skips over the height
 // field's own 23 cm texel grid, which at this grazing sun would otherwise lay
@@ -591,11 +566,8 @@ void fragment() {
 	);
 	float skirt = clamp(centre_track / track_rim_extent, 0.0, 1.0);
 	float rim = 4.0 * skirt * (1.0 - skirt);
-	float footprint_lip_edge = smoothstep(
-		footprint_lip_edge_start, footprint_lip_edge_full, length(track_slope)
-	);
 	v_track_lip = smoothstep(footprint_lip_start, footprint_lip_full, rim)
-		* (1.0 - v_track_cavity) * footprint_lip_edge;
+		* (1.0 - v_track_cavity);
 	float footprint_presence = smoothstep(
 		0.01, max(footprint_cavity_start, 0.011), centre_track
 	);
@@ -616,28 +588,6 @@ void fragment() {
 
 void light() {
 	float lambert = clamp(dot(normalize(NORMAL), normalize(LIGHT)), 0.0, 1.0);
-	// Derive a cross-fade-safe look calibration from the same two authored
-	// lighting controls that define the cel response. Pale day and its cast
-	// shadows resolve to exactly 1.0, preserving the approved result.
-	float footprint_whiteout = smoothstep(
-		footprint_whiteout_softness_start,
-		footprint_whiteout_softness_full,
-		band_softness
-	);
-	float footprint_night = smoothstep(
-		footprint_night_threshold_start,
-		footprint_night_threshold_full,
-		band_threshold
-	) * (1.0 - footprint_whiteout);
-	float footprint_tone_scale = mix(1.0, footprint_night_tone_scale, footprint_night);
-	footprint_tone_scale = mix(
-		footprint_tone_scale, footprint_whiteout_tone_scale, footprint_whiteout
-	);
-	float footprint_wall_scale = mix(1.0, footprint_night_wall_scale, footprint_night);
-	footprint_wall_scale = mix(
-		footprint_wall_scale, footprint_whiteout_wall_scale, footprint_whiteout
-	);
-	float calibrated_wall_gain = mix(1.0, v_track_wall_gain, footprint_wall_scale);
 	// Reconstruct the broad surface response from the varying world position so
 	// the already-computed footprint detail can be amplified around it. A cavity
 	// needs one wall to turn toward the raking sun and the other away; without
@@ -646,11 +596,7 @@ void light() {
 		dot(normalize(v_broad_normal), normalize(LIGHT)), 0.0, 1.0
 	);
 	float detail_delta = lambert - broad_lambert;
-	float amplified_footprint_detail = detail_delta * v_track_wall_gain;
-	float calibrated_footprint_detail = mix(
-		detail_delta, amplified_footprint_detail, footprint_wall_scale
-	);
-	lambert = clamp(broad_lambert + calibrated_footprint_detail, 0.0, 1.0);
+	lambert = clamp(broad_lambert + detail_delta * v_track_wall_gain, 0.0, 1.0);
 	// ATTENUATION carries the directional light's shadow term, already
 	// softened by the shadow filter, so folding it in here is what makes the
 	// long cast shadows land in the dark band with a soft edge.
@@ -684,18 +630,11 @@ void light() {
 	// shading detail is a pixel wide. At full strength it went back to being a
 	// sticker on the snow.
 	float lip = v_track_lip;
-	float t = max(
-		v_track_value * track_tint,
-		cavity * footprint_cavity_tone * footprint_tone_scale
-	);
+	float t = max(v_track_value * track_tint, cavity * footprint_cavity_tone);
 	t *= 1.0 - lip * footprint_lip_tone_release;
-	// ATTENUATION also contains distance falloff for Omni/Spot lights. Treating
-	// that falloff as a cast shadow would paint a false directional wall around
-	// every stove or beacon, so only the directional sun may use this recovery.
-	float directional_light = LIGHT_IS_DIRECTIONAL ? 1.0 : 0.0;
-	float cast_shadow = (1.0 - clamp(ATTENUATION, 0.0, 1.0)) * directional_light;
+	float cast_shadow = 1.0 - clamp(ATTENUATION, 0.0, 1.0);
 	float shadow_wall = detail_delta * footprint_shadow_wall_tone
-		* footprint_wall_scale * calibrated_wall_gain * cast_shadow;
+		* v_track_wall_gain * cast_shadow;
 	// Positive detail_delta faces the hidden sun and releases track shade;
 	// negative faces away and deepens it. The centre remains a pressed floor,
 	// and the lip remains snow, so this adds shape rather than a flat dark decal.
