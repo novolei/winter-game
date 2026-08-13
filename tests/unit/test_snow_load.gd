@@ -110,6 +110,23 @@ func _walk(legs: Node3D, depth: float, steps: int) -> void:
 		legs.step(Vector3(float(index), 0.0, 0.0), depth, Vector2(1.0, 0.0))
 
 
+## The world accepts every named track, but this visual belongs to the player.
+## Otherwise a wolf passing close by would put snow on the player's legs.
+func test_only_the_player_s_track_changes_the_player_s_snow_load() -> void:
+	var legs := _fresh()
+	var footprint := {"position": Vector3.ZERO, "depth": DEEP, "forward": Vector2.RIGHT}
+	var wolf_footprint := footprint.duplicate()
+	wolf_footprint["subject"] = &"wolf"
+	legs._on_footprint(wolf_footprint)
+	assert_almost_eq(legs.carried(), 0.0, 0.0001, "a wolf track loaded the player's legs")
+
+	var player_footprint := footprint.duplicate()
+	player_footprint["subject"] = &"player"
+	legs._on_footprint(player_footprint)
+	assert_true(legs.carried() > 0.0, "the player's own track did not reach the player effect")
+	_free(legs)
+
+
 ## How long a man standing perfectly still takes to reach a given settled load,
 ## in seconds. Ticked a second at a time because the answer is quoted in seconds
 ## and because the rule is framerate-correct, so the step size cannot change it.

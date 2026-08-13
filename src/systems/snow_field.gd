@@ -46,7 +46,7 @@ const CELL_M := EXTENT_M / float(RESOLUTION)
 ## covered direction is still 52 m -- further than the camera can see.
 const RECENTER_SLACK_M := 8.0
 
-const FOOTPRINT_EVENT := &"player.footprint"
+const FOOTPRINT_EVENT := &"track.footprint"
 
 ## A building announcing the ground it stands on. Published by whatever knows
 ## where a building's rooms are -- in practice src/entities/interior/
@@ -824,4 +824,7 @@ func _on_footprint(payload) -> void:
 	if not (payload is Dictionary):
 		return
 	var data: Dictionary = payload
+	var subject = data.get("subject", &"")
+	if not (subject is StringName or subject is String) or StringName(subject) == &"":
+		return
 	pack_at(data.get("position", Vector3.ZERO), data.get("pack_radius", 0.35), data.get("pack_amount", 0.45))

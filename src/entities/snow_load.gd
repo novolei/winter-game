@@ -44,9 +44,10 @@ extends Node3D
 ## ---------------------------------------------------------------------------
 ## The crust is a material parameter on one particular mesh, so ONE instance can
 ## only ever whiten ONE character's legs. An autoload is one instance. That is
-## the whole argument: this effect subscribes to `player.footprint` rather than
-## calling into the player precisely so the bear in Wave 4 and the hungry man in
-## Wave 5 get leg snow for free, and a single global node cannot deliver them.
+## the whole argument: this effect subscribes to the shared `track.footprint`
+## event rather than calling into the controller. It filters that shared stream
+## to `subject = player`, so another creature's nearby track cannot animate the
+## player's legs.
 ##
 ## So it is a node under the body it belongs to. It finds its subject by looking
 ## UP -- its nearest Node3D ancestor is the walker it dresses -- which means
@@ -148,12 +149,11 @@ extends Node3D
 ## maps nor the x-ray ghost already in his `next_pass` is disturbed.
 ##
 ## ---------------------------------------------------------------------------
-## IT KNOWS ABOUT FOOTFALLS, NOT ABOUT THE PLAYER
+## IT KNOWS ABOUT FOOTFALLS, NOT A PLAYER CONTROLLER
 ## ---------------------------------------------------------------------------
-## Everything above is driven by `player.footprint` off the EventBus, which
-## `PlayerController` emits deliberately so that nothing needs to know about the
-## player -- its own comment says the bear will emit the same event in Wave 4.
-## So this file makes no edits to the player and contains no reference to him.
+## Everything above is driven by `track.footprint` off the EventBus. The
+## payload names its subject; this player-owned visual accepts only `player`.
+## So this file makes no edits to PlayerController or any future creature.
 ##
 ## The depth that loads a leg is `SnowField.deep_depth_m`, read off the field
 ## rather than restated here. It is the same 0.42 m that already means "reduced
@@ -162,7 +162,8 @@ extends Node3D
 
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
 const CRUST_SHADER_PATH := "res://assets/shaders/snow_load.gdshader"
-const FOOTPRINT_EVENT := &"player.footprint"
+const FOOTPRINT_EVENT := &"track.footprint"
+const PLAYER_SUBJECT := &"player"
 
 ## The events this listens to for warmth, all of them already published by
 ## somebody else. Nothing here reaches into a farmhouse or a stove: a building
@@ -1291,6 +1292,8 @@ func _on_footprint(payload) -> void:
 	if not (payload is Dictionary):
 		return
 	var data: Dictionary = payload
+	if StringName(data.get("subject", &"")) != PLAYER_SUBJECT:
+		return
 	var spot = data.get("position", null)
 	if not (spot is Vector3):
 		return

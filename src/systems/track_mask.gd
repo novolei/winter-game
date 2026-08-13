@@ -116,7 +116,11 @@ const STATIC_CELL_M := STATIC_EXTENT_M / float(STATIC_RESOLUTION)
 ## are finer: a stale edge here shows up as tracks that stop dead.
 const RECENTER_SLACK_M := 3.0
 
-const FOOTPRINT_EVENT := &"player.footprint"
+## Every creature writes the same surface. The subject says whose trail it is;
+## consumers that only care about the snow deliberately ignore it, while a
+## future perception system can follow a particular trail without inventing a
+## second event and a second mask.
+const FOOTPRINT_EVENT := &"track.footprint"
 const FURROW_EVENT := &"player.furrow"
 
 ## ---------------------------------------------------------------------------
@@ -1282,6 +1286,9 @@ func _on_footprint(payload) -> void:
 	if not (payload is Dictionary):
 		return
 	var data: Dictionary = payload
+	var subject = data.get("subject", &"")
+	if not (subject is StringName or subject is String) or StringName(subject) == &"":
+		return
 	stamp(
 		data.get("position", Vector3.ZERO),
 		data.get("radius", 0.28),

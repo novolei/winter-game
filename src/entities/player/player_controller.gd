@@ -33,7 +33,8 @@ const STEP_SOUND_PATHS := [
 	"res://assets/audio/foley/footstep_snow_01.wav",
 	"res://assets/audio/foley/footstep_snow_02.wav",
 ]
-const FOOTPRINT_EVENT := &"player.footprint"
+const FOOTPRINT_EVENT := &"track.footprint"
+const PLAYER_SUBJECT := &"player"
 const FURROW_EVENT := &"player.furrow"
 
 ## The four takes this slice uses, out of the twenty-one in the merged library.
@@ -2331,6 +2332,8 @@ func _on_footprint(payload) -> void:
 	if not (payload is Dictionary):
 		return
 	var data: Dictionary = payload
+	if StringName(data.get("subject", &"")) != PLAYER_SUBJECT:
+		return
 	_play_step(float(data.get("depth_ratio", 0.0)))
 
 
@@ -2559,6 +2562,7 @@ func _place_print() -> void:
 			downhill_scale = cos_slope * (1.0 + print_downhill_stretch * steepness)
 
 	var payload := {
+		"subject": PLAYER_SUBJECT,
 		"position": spot,
 		"depth": depth,
 		"depth_ratio": depth_ratio,

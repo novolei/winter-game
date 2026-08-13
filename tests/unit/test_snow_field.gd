@@ -108,6 +108,30 @@ func test_treading_the_snow_makes_it_shallower() -> void:
 	assert_true(after < before, "packing left the depth at %f, was %f" % [after, before])
 
 
+## The field responds to the track, not to the player. `subject` is mandatory
+## so every downstream consumer can tell who made it, but no species list is
+## allowed here: adding a new walker is a payload/data change, not a ground-code
+## change.
+func test_a_named_non_player_track_packs_the_snow_and_an_unnamed_one_does_not() -> void:
+	var wolf_spot := _snowy_spot()
+	var wolf_before: float = _field.packed_at(wolf_spot)
+	_field._on_footprint({
+		"subject": &"wolf", "position": wolf_spot, "pack_radius": 0.4, "pack_amount": 0.5,
+	})
+	assert_true(
+		_field.packed_at(wolf_spot) > wolf_before,
+		"a named non-player track did not pack the field"
+	)
+
+	var unnamed_spot := wolf_spot + Vector3(4.0, 0.0, 0.0)
+	var unnamed_before: float = _field.packed_at(unnamed_spot)
+	_field._on_footprint({"position": unnamed_spot, "pack_radius": 0.4, "pack_amount": 0.5})
+	assert_almost_eq(
+		_field.packed_at(unnamed_spot), unnamed_before, 0.001,
+		"an unnamed footprint must be rejected before it changes the field"
+	)
+
+
 ## The claim the whole terrain model rests on: the wind strips the crests and
 ## fills the hollows, so depth is a function of ground height rather than an
 ## independent noise. If this inverts, you get deep snow piled on the ridges and

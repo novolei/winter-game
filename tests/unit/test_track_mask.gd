@@ -539,8 +539,8 @@ func test_a_furrow_event_ploughs_and_a_half_specified_one_does_not() -> void:
 ## cannot show, because "no groove here" and "a groove too faint to see" look
 ## identical.
 func test_two_footprints_alone_leave_the_snow_between_untouched() -> void:
-	_mask._on_footprint({"position": Vector3.ZERO, "radius": 0.28, "strength": 0.9})
-	_mask._on_footprint({"position": Vector3(0.72, 0.0, 0.0), "radius": 0.28, "strength": 0.9})
+	_mask._on_footprint({"subject": &"player", "position": Vector3.ZERO, "radius": 0.28, "strength": 0.9})
+	_mask._on_footprint({"subject": &"player", "position": Vector3(0.72, 0.0, 0.0), "radius": 0.28, "strength": 0.9})
 	assert_almost_eq(_mask.value_at(Vector3(0.36, 0.0, 0.0)), 0.0, 0.01)
 
 
@@ -567,11 +567,17 @@ func test_a_furrow_fills_in_with_the_weather_like_a_print() -> void:
 ## An event carrying a payload this system does not understand must be ignored,
 ## not crash the dispatch loop for every other subscriber.
 func test_a_footprint_event_stamps_and_a_junk_payload_does_not() -> void:
-	_mask._on_footprint({"position": Vector3(2.0, 0.0, 3.0), "radius": 0.3, "strength": 0.7})
+	# The mask does not know the species that pressed the snow. A future wolf,
+	# bear, or any other named walker writes through this one event unchanged.
+	_mask._on_footprint({"subject": &"wolf", "position": Vector3(2.0, 0.0, 3.0), "radius": 0.3, "strength": 0.7})
 	assert_almost_eq(_mask.value_at(Vector3(2.0, 0.0, 3.0)), 0.7, 0.02)
+	_mask._on_footprint({"position": Vector3(-2.0, 0.0, 3.0), "radius": 0.3, "strength": 0.7})
+	_mask._on_footprint({"subject": &"", "position": Vector3(-3.0, 0.0, 3.0), "radius": 0.3, "strength": 0.7})
 	_mask._on_footprint(null)
 	_mask._on_footprint("not a footprint")
 	assert_almost_eq(_mask.value_at(Vector3(2.0, 0.0, 3.0)), 0.7, 0.02)
+	assert_almost_eq(_mask.value_at(Vector3(-2.0, 0.0, 3.0)), 0.0, 0.001)
+	assert_almost_eq(_mask.value_at(Vector3(-3.0, 0.0, 3.0)), 0.0, 0.001)
 
 
 ## ---------------------------------------------------------------------------
