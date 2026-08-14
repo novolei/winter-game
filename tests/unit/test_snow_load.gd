@@ -1466,6 +1466,22 @@ class AlreadyBurning extends Node3D:
 		return 1.0
 
 
+class GroupFire extends Node3D:
+	var lit := true
+	var reach := 4.0
+
+	func is_lit() -> bool:
+		return lit
+
+	func fire_position() -> Vector3:
+		return global_position if is_inside_tree() else position
+
+	func warmth_at(point: Vector3) -> float:
+		if not lit:
+			return 0.0
+		return 1.0 - clampf(fire_position().distance_to(point) / reach, 0.0, 1.0)
+
+
 class AlreadyInside extends Node:
 	var who: Node = null
 
@@ -1521,6 +1537,34 @@ func test_he_learns_about_a_fire_that_was_already_lit_when_he_arrived() -> void:
 	legs._process(0.016)
 	assert_eq(legs._fires.size(), 1, "the world was asked twice and the fire counted twice")
 	world.free()
+
+
+func test_the_shared_fire_group_thaws_him_without_a_stove_specific_event() -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	assert_not_null(tree)
+	if tree == null:
+		return
+	var world := Node3D.new()
+	tree.root.add_child(world)
+	var fire := GroupFire.new()
+	fire.position = Vector3(1.0, 0.0, 0.0)
+	world.add_child(fire)
+	Fires.join(fire)
+	var subject := Node3D.new()
+	world.add_child(subject)
+	var legs: Node3D = SnowLoadScript.new()
+	var field: SnowField = SnowFieldScript.new()
+	legs.set_snow_field(field)
+	legs.set_subject(subject)
+	subject.add_child(legs)
+	assert_true(legs.is_thawing(),
+		"a discoverable fire warms every other system but the snow carried on the player")
+	fire.position = Vector3(40.0, 0.0, 0.0)
+	assert_false(legs.is_thawing(), "a far fire still melts the player's carried snow")
+	Fires.leave(fire)
+	world.get_parent().remove_child(world)
+	world.free()
+	field.free()
 
 
 ## The same shape for a building, and the same fix. Also pins that the query is

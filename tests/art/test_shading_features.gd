@@ -140,6 +140,11 @@ func _collect_banned_feature_offenders(roots: Array[String]) -> PackedStringArra
 			# below that proves the exemption is load-bearing.
 			if AssetScannerScript.is_surface_rule_exempt(path):
 				continue
+			# The named native Synty low-poly composites keep one albedo map,
+			# validated by test_synty_native_materials. This stays an exact-model
+			# allowance rather than weakening Rule 8 for the props folder.
+			if AssetScannerScript.preserves_native_albedo(path):
+				continue
 			offenders.append_array(_offenders_in(path, AssetProbeScript.probe(path)))
 	return offenders
 

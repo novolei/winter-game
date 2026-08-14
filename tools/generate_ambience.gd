@@ -54,8 +54,8 @@ extends SceneTree
 ## method and for the first finding, which is that two of the supplied filenames
 ## are the wrong way round.
 ##
-##   wind_low    16.0 s   44100 Hz   from wind_mid.mp3   (71% under 250 Hz)
-##   wind_mid     3.6 s   48000 Hz   from wind_low.wav   (80% in 250-800 Hz)
+##   wind_low    60.0 s   48000 Hz   from Freesound 261226, later passage (CC0)
+##   wind_mid    60.0 s   48000 Hz   from Freesound 261226, early passage (CC0)
 ##   wind_high    4.6 s   22050 Hz   from wind_high.wav  (86% in 0.8-2.5 kHz)
 ##   snow_fall    5.4 s   44100 Hz   from snow_fall.mp3  (high-passed to patter)
 ##   fire        12.0 s   44100 Hz   from fire.mp3       (unfiltered)
@@ -72,8 +72,8 @@ extends SceneTree
 ## LOUDNESS, and on this set that difference decides whether the mix works:
 ##
 ##   layer       loudness at equal RMS    correction owed
-##   wind_low         -22.3 LUFS               +2.1 dB
-##   wind_mid         -20.7 LUFS               +0.5 dB
+##   wind_low         -20.8 LUFS               +0.2 dB
+##   wind_mid         -20.6 LUFS               +0.0 dB
 ##   wind_high        -20.2 LUFS               +0.0 dB
 ##   snow_fall        -22.8 LUFS               +2.6 dB
 ##   fire             -37.1 LUFS              +16.9 dB
@@ -82,7 +82,7 @@ extends SceneTree
 ## peak hits the ceiling long before its average reaches the others'. That is
 ## what a fire is, so it is corrected here rather than compressed there.
 ##
-## So each `gain_db` below is: a BASE of -14 dB, which is where the bed sits
+## So each `gain_db` below starts from a BASE near -14 dB, which is where the bed sits
 ## under the footsteps and the breath; plus a RELATIVE design target against
 ## `wind_low`; plus that layer's measured correction. Each is written out at its
 ## row so a later ear can move one number and know what it was.
@@ -104,15 +104,20 @@ func _initialize() -> void:
 	low.source = AmbienceLayer.Source.WIND
 	low.enters_at = 0.09
 	low.full_at = 0.30
-	# -14 base + 0 relative + 0.0 correction. The reference the other four are
-	# set against, and the level the whole bed is judged at.
-	low.gain_db = -14.0
+	# The replacement take is 1.5 LU louder at equal RMS. A further 1 dB
+	# subjective trim keeps the opening air behind footsteps and breath while
+	# preserving the >3 dB gap to wind_high.
+	low.gain_db = -16.5
 	low.pitch_scale = 0.97
 	low.pitch_at_full = 1.02
+	# The opening valley profile dips below the window after 3.6 s and returns
+	# shortly afterwards. A 1.25 s release joins those pieces into one natural
+	# body of air while the still-night profile remains silent over 90% of time.
+	low.release_seconds = 1.25
 	# GDD section 9: 抽走高频层，只剩低频. This is the 低频, so it is the one that
 	# stays. Everything else in this map leaves.
 	low.withdraws_near_danger = false
-	low.notes = "The body of the air. Silent below 0.09, which is 97.6% of a still night and 22.3% of a valley day."
+	low.notes = "The body of the air. A 1.25 s release bridges brief gust troughs; trimmed 2.5 dB so it stays behind footsteps and breath."
 
 	var mid = LayerScript.new()
 	mid.layer_id = &"wind_mid"

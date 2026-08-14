@@ -68,7 +68,7 @@ func test_the_settings_state_has_a_heading() -> void:
 	_spatial.set_state(&"settings")
 	assert_true(heading.visible, "the settings heading was hidden in the settings state")
 
-func test_tracks_and_ticks_are_depth_composited_quads() -> void:
+func test_tracks_and_ticks_are_unoccludable_quads() -> void:
 	var quads := _spatial.track_quads()
 	# 3 轨道 + 3 游标 + 11 + 2 + 2 刻度
 	assert_eq(quads.size(), 21)
@@ -76,7 +76,9 @@ func test_tracks_and_ticks_are_depth_composited_quads() -> void:
 		assert_true(quad.mesh is QuadMesh)
 		var material := quad.material_override as StandardMaterial3D
 		assert_not_null(material)
-		assert_false(material.no_depth_test)
+		# Owner ruling 2026-08-14: only falling snow may cross the pause copy.
+		assert_true(material.no_depth_test,
+			"a settings rail can be covered by scenery; only snowflakes may cross it")
 
 func _heading_label() -> Label3D:
 	for label in _spatial.labels():

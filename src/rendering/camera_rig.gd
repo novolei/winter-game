@@ -1,8 +1,8 @@
 class_name CameraRig
 extends Node3D
 
-## The fixed three-quarter view. Set once in _ready() and never touched again;
-## follow is position only, so nothing the player does can rotate the frame.
+## The authored three-quarter view. Ordinary play never rotates it; transient
+## cinematic surfaces add offsets and return those offsets to exact zero.
 ##
 ## Orthographic, not perspective. The deciding evidence is in the reference
 ## in-game frame: two characters standing at clearly different depths are drawn
@@ -44,8 +44,9 @@ extends Node3D
 ## once anything else has had its say, and framed_size() is where the frame
 ## actually is while it eases between the two. Writing to it directly still
 ## works -- tools/capture_frame.gd's `--ortho` does -- but call refresh_framing()
-## afterwards if the camera should move to meet it.
-@export var orthographic_size := 10.5
+## afterwards if the camera should move to meet it. Fresh games open on the
+## player-approved landscape stop; the tighter two remain available by input.
+@export var orthographic_size := 17.0
 @export var boom_length := 90.0
 
 ## Kept for the perspective fallback, unused while orthographic.
@@ -94,6 +95,11 @@ extends Node3D
 ## working.
 const FRAMING_TIGHTER := &"camera_framing_tighter"
 const FRAMING_WIDER := &"camera_framing_wider"
+const SERVICE_KEY := &"camera_rig"
+const EVENT_INTERIOR_ENTERED := &"interior.entered"
+const EVENT_INTERIOR_EXITED := &"interior.exited"
+const INTERIOR_FRAMING_SOURCE := &"interior_presentation"
+const INTERIOR_FRAMING_SCALE := 0.90
 
 ## How long one notch takes. Quick: this is a UI response to an input, not a
 ## cinematic, so it should land softly rather than glide. Eased OUT, so it
@@ -119,8 +125,9 @@ var _target: Node3D
 var _framing := ModifierStack.new()
 
 ## Which stop the player is on. The base is framing_stops[_framing_index],
-## mirrored into orthographic_size so the export stays the readable one.
-var _framing_index := 0
+## mirrored into orthographic_size so the export stays the readable one. It
+## mirrors the authored default even before _ready() resolves the nearest stop.
+var _framing_index := 2
 
 ## Where the frame actually is, mid-ease. NAN until something applies one, so an
 ## un-readied rig reports what it would settle at rather than a stale number.
@@ -146,8 +153,8 @@ var _framing_tween: Tween = null
 ## stale.
 ##
 ## Same shape as `_framing`, one level simpler: the frame's SIZE has a full
-## ModifierStack because several systems will want a say in it; its ANGLE has one
-## approved caller in the whole game and rule 1 says it should stay that way.
+## ModifierStack because several systems will want a say in it; its ANGLE is an
+## explicitly transient cinematic offset and never replaces the authored base.
 var _lean := Vector3.ZERO
 
 ## Where the frame is aimed, over and above the player's own head.
@@ -165,6 +172,14 @@ var _lean := Vector3.ZERO
 ## follow doing its ordinary job, not a special case.
 var _aim_offset := Vector3.ZERO
 
+## A camera-local translation used by transient composed shots. Unlike moving
+## the follow target, this takes effect while the tree is paused: X moves the
+## optical centre across the frame and Y lifts it, while Z remains the authored
+## boom length. Zero is exactly the ordinary gameplay composition.
+var _composition_offset := Vector2.ZERO
+var _boom_factor := 1.0
+var _bus = null
+
 
 func _ready() -> void:
 	_camera = get_node_or_null("Camera3D") as Camera3D
@@ -175,6 +190,8 @@ func _ready() -> void:
 	# first notch has nothing to move away from and lands instantly.
 	_framing_index = nearest_framing_index(orthographic_size)
 	apply_framed_size(framing_target())
+	if _bus == null:
+		set_event_bus(get_node_or_null("/root/EventBus"))
 	if _camera == null:
 		return
 	if use_orthographic:
@@ -182,7 +199,7 @@ func _ready() -> void:
 	else:
 		_camera.projection = Camera3D.PROJECTION_PERSPECTIVE
 		_camera.fov = field_of_view
-	_camera.position = Vector3(0.0, 0.0, boom_length)
+	_apply_camera_composition()
 	_camera.rotation = Vector3.ZERO
 	# Under a parallel projection the near plane is a real clipping plane at a
 	# fixed distance rather than something distance hides, so it sits close to
@@ -192,6 +209,9 @@ func _ready() -> void:
 	_camera.current = true
 	_build_vision_focus()
 	_build_ear()
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null:
+		registry.register(SERVICE_KEY, self)
 
 
 ## WHERE THE GAME IS HEARD FROM, which until now was ninety metres away.
@@ -295,6 +315,55 @@ func _exit_tree() -> void:
 	if _framing_tween != null and _framing_tween.is_valid():
 		_framing_tween.kill()
 	_framing_tween = null
+	_disconnect_interior_events()
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.get_service(SERVICE_KEY) == self:
+		registry.unregister(SERVICE_KEY)
+
+
+func set_event_bus(bus) -> void:
+	if bus == _bus:
+		_connect_interior_events()
+		return
+	_disconnect_interior_events()
+	_bus = bus
+	_connect_interior_events()
+
+
+func _connect_interior_events() -> void:
+	if _bus == null or not is_instance_valid(_bus):
+		return
+	_bus.subscribe(EVENT_INTERIOR_ENTERED, _on_interior_entered)
+	_bus.subscribe(EVENT_INTERIOR_EXITED, _on_interior_exited)
+
+
+func _disconnect_interior_events() -> void:
+	if _bus == null or not is_instance_valid(_bus):
+		return
+	_bus.unsubscribe(EVENT_INTERIOR_ENTERED, _on_interior_entered)
+	_bus.unsubscribe(EVENT_INTERIOR_EXITED, _on_interior_exited)
+
+
+func _on_interior_entered(_payload) -> void:
+	# Replace rather than stack if two overlapping room shapes announce the
+	# same arrival. The player's framing stop remains the stack's base.
+	remove_framing_modifiers(INTERIOR_FRAMING_SOURCE)
+	var pull_in := Modifier.new()
+	pull_in.source_id = INTERIOR_FRAMING_SOURCE
+	pull_in.operation = Modifier.Operation.MULTIPLY
+	pull_in.value = INTERIOR_FRAMING_SCALE
+	push_framing_modifier(pull_in)
+
+
+func _on_interior_exited(_payload) -> void:
+	remove_framing_modifiers(INTERIOR_FRAMING_SOURCE)
+
+
+## The optical surface, exposed through the registered rig rather than found by
+## a scene path. Spatial presentation can follow the camera without coupling to
+## Main's node layout, and a test can inject a different rig entirely.
+func camera() -> Camera3D:
+	return _camera
 
 
 ## Used by the capture harness to skip the follow lag and frame the shot
@@ -344,10 +413,40 @@ func aim_offset() -> Vector3:
 	return _aim_offset
 
 
+## Camera-local metres. This is deliberately an offset instead of a world
+## transform snapshot so a transient shot can restore the authored camera bit
+## for bit even if the player changed framing before it opened.
+func set_composition_offset(offset: Vector2) -> void:
+	if not (is_finite(offset.x) and is_finite(offset.y)):
+		return
+	_composition_offset = offset
+	_apply_camera_composition()
+
+
+func composition_offset() -> Vector2:
+	return _composition_offset
+
+
+## Multiplies the authored boom without changing it. Orthographic scale is
+## unaffected, but lowering the boom matters when a transient shot rotates to
+## eye level: the optical surface then arrives beside the character instead of
+## orbiting ninety metres through the terrain.
+func set_boom_factor(value: float) -> void:
+	if not is_finite(value):
+		return
+	_boom_factor = maxf(value, 0.01)
+	_apply_camera_composition()
+
+
+func boom_factor() -> float:
+	return _boom_factor
+
+
 ## Whether anything is currently leaning the frame. For a test, and for a system
 ## that must not start a second shot over the first.
 func is_leaning() -> bool:
-	return _lean != Vector3.ZERO or _aim_offset != Vector3.ZERO
+	return _lean != Vector3.ZERO or _aim_offset != Vector3.ZERO \
+		or _composition_offset != Vector2.ZERO or not is_equal_approx(_boom_factor, 1.0)
 
 
 func _apply_lean() -> void:
@@ -359,6 +458,13 @@ func _apply_lean() -> void:
 		rotation = base_rotation()
 		return
 	rotation = base_rotation() + _lean
+
+
+func _apply_camera_composition() -> void:
+	if _camera == null:
+		return
+	_camera.position = Vector3(_composition_offset.x, _composition_offset.y,
+		boom_length * _boom_factor)
 
 
 ## ---------------------------------------------------------------------------

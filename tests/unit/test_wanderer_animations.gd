@@ -3,7 +3,7 @@ extends TestCase
 ## The merged animation library is a contract in three parts, and the middle one
 ## is here because it has already gone wrong once, expensively and silently.
 ##
-## 1. THE NAMES. Twenty takes arrived across three files under names Meshy chose
+## 1. THE NAMES. Twenty-two takes arrived across the merged deliveries under names Meshy chose
 ##    -- `Run_02`, `Spear_Walk`, and two called `Scene`. The game addresses them
 ##    by what the motion is. A source take that disappears or gets renamed
 ##    upstream must fail here rather than in a blend tree that quietly plays
@@ -60,33 +60,218 @@ func test_every_take_is_in_the_library() -> void:
 			library.has_animation(StringName(row[2])),
 			"%s was merged from %s / %s and is not in the library" % [row[2], String(row[0]).get_file(), row[1]]
 		)
-	# TAKES plus the ONE take that does not come out of a model file: the hunger
-	# stand, retargeted off another pack and baked to a `.tres`. Named here rather
-	# than allowed for by a `+ 1`, so a second undeclared take still fails.
+	# TAKES plus the two takes that do not come out of the merged model: the
+	# retargeted hunger stand and feeding gesture. Named rather than allowed for
+	# by `+ 2`, so a third undeclared take still fails.
 	assert_true(
 		library.has_animation(Wanderer.IDLE_HUNCHED),
 		"%s is baked by tools/retarget_hunch.gd and is not in the library" % Wanderer.IDLE_HUNCHED
 	)
-	var declared: Array = [String(Wanderer.IDLE_HUNCHED)]
+	assert_true(
+		library.has_animation(Wanderer.FEED),
+		"%s is baked by tools/retarget_feed.gd and is not in the library" % Wanderer.FEED
+	)
+	var declared: Array = [String(Wanderer.IDLE_HUNCHED), String(Wanderer.FEED)]
 	for row in Wanderer.TAKES:
 		declared.append(String(row[2]))
 	for name in library.get_animation_list():
 		assert_true(
 			declared.has(String(name)),
-			"the library holds %s, which is neither in TAKES nor the baked hunch" % name
+			"the library holds %s, which is neither in TAKES nor one of the two baked actions" % name
 		)
 	assert_eq(
 		library.get_animation_list().size(), declared.size(),
-		"the library must hold exactly the takes in TAKES plus the baked hunch"
+		"the library must hold exactly TAKES plus the baked hunch and feed action"
 	)
 
 
-## The three the movement code names. Separate from the test above because these
+## Feeding is a one-shot from another rig, baked before runtime just like the
+## hunger hunch.  Its public contract starts at the merged library: callers ask
+## for one semantic name and never know which donor pack authored the gesture.
+func test_the_feed_action_is_baked_into_the_library() -> void:
+	var library := _library()
+	var present := library.has_animation(Wanderer.FEED)
+	assert_true(
+		present,
+		"feed is baked by tools/retarget_feed.gd but WandererAnimations.build() does not expose it"
+	)
+	if not present:
+		return
+	var animation := library.get_animation(Wanderer.FEED)
+	assert_eq(animation.loop_mode, Animation.LOOP_NONE,
+		"feeding is one scattering gesture, not a repeating arm cycle")
+	assert_almost_eq(animation.length, 1.0333, 0.002,
+		"the baked action no longer has UnarmedActivate's authored duration")
+	assert_eq(animation.get_track_count(), 48,
+		"the 24-bone target must carry one position and one rotation track per bone")
+	var positions := 0
+	var rotations := 0
+	for track in range(animation.get_track_count()):
+		if animation.track_get_type(track) == Animation.TYPE_POSITION_3D:
+			positions += 1
+		elif animation.track_get_type(track) == Animation.TYPE_ROTATION_3D:
+			rotations += 1
+	assert_eq(positions, 24, "feed does not carry every target bone's position")
+	assert_eq(rotations, 24, "feed does not carry every target bone's rotation")
+
+
+## This is an upper-body action.  The source pelvis drifts by several
+## centimetres and its proportions do not match this rig, so carrying the donor
+## root or legs would slide planted boots even though the action is played while
+## the controller has stopped movement.
+func test_feed_holds_the_wanderer_root_and_both_legs_at_neutral() -> void:
+	var animation := _library().get_animation(Wanderer.FEED)
+	assert_not_null(animation, "the neutral-track contract needs the baked feed action")
+	if animation == null:
+		return
+	var packed := ResourceLoader.load(Wanderer.MODEL_PATH)
+	assert_true(packed is PackedScene, "the target rig cannot be inspected")
+	if not (packed is PackedScene):
+		return
+	var scene := (packed as PackedScene).instantiate()
+	var skeleton: Skeleton3D = null
+	for node in scene.find_children("*", "Skeleton3D", true, false):
+		skeleton = node as Skeleton3D
+		break
+	assert_not_null(skeleton, "the wanderer model has no Skeleton3D")
+	if skeleton == null:
+		scene.free()
+		return
+	for bone in [
+		"Hips",
+		"LeftUpLeg", "LeftLeg", "LeftFoot", "LeftToeBase",
+		"RightUpLeg", "RightLeg", "RightFoot", "RightToeBase",
+	]:
+		var bone_index := skeleton.find_bone(bone)
+		assert_true(bone_index >= 0, "the neutral contract names a missing target bone %s" % bone)
+		if bone_index < 0:
+			continue
+		var rest := skeleton.get_bone_rest(bone_index)
+		var path := NodePath("%s:%s" % [Wanderer.SKELETON_PATH, bone])
+		var position_track := animation.find_track(path, Animation.TYPE_POSITION_3D)
+		var rotation_track := animation.find_track(path, Animation.TYPE_ROTATION_3D)
+		assert_true(position_track >= 0, "%s has no neutral position track" % bone)
+		assert_true(rotation_track >= 0, "%s has no neutral rotation track" % bone)
+		var worst_position := 0.0
+		var worst_rotation := 0.0
+		if position_track >= 0:
+			for key in range(animation.track_get_key_count(position_track)):
+				var value: Vector3 = animation.track_get_key_value(position_track, key)
+				worst_position = maxf(worst_position, value.distance_to(rest.origin))
+		if rotation_track >= 0:
+			var rest_rotation := rest.basis.orthonormalized().get_rotation_quaternion()
+			for key in range(animation.track_get_key_count(rotation_track)):
+				var value: Quaternion = animation.track_get_key_value(rotation_track, key)
+				worst_rotation = maxf(worst_rotation, rad_to_deg(value.angle_to(rest_rotation)))
+		assert_true(worst_position <= 0.001,
+			"%s travels %.5f rig units during an upper-body one-shot" % [bone, worst_position])
+		assert_true(worst_rotation <= 0.1,
+			"%s turns %.3f degrees away from neutral during an upper-body one-shot" % [bone, worst_rotation])
+	scene.free()
+
+
+## The donor name is not evidence that the pose survived a different skeleton.
+## Sample what the shipping AnimationPlayer does to the wanderer and require a
+## visible hand excursion while the root stays planted.
+func test_feed_preserves_the_authored_reach_on_the_target_silhouette() -> void:
+	var packed := ResourceLoader.load(Wanderer.MODEL_PATH)
+	assert_true(packed is PackedScene, "the target rig cannot be sampled")
+	if not (packed is PackedScene):
+		return
+	var scene := (packed as PackedScene).instantiate() as Node3D
+	Engine.get_main_loop().root.add_child(scene)
+	var skeleton: Skeleton3D = null
+	var player: AnimationPlayer = null
+	for node in scene.find_children("*", "Skeleton3D", true, false):
+		skeleton = node as Skeleton3D
+		break
+	for node in scene.find_children("*", "AnimationPlayer", true, false):
+		player = node as AnimationPlayer
+		break
+	assert_not_null(skeleton, "the wanderer model has no Skeleton3D")
+	assert_not_null(player, "the wanderer model has no AnimationPlayer")
+	if skeleton == null or player == null:
+		scene.free()
+		return
+	for library_name in player.get_animation_library_list():
+		player.remove_animation_library(library_name)
+	player.add_animation_library(&"", _library())
+	player.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
+	var animation := player.get_animation(Wanderer.FEED)
+	assert_not_null(animation, "the target AnimationPlayer cannot resolve feed")
+	if animation == null:
+		scene.free()
+		return
+	var frame := _anatomical_frame(skeleton)
+	var hips := skeleton.find_bone("Hips")
+	var hand := skeleton.find_bone("LeftHand")
+	var metres_per_unit := skeleton.global_transform.basis.get_scale().y
+	var forward_min := INF
+	var forward_max := -INF
+	var root_start := Vector3.ZERO
+	var root_travel := 0.0
+	player.play(Wanderer.FEED)
+	for sample in range(32):
+		player.seek(animation.length * float(sample) / 31.0, true)
+		player.advance(0.0)
+		var root_now := skeleton.get_bone_global_pose(hips).origin
+		if sample == 0:
+			root_start = root_now
+		root_travel = maxf(root_travel, root_now.distance_to(root_start) * metres_per_unit)
+		var offset := skeleton.get_bone_global_pose(hand).origin - root_now
+		var forward := offset.dot(frame.z) * metres_per_unit
+		forward_min = minf(forward_min, forward)
+		forward_max = maxf(forward_max, forward)
+	assert_true(forward_max - forward_min >= 0.20,
+		"the baked hand moves only %.3f m fore/aft; the scattering reach did not survive retargeting"
+			% (forward_max - forward_min))
+	assert_true(root_travel <= 0.001,
+		"the feed action moves the root %.5f m while the player is supposed to stand" % root_travel)
+	scene.free()
+
+
+func _anatomical_frame(skeleton: Skeleton3D) -> Basis:
+	var hips := skeleton.find_bone("Hips")
+	var head := skeleton.find_bone("Head")
+	var foot := skeleton.find_bone("LeftFoot")
+	var toe := skeleton.find_bone("LeftToeBase")
+	var thigh := skeleton.find_bone("LeftUpLeg")
+	var pelvis := skeleton.get_bone_global_rest(hips).origin
+	var up := (skeleton.get_bone_global_rest(head).origin - pelvis).normalized()
+	var forward := skeleton.get_bone_global_rest(toe).origin \
+		- skeleton.get_bone_global_rest(foot).origin
+	forward = (forward - up * forward.dot(up)).normalized()
+	var left := up.cross(forward).normalized()
+	if (skeleton.get_bone_global_rest(thigh).origin - pelvis).dot(left) < 0.0:
+		left = -left
+	return Basis(left, up, forward).orthonormalized()
+
+
+## The seven the movement code names. Separate from the test above because these
 ## are the ones whose absence stops the game rather than a later wave.
 func test_the_clips_the_movement_code_asks_for_resolve() -> void:
 	var library := _library()
-	for clip in [Wanderer.IDLE, Wanderer.IDLE_COLD, Wanderer.WALK, Wanderer.RUN]:
+	for clip in [
+		Wanderer.IDLE, Wanderer.IDLE_COLD, Wanderer.IDLE_HUNCHED,
+		Wanderer.WALK, Wanderer.RUN, Wanderer.WALK_GUARDED, Wanderer.WALK_DEEP,
+	]:
 		assert_true(library.has_animation(clip), "player_controller plays %s and it is not in the library" % clip)
+
+
+## Blender's FBX importer changes the whole scene frame rate to that of the last
+## imported file. The deep walk is 60 fps while the library is 30 fps; without
+## the explicit retime in decimate_character.py every older take exports at
+## double speed even though all names, tracks and loop flags still look valid.
+func test_a_60_fps_delivery_does_not_halve_the_existing_library() -> void:
+	var library := _library()
+	assert_almost_eq(
+		library.get_animation(Wanderer.WALK).length, 1.0667, 0.02,
+		"the 30 fps walk changed duration while merging the 60 fps deep-snow take"
+	)
+	assert_almost_eq(
+		library.get_animation(Wanderer.WALK_DEEP).length, 5.5, 0.05,
+		"the 60 fps deep-snow take no longer lasts its authored 5.5 seconds"
+	)
 
 
 ## The one the owner asked for by name, and the one claim about it that a

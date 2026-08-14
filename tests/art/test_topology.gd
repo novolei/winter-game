@@ -27,6 +27,50 @@ const BUDGETS := {
 	"res://assets/models/characters": 8000,
 }
 
+## These exact source-attributable Synty Polygon composites retain their
+## authored low-poly topology instead of being decimated. A per-file cap holds
+## each silhouette to its shipped source count; the general props folder keeps
+## its 200-triangle rule for everything else.
+const NATIVE_LOW_POLY_PROP_BUDGETS := {
+	"res://assets/models/props/synty_supply_sacks.glb": 1500,
+	"res://assets/models/props/synty_wooden_barrel.glb": 1550,
+	"res://assets/models/props/synty_field_crate.glb": 300,
+	"res://assets/models/props/synty_work_log.glb": 350,
+	"res://assets/models/props/synty_field_stump.glb": 150,
+	"res://assets/models/props/synty_pickaxe.glb": 200,
+	"res://assets/models/props/synty_yard_cache.glb": 3500,
+	"res://assets/models/props/synty_evacuation_cache.glb": 2100,
+	"res://assets/models/props/synty_woodwork_station.glb": 2600,
+	"res://assets/models/props/synty_larder_chest.glb": 1300,
+	"res://assets/models/props/synty_provision_stack.glb": 3000,
+	"res://assets/models/props/synty_yard_table.glb": 450,
+	"res://assets/models/props/synty_tarped_cache.glb": 1200,
+	"res://assets/models/props/synty_broken_gateway.glb": 1200,
+	"res://assets/models/props/synty_firepit.glb": 1350,
+	"res://assets/models/props/synty_generator_cache.glb": 2600,
+	"res://assets/models/props/synty_field_clinic.glb": 850,
+	"res://assets/models/props/synty_fish_camp.glb": 1100,
+	"res://assets/models/props/synty_fuel_depot.glb": 13400,
+	"res://assets/models/props/synty_road_blockade.glb": 850,
+	"res://assets/models/props/synty_radio_relay.glb": 850,
+	"res://assets/models/props/synty_refuge_bedroll.glb": 3400,
+	"res://assets/models/props/synty_rock_cluster_north.glb": 750,
+	"res://assets/models/props/synty_rock_cluster_south.glb": 500,
+	"res://assets/models/props/synty_rock_cluster_east.glb": 900,
+}
+
+## The owner retired the 200-triangle hard cap for this authored vehicle and
+## landmark batch after the blockout proved it erased construction detail. This
+## is deliberately a runaway guard rather than a target: all five remain
+## low-poly, but silhouette decides their final count.
+const AUTHORED_WORLD_MODEL_SAFETY_BUDGETS := {
+	"res://assets/models/props/panel_van.glb": 5000,
+	"res://assets/models/buildings/gas_station/gas_station.glb": 5000,
+	"res://assets/models/buildings/church/church.glb": 5000,
+	"res://assets/models/buildings/logging_camp/logging_camp.glb": 5000,
+	"res://assets/models/buildings/transmission_tower/transmission_tower.glb": 5000,
+}
+
 const AssetScannerScript := preload("res://tests/framework/asset_scanner.gd")
 const AssetProbeScript := preload("res://tests/framework/asset_probe.gd")
 
@@ -188,7 +232,8 @@ func _offenders_in(path: String, probe: Dictionary, budgets: Dictionary) -> Pack
 	var meshes: Array = probe["meshes"]
 	if meshes.is_empty():
 		return offenders
-	var budget := _budget_for(path, budgets)
+	var budget: int = AUTHORED_WORLD_MODEL_SAFETY_BUDGETS.get(
+		path, NATIVE_LOW_POLY_PROP_BUDGETS.get(path, _budget_for(path, budgets)))
 	# Out of scope, not an offence. Triangle budgets exist for authored model
 	# assets filed under assets/models/<class>/. Scene geometry -- terrain, a
 	# level's own meshes, anything a designer builds in place -- belongs to no

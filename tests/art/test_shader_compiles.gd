@@ -92,7 +92,7 @@ const AssetScannerScript := preload("res://tests/framework/asset_scanner.gd")
 ##
 ## Three roots rather than one because a shader is not required to live under
 ## `assets/shaders/`, and a gate that covers only the tidy case is blind to the
-## untidy one. Today all nine are in `assets/shaders/`.
+## untidy one. Today the authored set spans `assets/shaders/` and `src/rendering/`.
 const SHADER_ROOTS: Array[String] = ["res://assets", "res://src", "res://scenes"]
 
 ## Local art packs are ignored, but `snow_ground.gdshader` used to live beside
@@ -113,7 +113,7 @@ const EXCLUDED_LOCAL_SHADER_PATHS: Array[String] = [
 ##
 ## If this ever needs LOWERING, that is a shader being deleted -- which is a
 ## person deciding, and the diff should say so.
-const MINIMUM_SHADERS := 9
+const MINIMUM_SHADERS := 14
 
 
 ## Every `.gdshader` the project authors, sorted, with no duplicates.

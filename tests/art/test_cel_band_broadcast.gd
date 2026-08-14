@@ -87,6 +87,7 @@ const DRIVEN_BY := {
 	"res://assets/shaders/cel_flat.gdshader": "CelPainter.set_world_shading()",
 	"res://assets/shaders/cel_interior.gdshader": "InteriorWarmth.apply_world_shading()",
 	"res://src/rendering/snow_ground.gdshader": "TerrainRenderer.apply_world_shading()",
+	"res://src/rendering/winter_wheat_cover.gdshader": "CelPainter.register_world_material()",
 }
 
 ## A preset far from every shader's authored default, so a uniform that did not

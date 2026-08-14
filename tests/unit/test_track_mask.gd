@@ -294,11 +294,12 @@ func test_two_prints_a_stride_apart_do_not_run_together() -> void:
 		)
 
 
-## A DUSTING RECORDS TWO PLANTED PRESSURE POINTS, NOT A LONG SMEAR. The previous
-## revision correctly removed the skate-like reach but left heel, waist and
-## forefoot joined into a miniature shoe mould. Thin powder cannot hold that
-## wall: it keeps a lighter heel and stronger forefoot with snow between them.
-func test_a_profiled_thin_print_is_two_pressure_points_not_a_long_scuff() -> void:
+## A DUSTING IS ONE SHORT PLANTED BOOT, NOT A LONG SMEAR. The shipped visual
+## endpoint deliberately keeps the narrow waist: without it the production
+## caller's weakest bite resolves as two unrelated tonal dots at the game
+## camera. What thin powder must lose is the dragged reach, not the identity of
+## the sole that made it; footprint_visual_profile.gd pins that visibility floor.
+func test_a_profiled_thin_print_is_a_short_planted_boot_not_a_long_scuff() -> void:
 	var profile: TrackProfileDefinition = _mask.profile_for_subject(&"player")
 	assert_not_null(profile, "the player boot profile did not load")
 	if profile == null:
@@ -316,9 +317,10 @@ func test_a_profiled_thin_print_is_two_pressure_points_not_a_long_scuff() -> voi
 		"the dusting narrowed to %.3f m against the boot's %.3f; the sole disappeared"
 			% [dust.y, hole.y]
 	)
-	assert_true(dust.z < 0.02,
-		"the thin sole still reads %.3f at the waist; its two pressure lobes are joined"
-			% dust.z)
+	assert_true(dust.z >= 0.10 and dust.z < 0.24,
+		"the planted boot's restrained waist reads %.3f; it is either disconnected "
+			% dust.z
+			+ "into two dots or flattened into a full-depth shoe mould")
 
 
 ## (reach along the walk, reach across it, the depth a third of the way out) for

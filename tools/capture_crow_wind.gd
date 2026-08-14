@@ -182,7 +182,7 @@ func _start() -> void:
 	for crow in _crows():
 		_landed[crow.get_instance_id()] = crow.where()
 
-	_wire = get_node_or_null("Main/Farmstead/Wires/WireDrop") as Node3D
+	_wire = get_node_or_null("Main/Farmstead/Wires/WireToTruckPole") as Node3D
 	var sway := get_node_or_null("Main/Wind/WireSway")
 	if _wire != null and sway != null:
 		# WireSway's own record of where each span was strung, before any sway.

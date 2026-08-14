@@ -101,6 +101,13 @@ const EVENT_FOOTPRINT := &"building.footprint"
 ## different list, and that is a scene edit.
 @export var fade_parts: Array[StringName] = []
 
+## Fixed sightline blockers that live outside the building model. A fixed
+## camera occasionally puts a foreground prop directly across the cutaway --
+## the farmhouse power line is the first real case. These are authored paths,
+## not a per-frame visibility query, so the reveal remains deterministic and a
+## new building still configures the answer in its scene.
+@export var fade_paths: Array[NodePath] = []
+
 ## Where to look for them. Empty means the node this reveal hangs under, which
 ## is the case that wants no configuration at all: an InteriorReveal parented to
 ## the building it belongs to.
@@ -245,6 +252,34 @@ func resolve() -> void:
 		# Remembered rather than assumed: a part authored not to cast must not
 		# start casting the first time the player walks out of the house.
 		_shadow_before.append(found.cast_shadow)
+	_resolve_fade_paths()
+
+
+## Re-scan authored external roots when entry actually begins. Some visual
+## components (the snow cap on the farmhouse wire is the shipping example)
+## create their draw node in `_ready()`, after this sibling may first resolve.
+## The path still names one deliberate sightline blocker; this merely includes
+## every visual it owns once those visuals exist.
+func _resolve_fade_paths() -> void:
+	for path in fade_paths:
+		var root := get_node_or_null(path)
+		if root == null:
+			_missing.append(String(path))
+			continue
+		var visuals: Array[GeometryInstance3D] = []
+		if root is GeometryInstance3D:
+			visuals.append(root as GeometryInstance3D)
+		for child in root.find_children("*", "GeometryInstance3D", true, false):
+			if child is GeometryInstance3D:
+				visuals.append(child as GeometryInstance3D)
+		if visuals.is_empty():
+			_missing.append(String(path))
+			continue
+		for found in visuals:
+			if _parts.has(found):
+				continue
+			_parts.append(found)
+			_shadow_before.append(found.cast_shadow)
 
 
 func parts() -> Array[GeometryInstance3D]:
@@ -575,6 +610,8 @@ func conceal() -> void:
 func set_revealed(inside: bool) -> void:
 	if inside == _revealed:
 		return
+	if inside:
+		_resolve_fade_paths()
 	_revealed = inside
 	# Announced BEFORE the fade starts, not after it finishes. The audio switch
 	# is meant to land on the same frame as the first frame of the fade -- a

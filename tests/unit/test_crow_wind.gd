@@ -29,13 +29,30 @@ const FULL_TRAVEL := Vector3(0.132, 0.042, 0.021)
 
 var _wire: Node3D
 var _perches: PerchPoints
+var _snow_receiver: WireSnowReceiver
+
+
+## A span can opt into the landing detail without Bird knowing a wire-specific
+## class. The actual receiver makes a compact exposed-snow patch and emits the
+## loose grains; this stand-in lets the bird's hand-off be unit-tested without
+## rendering or a SceneTree.
+class WireSnowReceiver extends Node3D:
+	var landings: Array[Dictionary] = []
+	var departures: Array[Dictionary] = []
+
+	func receive_perch_landing(perch: Dictionary) -> void:
+		landings.append(perch.duplicate())
+
+	func receive_perch_departure(perch: Dictionary) -> void:
+		departures.append(perch.duplicate())
 
 
 func before_each() -> void:
 	# An eight-metre span along its own -Z. `Farmstead._span()` writes
 	# `scale.z = length`, so the basis carries the span's direction AND its
 	# length, which is what `_span_perches` divides up.
-	_wire = Node3D.new()
+	_snow_receiver = WireSnowReceiver.new()
+	_wire = _snow_receiver
 	_wire.position = Vector3(2.0, 6.0, 0.0)
 	_wire.scale = Vector3(1.0, 1.0, 8.0)
 	_perches = PerchScript.new()
@@ -81,6 +98,119 @@ func test_a_crow_that_gripped_its_perch_rides_the_wire_that_moves_under_it() -> 
 	crow.ride(0.0)
 	var gap := crow.where().distance_to(_perches.perches()[0]["at"])
 	assert_almost_eq(gap, 0.0, 0.0001, "the bird is %.4f m off the wire it is standing on" % gap)
+	crow.free()
+
+
+## A wire owns its own surface snow, so Bird only forwards the declared perch
+## to the host. This makes the small shedding detail opt-in: tree and roof
+## perches stay ordinary perches, while a snow-bearing span can react.
+func test_a_bird_gripping_a_span_tells_its_host_where_it_landed() -> void:
+	var crow := _a_crow_on_the_first_perch()
+	assert_eq(_snow_receiver.landings.size(), 1, "gripping a snow-bearing span did not report the landing")
+	assert_eq(
+		_snow_receiver.landings[0].get("anchor", null), _perches,
+		"the landing report lost the declaration that owns the sampled perch"
+	)
+	crow.free()
+
+
+## The wing wash belongs to the physical take-off, not the moment a flock asks
+## the bird to leave. It is reported once, after the crouch lifts the feet, and
+## its position is resolved from the wire's current transform rather than from
+## the stale world point sampled at landing.
+func test_a_bird_tells_its_host_once_when_its_feet_leave_the_wire() -> void:
+	var crow := _a_crow_on_the_first_perch()
+	crow.scatter(Vector3(1.0, 0.4, 0.0), 0.0)
+	_wire.position += FULL_TRAVEL
+	var guard := 2.0
+	while crow.has_feet_down() and guard > 0.0:
+		crow.ride(0.0)
+		crow.advance(FRAME)
+		guard -= FRAME
+	assert_true(guard > 0.0, "the bird never lifted its feet during the launch")
+	assert_eq(_snow_receiver.departures.size(), 1, "the first airborne frame did not report exactly one take-off")
+	var departure := _snow_receiver.departures[0]
+	assert_eq(departure.get("anchor", null), _perches, "the take-off lost its perch declaration")
+	assert_almost_eq(
+		(departure.get("at", Vector3.ZERO) as Vector3).distance_to(_perches.perches()[0]["at"]),
+		0.0, 0.0001,
+		"the snow burst stayed at the wire's old position instead of the moving perch"
+	)
+	for frame in range(30):
+		crow.advance(FRAME)
+	assert_eq(_snow_receiver.departures.size(), 1, "one launch reported its take-off more than once")
+	crow.free()
+
+
+## Calling off an approach is not a take-off. Until the feet have touched there
+## is no surface contact, no loose snow under the wings, and therefore no host
+## notification to turn into a false burst in mid-air.
+func test_a_bird_called_off_before_touchdown_does_not_report_a_departure() -> void:
+	var perch: Dictionary = _perches.perches()[0]
+	var crow: Crow = CrowScript.new()
+	crow.approach(
+		perch,
+		perch["at"] as Vector3 + Vector3(0.0, 6.0, 24.0)
+	)
+	assert_true(crow.give_up(), "the inbound bird refused to call off its approach")
+	assert_eq(
+		_snow_receiver.departures.size(), 0,
+		"a bird that never touched the wire threw a take-off snow burst"
+	)
+	crow.free()
+
+
+## Touchdown and PERCHED are separated by the authored wing-folding beat. The
+## player can enter the arrival guard during that beat; `BirdFlock` then calls
+## `give_up()` while the bird is still LANDING even though its feet and anchor
+## are already on the wire. That physical edge is still a take-off: it rides a
+## moving wire until it leaves and reports exactly one wing-wash before the
+## anchor is cleared.
+func test_a_settling_bird_called_off_after_touchdown_reports_one_departure() -> void:
+	var perch: Dictionary = _perches.perches()[0]
+	var crow: Crow = CrowScript.new()
+	crow.approach(
+		perch,
+		perch["at"] as Vector3 + Vector3(0.0, 6.0, 24.0)
+	)
+	var guard := 3600
+	while guard > 0 and not crow.is_settling():
+		crow.advance(FRAME)
+		guard -= 1
+	assert_true(guard > 0, "the bird never reached its feet-down settling beat")
+	assert_true(crow.has_feet_down(), "the settling fixture has no feet on the wire")
+	assert_eq(_snow_receiver.landings.size(), 1, "touchdown did not report the matching landing")
+
+	_wire.position += FULL_TRAVEL
+	crow.ride(0.0)
+	assert_almost_eq(
+		crow.where().distance_to(_perches.perches()[0]["at"] as Vector3),
+		0.0, 0.0001,
+		"a feet-down LANDING bird did not ride the wire through its settle"
+	)
+	assert_true(crow.give_up(), "the feet-down landing could not be called off")
+	assert_eq(
+		_snow_receiver.departures.size(), 1,
+		"leaving during the settle did not report exactly one take-off"
+	)
+	if _snow_receiver.departures.is_empty():
+		crow.free()
+		return
+	var departure: Dictionary = _snow_receiver.departures[0]
+	assert_almost_eq(
+		(departure.get("at", Vector3.ZERO) as Vector3).distance_to(
+			_perches.perches()[0]["at"] as Vector3
+		),
+		0.0, 0.0001,
+		"the interrupted settle reported snow at a stale perch position"
+	)
+	assert_false(crow.give_up(), "one called-off landing accepted a second departure")
+	for frame in range(30):
+		crow.advance(FRAME)
+	assert_eq(
+		_snow_receiver.departures.size(), 1,
+		"one called-off settle notified its host more than once"
+	)
 	crow.free()
 
 

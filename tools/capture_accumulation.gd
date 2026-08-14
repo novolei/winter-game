@@ -36,6 +36,7 @@ extends Node
 ##   --every <seconds>  simulated seconds between them   (default 12)
 ##   --look x,z         where the camera is aimed
 ##   --ortho <m>        frame height in metres
+##   --start x,z        hold the player at the framed gameplay location
 ##   --preset <id>      one of Art Bible section 4.2's six, held for the run
 ##
 ## THE WEATHER IS DRIVEN THROUGH THE REAL PATH. Nothing here assigns a cover:
@@ -77,6 +78,8 @@ var _every := 12.0
 var _look := Vector2(6.0, -14.0)
 var _ortho := 0.0
 var _preset := ""
+var _start := Vector2.ZERO
+var _has_start := false
 var _shot := 0
 var _busy := false
 var _done := false
@@ -109,6 +112,13 @@ func _ready() -> void:
 		if parts.size() == 2:
 			_look = Vector2(float(parts[0]), float(parts[1]))
 	_ortho = float(_arg(args, "--ortho", "0"))
+	var start := _arg(args, "--start", "")
+	if start != "":
+		var parts := start.split(",")
+		if parts.size() == 2:
+			_start = Vector2(float(parts[0]), float(parts[1]))
+			_has_start = true
+			_pin_subject()
 	if _out == "":
 		push_error("capture_accumulation: --out is required")
 		get_tree().quit()
@@ -180,6 +190,7 @@ func _frame_the_shot() -> void:
 ## that ABORTS the caller silently (briefing trap 4) -- which here would leave
 ## the frame unpinned again with nothing said.
 func _pin_frame(rebase: bool) -> void:
+	_pin_subject()
 	var rig := get_node_or_null("Main/CameraRig")
 	# The rig eases toward the player every frame, so an aim set once in _ready()
 	# creeps back to him across the run. The first sequence off this harness
@@ -208,6 +219,22 @@ func _pin_frame(rebase: bool) -> void:
 	var camera := get_node_or_null("Main/CameraRig/Camera3D") as Camera3D
 	if camera != null:
 		camera.size = _ortho
+
+
+## Optional capture-only placement. Keeping the subject at the framed location
+## lets the real occluder system make the same decision it would in gameplay;
+## otherwise an establishing camera aimed away from the spawn can fade a roof
+## that is not actually between the player and their normal gameplay camera.
+func _pin_subject() -> void:
+	if not _has_start:
+		return
+	var player := get_node_or_null("Main/Player") as CharacterBody3D
+	if player == null:
+		return
+	player.global_position.x = _start.x
+	player.global_position.z = _start.y
+	player.velocity.x = 0.0
+	player.velocity.z = 0.0
 
 
 ## Walks the model to each requested cover through its own hooks and shoots.
@@ -290,8 +317,9 @@ func _shoot_transition() -> void:
 		return
 	snow.set_snowfall_rate(_from)
 	# Eight time constants of the weather being settled at, rather than eight of
-	# any one term: the creep alone is seventy minutes and soaking against it
-	# would spend a million steps arriving somewhere it reached in a tenth of them.
+	# any one term: the cold-tail creep is deliberately much longer than a game
+	# day, and soaking against it would spend a million steps arriving somewhere
+	# the active snowfall reaches in a fraction of that time.
 	var tau: float = 1.0 / maxf(
 		_from / float(snow.settle_seconds) + 1.0 / float(snow.creep_seconds), 0.00001
 	)

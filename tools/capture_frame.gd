@@ -90,6 +90,8 @@ var _has_start := false
 var _look := Vector2.ZERO
 var _has_look := false
 var _preset := ""
+var _light_settle := 0.0
+var _fire_mode := ""
 var _curve := false
 
 # Sampled along the route so the run can state, rather than assume, that the
@@ -143,6 +145,11 @@ func _ready() -> void:
 	# `--preset <id>` forces one of the six. Recorded here, applied at the
 	# shutter -- see the header.
 	_preset = _string_arg(args, "--preset", "")
+	# Optional visual-acceptance controls. Ordinary captures keep the historical
+	# zero delay; lighting comparisons can let reactive effects reach the newly
+	# forced preset, and can prove that the farmhouse goes cold with its fire.
+	_light_settle = maxf(float(_string_arg(args, "--light-settle", "0")), 0.0)
+	_fire_mode = _string_arg(args, "--fire", "")
 
 	# `--route curve` swaps the eight straight legs for a walk that never stops
 	# turning. See the CURVE_ constants for what it is for.
@@ -317,6 +324,11 @@ func _capture() -> void:
 		# After the snap, so it wins. The rig only ever translates -- the frame
 		# is the same frame, aimed somewhere else.
 		(rig as Node3D).global_position = Vector3(_look.x, 1.0, _look.y)
+	if _fire_mode == "out":
+		var stove := get_node_or_null("Main/Farmhouse/Stove")
+		if stove != null and stove.has_method(&"extinguish"):
+			stove.call(&"extinguish")
+			print("capture_frame: farmhouse fire out")
 	# The look, snapped rather than faded, after the rig has settled and before
 	# the shutter. apply_preset() abandons whatever crossfade the clock started.
 	if _preset != "":
@@ -328,6 +340,15 @@ func _capture() -> void:
 		# One frame for the Environment change to reach the compositor before the
 		# frame that gets saved.
 		await RenderingServer.frame_post_draw
+	if _light_settle > 0.0:
+		await get_tree().create_timer(_light_settle).timeout
+		# CameraRig keeps following during the lighting settle. Restore the exact
+		# authored comparison frame after that wait so day/night captures differ
+		# only in light, not in a few metres of late camera easing.
+		if rig != null and rig.has_method("snap_to_target"):
+			rig.snap_to_target()
+		if rig != null and _has_look:
+			(rig as Node3D).global_position = Vector3(_look.x, 1.0, _look.y)
 
 	await RenderingServer.frame_post_draw
 	var image := get_viewport().get_texture().get_image()

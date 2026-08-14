@@ -37,21 +37,65 @@ const TREES := [
 const BOXED := [
 	"res://assets/models/props/pickup_truck.glb",
 	"res://assets/models/props/flatbed_truck.glb",
+	"res://assets/models/props/panel_van.glb",
 	"res://assets/models/props/fence_segment.glb",
+	"res://assets/models/props/woodpile.glb",
+	"res://assets/models/props/supply_cache.glb",
+	"res://assets/models/props/field_marker.glb",
+	"res://assets/models/props/fallen_limb.glb",
+	"res://assets/models/props/emergency_sled.glb",
+	"res://assets/models/props/departure_pack.glb",
+	"res://assets/models/props/chopping_block.glb",
+	"res://assets/models/props/evacuation_cart.glb",
+	"res://assets/models/props/synty_supply_sacks.glb",
+	"res://assets/models/props/synty_wooden_barrel.glb",
+	"res://assets/models/props/synty_field_crate.glb",
+	"res://assets/models/props/synty_work_log.glb",
+	"res://assets/models/props/synty_field_stump.glb",
+	"res://assets/models/props/synty_yard_cache.glb",
+	"res://assets/models/props/synty_evacuation_cache.glb",
+	"res://assets/models/props/synty_woodwork_station.glb",
+	"res://assets/models/props/synty_larder_chest.glb",
+	"res://assets/models/props/synty_provision_stack.glb",
+	"res://assets/models/props/synty_yard_table.glb",
+	"res://assets/models/props/synty_tarped_cache.glb",
+	"res://assets/models/props/synty_broken_gateway.glb",
+	"res://assets/models/props/synty_firepit.glb",
+	"res://assets/models/props/synty_generator_cache.glb",
+	"res://assets/models/props/synty_field_clinic.glb",
+	"res://assets/models/props/synty_fish_camp.glb",
+	"res://assets/models/props/synty_fuel_depot.glb",
+	"res://assets/models/props/synty_road_blockade.glb",
+	"res://assets/models/props/synty_radio_relay.glb",
+	"res://assets/models/props/synty_refuge_bedroll.glb",
+	"res://assets/models/props/synty_rock_cluster_north.glb",
+	"res://assets/models/props/synty_rock_cluster_south.glb",
+	"res://assets/models/props/synty_rock_cluster_east.glb",
+	"res://assets/models/props/burning_barrel.glb",
+	"res://assets/models/props/campfire.glb",
+]
+
+const SWINGS := [
+	"res://assets/models/props/tire_swing.glb",
 ]
 
 const BUILDINGS := [
 	FARMHOUSE,
 	"res://assets/models/buildings/tool_shed/tool_shed.glb",
 	"res://assets/models/buildings/well_house/well_house.glb",
+	"res://assets/models/props/water_well.glb",
+	"res://assets/models/buildings/gas_station/gas_station.glb",
+	"res://assets/models/buildings/church/church.glb",
+	"res://assets/models/buildings/logging_camp/logging_camp.glb",
+	"res://assets/models/buildings/transmission_tower/transmission_tower.glb",
 ]
 
 ## Nothing in the frame should stop a walker here. The wires are 7 cm of steel
-## eight metres up and the swing hangs off a branch of a tree that is already
-## solid.
+## eight metres up; the swing is deliberately excluded because its tire is a
+## player-facing physical object.
 const HOLLOW := [
 	"res://assets/models/props/power_wire.glb",
-	"res://assets/models/props/tire_swing.glb",
+	"res://assets/models/props/synty_pickaxe.glb",
 ]
 
 ## The farmhouse's front doorway, probed a little inside the opening the import
@@ -167,15 +211,27 @@ func test_every_world_mesh_has_a_declared_collision_policy() -> void:
 
 func test_every_solid_model_arrives_carrying_a_body() -> void:
 	var hollow := PackedStringArray()
-	for path in TREES + BOXED + BUILDINGS:
+	for path in TREES + BOXED + SWINGS + BUILDINGS:
 		if not _has_body(path):
 			hollow.append("%s carries no StaticBody3D -- run tools/wire_model_imports.gd, then --headless --import" % path)
 	assert_eq(hollow.size(), 0, "; ".join(hollow))
 
 
-func test_the_wires_and_the_swing_arrive_hollow() -> void:
+func test_the_wires_arrive_hollow() -> void:
 	for path in HOLLOW:
 		assert_false(_has_body(path), "%s must not be solid" % path)
+
+
+func test_the_tire_swing_arrives_with_one_tire_collider() -> void:
+	for path in SWINGS:
+		var colliders := _colliders(path)
+		assert_eq(colliders.size(), 1, "%s must carry exactly one tire collider" % path)
+		if colliders.is_empty():
+			continue
+		assert_true(
+			colliders[0]["shape"] is SphereShape3D,
+			"%s must collide as a compact tire sphere, not as its hanging rope" % path
+		)
 
 
 # --- trees and the pole ------------------------------------------------------

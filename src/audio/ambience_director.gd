@@ -176,16 +176,27 @@ func _exit_tree() -> void:
 	# with it the stream: "ERROR: N resources still in use at exit", which is a
 	# dirty console and a failed run by this project's standard.
 	for voice in _voices:
-		if is_instance_valid(voice):
-			voice.stop()
+		_release_voice_stream(voice)
 	for voice in _cue_voices:
-		if is_instance_valid(voice):
-			voice.stop()
+		_release_voice_stream(voice)
 	for key in _fire_voices:
 		var voice = _fire_voices[key]
-		if is_instance_valid(voice):
-			voice.stop()
+		_release_voice_stream(voice)
+	# stop() ends output, but the audio thread can retain its playback object
+	# until the player releases the stream. Clear both sides explicitly before
+	# shutdown rather than relying on SceneTree teardown order.
+	_streams.clear()
+	_voices.clear()
+	_cue_voices.clear()
+	_fire_voices.clear()
 	_release_bus()
+
+
+static func _release_voice_stream(voice) -> void:
+	if voice == null or not is_instance_valid(voice):
+		return
+	voice.stop()
+	voice.stream = null
 
 
 func _process(delta: float) -> void:
@@ -554,7 +565,6 @@ static func _eased(value: float, target: float, tau: float, delta: float) -> flo
 func _advance_bed(delta: float) -> void:
 	if _map == null:
 		return
-	var tau := _map.bed_response_seconds
 	for index in range(_map.layers.size()):
 		var layer := _map.layers[index]
 		if layer == null:
@@ -564,6 +574,12 @@ func _advance_bed(delta: float) -> void:
 			target *= 1.0 - _hush
 		if index >= _gains.size():
 			continue
+		# The warning edge stays quick. A layer may separately ask for a slower
+		# release so a sub-second dip in the model sounds like a lull in one
+		# continuous wind, not like a sample being stopped and restarted.
+		var tau := _map.bed_response_seconds
+		if target < _gains[index] and layer.release_seconds > 0.0:
+			tau = layer.release_seconds
 		_gains[index] = _eased(_gains[index], target, tau, delta)
 		_apply_voice(index, layer, delta)
 
@@ -787,7 +803,7 @@ func _build_gains() -> void:
 func _build_voices() -> void:
 	for voice in _voices:
 		if is_instance_valid(voice):
-			voice.stop()
+			_release_voice_stream(voice)
 			voice.queue_free()
 	_voices.clear()
 	if _map == null:

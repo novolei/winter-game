@@ -208,6 +208,43 @@ func test_by_default_walking_up_to_it_does_not_open_it() -> void:
 	assert_false(door.is_open(), "the design asks for E; approaching must not be enough")
 
 
+func test_the_prompt_anchor_can_stay_on_the_door_inside_a_larger_approach_zone() -> void:
+	var door := _build()
+	var doorstep := CollisionShape3D.new()
+	door.position = Vector3(3.0, 0.0, -2.0)
+	doorstep.position = Vector3(1.8, 1.1, 1.5)
+	door.add_child(doorstep)
+	var anchor := Marker3D.new()
+	anchor.name = "PromptAnchor"
+	anchor.position = Vector3(1.8, 1.3, 0.0)
+	door.add_child(anchor)
+	door.interaction_anchor_path = NodePath("PromptAnchor")
+	assert_eq(door._interaction_anchor(), Vector3(4.8, 1.3, -2.0),
+		"the prompt followed the broad trigger instead of its authored point on the door")
+
+
+func test_a_guided_door_opens_and_requests_one_walk_through_on_e() -> void:
+	var door := _build()
+	door.guides_entry = true
+	door.interaction_id = &"farmhouse_front"
+	door.entry_target_offset = Vector3(1.8, 0.0, -1.35)
+	_with_bus(door)
+	var entries: Array = []
+	_bus.subscribe(DoorScript.EVENT_ENTRY_REQUESTED, func(payload): entries.append(payload))
+	_occupant = Node3D.new()
+	door.set_occupant(_occupant)
+	door.on_body_entered(_occupant)
+	door._on_interaction_activated({"id": &"door:farmhouse_front"})
+	assert_true(door.is_open(), "E began the walk while the leaf still blocked the threshold")
+	assert_eq(entries.size(), 1, "one E press requested more than one guided entry")
+	if entries.is_empty():
+		return
+	assert_true(entries[0].get("destination", Vector3.INF) is Vector3,
+		"the player received no value-only destination to walk toward")
+	for value in entries[0].values():
+		assert_false(value is Node, "the guided-entry event leaked a live scene node")
+
+
 func test_opening_and_shutting_are_announced() -> void:
 	var door := _build()
 	_with_bus(door)

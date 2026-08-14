@@ -141,6 +141,26 @@ func test_the_character_is_never_faded_by_this_system() -> void:
 	root.free()
 
 
+func test_an_instanced_world_wrapper_can_never_turn_the_player_into_an_occluder() -> void:
+	var root := Node3D.new()
+	var world := Node3D.new()
+	world.name = "InstancedWorld"
+	world.scene_file_path = "res://scenes/main.tscn"
+	root.add_child(world)
+	var player := Node3D.new()
+	player.name = "Player"
+	player.add_child(_prop("Body", "res://winter_wanderer.glb"))
+	world.add_child(player)
+	world.add_child(_prop("Farmhouse", "res://farmhouse.glb"))
+	var units: Array = FaderScript.units_in(root, player)
+	assert_eq(units.size(), 1,
+		"the instanced world was treated as one fade unit and swallowed the player")
+	if units.size() == 1:
+		assert_eq(String((units[0] as Node).name), "Farmhouse",
+			"the player's own visual escaped through an instanced-world ancestor")
+	root.free()
+
+
 # --- what shape an occluder is -----------------------------------------------
 
 ## The mesh box is the wrong shape and a screenshot proved it: a bare tree's box
@@ -579,6 +599,24 @@ func test_the_dwell_is_short_and_bounded() -> void:
 		"the dwell is %.2f s; anything longer stops being anti-flicker and starts being the fade sticking" % settings.dwell_seconds)
 	assert_true(settings.dwell_seconds < settings.fade_seconds,
 		"the dwell must be shorter than the fade it delays, or it is the thing you see")
+
+
+func test_partial_body_edge_samples_cannot_reverse_the_fade_every_frame() -> void:
+	var fader = FaderScript.new()
+	var house := Node3D.new()
+	assert_false(fader.confirmed_occlusion(house, true),
+		"one edge hit immediately started fading the house")
+	assert_true(fader.confirmed_occlusion(house, true),
+		"two consecutive hits did not confirm a real occluder")
+	assert_true(fader.confirmed_occlusion(house, false),
+		"one edge miss reversed the fade and will flash at a body boundary")
+	assert_true(fader.confirmed_occlusion(house, true),
+		"a renewed hit did not preserve the stable occluder")
+	assert_true(fader.confirmed_occlusion(house, false))
+	assert_false(fader.confirmed_occlusion(house, false),
+		"two consecutive clear samples did not release the occluder")
+	house.free()
+	fader.free()
 
 
 # --- one owner for a mesh's alpha ---------------------------------------------

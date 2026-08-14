@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="PigeonPresentation" format=3]
+
+[ext_resource type="AudioStream" path="res://assets/audio/wildlife/pigeon/pigeon_departure_wings.ogg" id="1_qayvd"]
+[ext_resource type="AudioStream" path="res://assets/audio/wildlife/pigeon/pigeon_call.mp3" id="2_cqxdq"]
+[ext_resource type="Script" path="res://src/definitions/pigeon_presentation.gd" id="3_nlio2"]
+
+[resource]
+script = ExtResource("3_nlio2")
+plumage_tones = Array[Color]([Color(0.45490196, 0.41568628, 0.38039216, 1), Color(0.20392157, 0.22352941, 0.25882354, 1), Color(0.8666667, 0.83137256, 0.7607843, 1)])
+ground_call = ExtResource("2_cqxdq")
+departure_wings = ExtResource("1_qayvd")
+heart_color = Color(1, 0.47058824, 0.65882355, 1)
+feed_prompt_color = Color(0.31764707, 1, 0.1764706, 1)
+feed_guide_color = Color(0.4, 0.47058824, 0.5647059, 1)

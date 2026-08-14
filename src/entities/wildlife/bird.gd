@@ -310,6 +310,15 @@ enum State {
 @export var balance_off := 0.36
 
 var _state: State = State.PERCHED
+## A direct `grip()` is a landing for a newly spawned flock member; the final
+## grip after `_flare()` is the same landing. Keep one report for both paths so
+## a wire sheds one precise little patch instead of doubling its particles.
+var _landing_notified := false
+## Departure is reported on the first frame the feet actually leave the perch,
+## not when the flock merely tells the bird to scatter. That keeps a staggered
+## bird from disturbing the snow while it is still standing still, and gives a
+## snow-bearing perch exactly one wing-wash burst per take-off.
+var _departure_notified := false
 var _wait := 0.0
 var _elapsed := 0.0
 var _heading := Vector3(0.0, 0.4, -1.0).normalized()
@@ -419,9 +428,13 @@ func is_perched() -> bool:
 
 
 ## Whether it is still standing on something. True through the stagger and the
-## launch take, because it is.
+## launch take, and through the feet-down settle at the end of a landing. The
+## last case matters even though the state is still LANDING: the bird has taken
+## hold already and must ride a moving perch until it actually leaves again.
 func is_on_the_wire() -> bool:
-	return _state == State.PERCHED or _state == State.WAITING or _state == State.LAUNCHING
+	return _state == State.PERCHED or _state == State.WAITING \
+		or _state == State.LAUNCHING \
+		or (_state == State.LANDING and _feet_down())
 
 
 ## The bearing it was sent on. The flock decides it; this reports it, so the
@@ -544,6 +557,48 @@ func _take_hold(perch: Dictionary) -> void:
 		perch.get("local_facing", Vector3(0.0, 0.0, -1.0)), Vector3(0.0, 0.0, -1.0)
 	)
 	_anchor_seen = _anchor.placement()
+	_departure_notified = false
+	_report_perch_landing(perch)
+
+
+## The declaration's parent owns any surface-level landing detail. Bird only
+## knows that it gripped a declared perch, so tree branches and eaves remain
+## inert while a snow-bearing wire can opt in without a bird-to-wire reference.
+func _report_perch_landing(perch: Dictionary) -> void:
+	if _landing_notified:
+		return
+	var host := _anchor.get_parent() if _anchor != null else null
+	if host == null or not host.has_method(&"receive_perch_landing"):
+		return
+	_landing_notified = true
+	host.call(&"receive_perch_landing", perch)
+
+
+## Let the surface under the feet opt into a take-off detail. The payload is
+## resolved again on this frame because a wire may have moved in the wind since
+## the perch was first sampled; the old world-space `at` is only a fallback for
+## declarations that no longer exist.
+func _report_perch_departure() -> void:
+	if _departure_notified or _anchor == null or not is_instance_valid(_anchor):
+		return
+	var host := _anchor.get_parent()
+	if host == null or not host.has_method(&"receive_perch_departure"):
+		return
+	var placed := _anchor.placement()
+	var live_facing := placed.basis * _anchor_local_facing
+	var payload := {
+		"at": placed * _anchor_local,
+		"facing": _normalised(
+			Vector3(live_facing.x, 0.0, live_facing.z),
+			Vector3(_facing.x, 0.0, _facing.z)
+		),
+		"departure": _departure,
+		"anchor": _anchor,
+		"local": _anchor_local,
+		"local_facing": _anchor_local_facing,
+	}
+	_departure_notified = true
+	host.call(&"receive_perch_departure", payload)
 
 
 ## Go, in `heading`, `delay` seconds from now -- milling for `wheel_seconds`
@@ -566,6 +621,7 @@ func scatter(heading: Vector3, delay := 0.0, wheel_rate := 0.0, wheel_seconds :=
 	_wheel_rate = wheel_rate if is_finite(wheel_rate) else 0.0
 	_wheel_seconds = maxf(wheel_seconds, 0.0) if is_finite(wheel_seconds) else 0.0
 	_wheeled = 0.0
+	_landing_notified = false
 	_wait = maxf(delay, 0.0)
 	_elapsed = 0.0
 	_from = _where()
@@ -589,6 +645,7 @@ func approach(perch: Dictionary, from: Vector3, wheel_rate := 0.0, wheel_seconds
 	if not perch.has("at"):
 		return false
 	_target = perch.duplicate()
+	_landing_notified = false
 	_state = State.INBOUND
 	_anchor = null
 	_balancing = false
@@ -620,15 +677,22 @@ func approach(perch: Dictionary, from: Vector3, wheel_rate := 0.0, wheel_seconds
 func give_up() -> bool:
 	if _state != State.INBOUND and _state != State.LANDING:
 		return false
+	# LANDING includes two physically different moments: the descent, when there
+	# is no surface contact, and the settle, after `_take_hold()` closed the feet
+	# on the perch. Calling off the second is a real take-off even though it skips
+	# the ordinary launch state, so preserve that edge before clearing the anchor.
+	var left_a_perch := _state == State.LANDING and _feet_down()
+	var away := _normalised(Vector3(_facing.x, 0.0, _facing.z), Vector3(0.0, 0.0, -1.0))
+	_heading = (away + Vector3.UP * 0.36).normalized()
+	_departure = _heading
+	if left_a_perch:
+		_report_perch_departure()
 	_target = {}
 	_anchor = null
 	_settling = false
 	_state = State.GLIDING
 	_elapsed = 0.0
 	_from = _where()
-	var away := _normalised(Vector3(_facing.x, 0.0, _facing.z), Vector3(0.0, 0.0, -1.0))
-	_heading = (away + Vector3.UP * 0.36).normalized()
-	_departure = _heading
 	_wheel_rate = 0.0
 	_wheel_seconds = 0.0
 	_play(BirdSpecies.GLIDE)
@@ -1007,6 +1071,7 @@ func _is_flying() -> bool:
 func _lift_off(delta: float) -> void:
 	if _feet_down():
 		return
+	_report_perch_departure()
 	var crouch := launch_seconds * clampf(crouch_fraction, 0.0, 1.0)
 	var window := maxf(launch_seconds - crouch, 0.0001)
 	var through := clampf((_elapsed - crouch) / window, 0.0, 1.0)
@@ -1145,10 +1210,19 @@ func palette_tone() -> Color:
 ## with no balance take should keep doing what it was doing, not fall back to
 ## something wrong.
 func _play(role: StringName) -> void:
-	if _player == null or species == null:
+	if species == null:
 		return
 	var take := species.take_for(role)
 	if take == &"":
+		return
+	play_take(take)
+
+
+## Play one named delivery take. Species-independent motion keeps using
+## `_play(role)`; a species-specific behaviour such as a pigeon's ground walk
+## may address one of the extra named takes its data already supplies.
+func play_take(take: StringName) -> void:
+	if _player == null or species == null or take == &"":
 		return
 	var name := "%s/%s" % [species.library, take]
 	if not _player.has_animation(name):

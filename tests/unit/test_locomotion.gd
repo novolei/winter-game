@@ -453,6 +453,113 @@ func test_deep_snow_takes_the_run_away_rather_than_slowing_it() -> void:
 	assert_false(player.can_run(1.0), "he can run through a full drift")
 
 
+func test_the_orc_walk_uses_confirmed_enter_and_exit_lines() -> void:
+	var player := _build()
+	_field = SnowFieldScript.new()
+	assert_almost_eq(player.deep_stride_enter_hold, 0.25, 0.0001)
+	assert_almost_eq(player.deep_stride_exit_hold, 0.45, 0.0001)
+	assert_almost_eq(player.deep_stride_fade_seconds, 0.15, 0.0001)
+	player.deep_stride_fade_seconds = 0.0
+
+	# A patch shorter than the enter confirmation is ignored entirely.
+	player.advance_deep_stride(
+		player.deep_stride_enter_hold - 0.01,
+		_field.max_depth_m,
+		_field.very_deep_depth_m,
+		_field.very_deep_exit_depth_m
+	)
+	assert_false(player.deep_stride_active(), "one small full-depth island enabled the Orc gait")
+	player.advance_deep_stride(
+		0.01,
+		_field.max_depth_m,
+		_field.very_deep_depth_m,
+		_field.very_deep_exit_depth_m
+	)
+	assert_true(player.deep_stride_active(), "confirmed very-deep snow did not enable the Orc gait")
+
+	# The whole 0.52..0.58 m band remembers the active state. Only a confirmed
+	# sample at the lower line is allowed to release it.
+	player.advance_deep_stride(
+		1.0, 0.546, _field.very_deep_depth_m, _field.very_deep_exit_depth_m
+	)
+	assert_true(player.deep_stride_active(), "one packed print cancelled the Orc gait")
+	player.advance_deep_stride(
+		player.deep_stride_exit_hold - 0.01,
+		_field.very_deep_exit_depth_m,
+		_field.very_deep_depth_m,
+		_field.very_deep_exit_depth_m
+	)
+	assert_true(player.deep_stride_active(), "the exit line bypassed its confirmation time")
+	player.advance_deep_stride(
+		0.01,
+		_field.very_deep_exit_depth_m,
+		_field.very_deep_depth_m,
+		_field.very_deep_exit_depth_m
+	)
+	assert_false(player.deep_stride_active(), "confirmed shallower snow did not restore the walk")
+
+	# Once out, the same middle-band depth may not re-enter from the other side.
+	player.advance_deep_stride(
+		1.0, 0.546, _field.very_deep_depth_m, _field.very_deep_exit_depth_m
+	)
+	assert_false(player.deep_stride_active(), "the hysteresis band re-entered the Orc gait")
+
+
+func test_one_footprint_cannot_thrash_the_orc_blend() -> void:
+	var player := _build()
+	_field = SnowFieldScript.new()
+	player.deep_stride_enter_hold = 0.0
+	player.advance_deep_stride(
+		0.0, _field.max_depth_m, _field.very_deep_depth_m, _field.very_deep_exit_depth_m
+	)
+	var previous := player.deep_stride_blend()
+	for frame in range(30):
+		# 0.546 m is a conservative packed-sample disturbance from a 9% print
+		# in a 0.60 m drift. The old raw factor alternated almost 1 -> 0 here.
+		var depth := _field.max_depth_m if frame % 2 == 0 else 0.546
+		var blend := player.advance_deep_stride(
+			1.0 / 60.0, depth, _field.very_deep_depth_m, _field.very_deep_exit_depth_m
+		)
+		assert_true(blend + 0.000001 >= previous, "the Orc fade reversed on packed snow")
+		assert_true(player.deep_stride_active(), "packed snow toggled the latched gait")
+		previous = blend
+	assert_almost_eq(previous, 1.0, 0.0001, "the one-shot Orc fade never completed")
+
+
+func test_the_orc_crossfade_is_frame_rate_independent() -> void:
+	var enter_results: Array[float] = []
+	var exit_results: Array[float] = []
+	for fps in [30.0, 60.0, 120.0]:
+		var player := PlayerControllerScript.new()
+		player.deep_stride_fade_seconds = 0.15
+		var elapsed := 0.0
+		var sample_time := player.deep_stride_enter_hold + player.deep_stride_fade_seconds * 0.5
+		while elapsed < sample_time - 0.000001:
+			var step: float = minf(1.0 / fps, sample_time - elapsed)
+			player.advance_deep_stride(step, 0.60, 0.58, 0.52)
+			elapsed += step
+		enter_results.append(player.deep_stride_blend())
+		player.free()
+
+		var leaving := PlayerControllerScript.new()
+		leaving.deep_stride_enter_hold = 0.0
+		leaving.deep_stride_fade_seconds = 0.0
+		leaving.advance_deep_stride(0.0, 0.60, 0.58, 0.52)
+		leaving.deep_stride_fade_seconds = 0.15
+		elapsed = 0.0
+		sample_time = leaving.deep_stride_exit_hold + leaving.deep_stride_fade_seconds * 0.5
+		while elapsed < sample_time - 0.000001:
+			var step: float = minf(1.0 / fps, sample_time - elapsed)
+			leaving.advance_deep_stride(step, 0.52, 0.58, 0.52)
+			elapsed += step
+		exit_results.append(leaving.deep_stride_blend())
+		leaving.free()
+	for blend in enter_results:
+		assert_almost_eq(blend, 0.5, 0.0001, "the smoothstep midpoint depends on physics FPS")
+	for blend in exit_results:
+		assert_almost_eq(blend, 0.5, 0.0001, "the exit midpoint depends on physics FPS")
+
+
 ## The load-bearing behaviour, and the whole reason SnowField carries a packed
 ## layer: a path you have beaten flat lets you run again.
 func test_a_path_beaten_flat_gives_the_run_back() -> void:
@@ -1111,7 +1218,7 @@ func _clips() -> AnimationLibrary:
 func test_every_blend_in_the_graph_keeps_both_inputs_running() -> void:
 	var graph := PlayerControllerScript.build_blend_tree()
 	var checked := 0
-	for name in ["chill", "gait", "motion"]:
+	for name in ["chill", "hunch", "gait", "footing", "snow_stride", "motion"]:
 		var blend := graph.get_node(name) as AnimationNodeBlend2
 		assert_not_null(blend, "the graph has no Blend2 called %s" % name)
 		if blend == null:
@@ -1123,7 +1230,7 @@ func test_every_blend_in_the_graph_keeps_both_inputs_running() -> void:
 				% name
 				+ "re-enters the mix at a stale phase -- which is the straddle"
 		)
-	assert_eq(checked, 3, "the graph no longer has the three blends this pins")
+	assert_eq(checked, 6, "the graph no longer has the six blends this pins")
 
 
 ## ...and sync alone is not enough. It keeps both inputs advancing; it does not
@@ -1234,3 +1341,42 @@ func test_standing_still_is_still_an_idle() -> void:
 		0.0001,
 		"a man at a standstill in a drift is not idling"
 	)
+
+
+## Jolt resolves the velocity pointing into a static collider to zero. The tire
+## swing must receive what the player attempted before that solve, otherwise a
+## straight push -- the common contact -- is the one impact that does nothing.
+func test_prop_impact_keeps_the_attempted_velocity_before_slide_resolution() -> void:
+	var attempted := Vector3(1.25, -0.4, -0.55)
+	var impact: Vector3 = PlayerControllerScript.impact_velocity_before_slide(attempted)
+	assert_almost_eq(impact.x, attempted.x, 0.0001, "the head-on X momentum was erased")
+	assert_almost_eq(impact.z, attempted.z, 0.0001, "the head-on Z momentum was erased")
+	assert_almost_eq(impact.y, 0.0, 0.0001, "a ground prop must not receive falling momentum")
+	assert_true(impact.length() > 1.0, "the attempted push no longer carries enough momentum to move the tire")
+
+
+# ---------------------------------------------------------------------------
+# The short guided walk through a fixed-camera doorway
+# ---------------------------------------------------------------------------
+
+func test_a_door_entry_temporarily_owns_direction_toward_its_authored_target() -> void:
+	var player := _build()
+	player.position = Vector3.ZERO
+	assert_true(player.begin_guided_entry(Vector3(1.0, 0.0, -2.0)),
+		"a valid door destination was refused")
+	var direction: Vector3 = player.advance_guided_entry(0.1)
+	assert_true(player.is_guided_entry_active(), "control returned before crossing the threshold")
+	assert_almost_eq(direction.length(), 1.0, 0.0001, "the guided walk is not a stable heading")
+	assert_true(direction.x > 0.0 and direction.z < 0.0,
+		"the doorway guide walked away from its destination: %s" % direction)
+
+
+func test_reaching_the_entry_target_immediately_returns_control() -> void:
+	var player := _build()
+	var destination := Vector3(1.8, 0.0, -1.35)
+	player.position = destination
+	assert_true(player.begin_guided_entry(destination))
+	assert_eq(player.advance_guided_entry(0.1), Vector3.ZERO,
+		"a body already through the doorway kept walking")
+	assert_false(player.is_guided_entry_active(),
+		"the guided entry did not hand control back at the safe point")

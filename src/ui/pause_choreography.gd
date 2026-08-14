@@ -34,6 +34,17 @@ static func closing(tokens: UITokens, ids: Array[StringName]) -> PauseChoreograp
 	schedule.is_closing = true
 	return schedule
 
+## State-to-state swaps (menu -> confirm, menu -> settings) are not arrivals,
+## they are re-dealings of the same hand: much tighter stagger, quick bloom, so
+## the page that was asked for is THERE before the finger leaves the key.
+static func transition(tokens: UITokens, ids: Array[StringName]) -> PauseChoreography:
+	var schedule := PauseChoreography.new()
+	schedule.lines = ids.duplicate()
+	schedule.line_seconds = tokens.bloom_seconds * 0.8
+	schedule.stagger_seconds = tokens.bloom_seconds * 0.14
+	schedule.is_closing = false
+	return schedule
+
 func start_at(index: int) -> float:
 	return stagger_seconds * index
 

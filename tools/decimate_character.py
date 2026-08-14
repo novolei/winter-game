@@ -143,6 +143,27 @@ def shift_to_frame_one(action):
         curve.update()
 
 
+def retime_action(action, factor):
+    """Preserve seconds when an animation FBX uses a different sample rate.
+
+    Blender's FBX importer writes the imported file's frame rate onto the whole
+    Scene.  A 60 fps delivery imported after the wanderer's 30 fps library would
+    therefore make every existing take export at twice its authored speed.  The
+    imported action is the only thing that should inherit the delivery's rate:
+    scale its key times onto the character scene's timeline, then restore the
+    scene rate before anything is exported.
+    """
+    if abs(factor - 1.0) < 0.000001:
+        return
+    pivot = action.frame_range[0]
+    for curve in fcurves_of(action):
+        for key in curve.keyframe_points:
+            key.co.x = pivot + (key.co.x - pivot) * factor
+            key.handle_left.x = pivot + (key.handle_left.x - pivot) * factor
+            key.handle_right.x = pivot + (key.handle_right.x - pivot) * factor
+        curve.update()
+
+
 def merge_animation(armature, path):
     """Fold one animation-only FBX into the character's own action list.
 
@@ -158,7 +179,12 @@ def merge_animation(armature, path):
     """
     known = set(bpy.data.actions.keys())
     objects = set(bpy.data.objects.keys())
+    scene = bpy.context.scene
+    target_fps = scene.render.fps
+    target_fps_base = scene.render.fps_base
+    target_rate = target_fps / target_fps_base
     import_source(path)
+    source_rate = scene.render.fps / scene.render.fps_base
 
     added = [a for a in bpy.data.actions if a.name not in known]
     if not added:
@@ -172,6 +198,9 @@ def merge_animation(armature, path):
     action = added[0]
     action.name = os.path.splitext(os.path.basename(path))[0]
     action.use_fake_user = True
+    retime_action(action, target_rate / source_rate)
+    scene.render.fps = target_fps
+    scene.render.fps_base = target_fps_base
     shift_to_frame_one(action)
 
     if armature.animation_data is None:
@@ -194,9 +223,10 @@ def merge_animation(armature, path):
         if name not in objects:
             bpy.data.objects.remove(bpy.data.objects[name], do_unlink=True)
 
-    print("decimate_character: merged %s as %r (%d frames)" % (
+    print("decimate_character: merged %s as %r (%d frames at %.3g fps -> %.3g fps)" % (
         os.path.basename(path), action.name,
-        int(action.frame_range[1] - action.frame_range[0]) + 1))
+        int(action.frame_range[1] - action.frame_range[0]) + 1,
+        source_rate, target_rate))
 
 
 def main():

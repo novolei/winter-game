@@ -1,7 +1,8 @@
 """Turn the owner's five ambience takes into seamless loops.
 
     "C:/Program Files/Blender Foundation/Blender 5.2/blender.exe" --background \
-        --factory-startup --python tools/build_ambience_loops.py -- [--measure]
+        --factory-startup --python tools/build_ambience_loops.py -- \
+        [--measure] [--only wind_mid]
 
 `--measure` reports and writes nothing. Without it the loops are written to
 `assets/audio/ambience/`, where `AmbienceMap.sound_folder` resolves them by
@@ -77,6 +78,13 @@ of the same wind -- low is the body of the air, mid is the gust, high is the
 hiss. Three broadband recordings played together do not sum to that design; they
 sum to mud, three times as loud in the bottom as any one of them.
 
+The old `wind_low` and 3.6 s `wind_mid` were replaced on 2026-08-13 with two
+non-overlapping passages from lwdickens' "winter wind in trees" (Freesound
+261226, CC0 1.0). The reproducible source is the original 48 kHz/24-bit WAV,
+`winter_wind_in_trees_261226.wav`, SHA-256
+4046FBF42173A54B4216FAF4EDF2515C59F6BF70E6920B00375A62BB84AD420A.
+Both 60 s derivatives are delivered as lossless 48 kHz/16-bit mono PCM.
+
 Whether the supplied material obeys the split is a measurement, printed in full
 by `--measure` and again before and after every filter. `fire` is not filtered:
 it is the only voice on its own bus, it is never layered with anything, and a
@@ -96,7 +104,14 @@ PROJECT = os.path.dirname(HERE)
 SRC = os.path.join(PROJECT, "assets", "source", "audio", "ambience")
 OUT = os.path.join(PROJECT, "assets", "audio", "ambience")
 
-SOURCES = ["wind_low.wav", "wind_high.wav", "wind_mid.mp3", "snow_fall.mp3", "fire.mp3"]
+SOURCES = [
+	"wind_low.wav",
+	"wind_high.wav",
+	"wind_mid.mp3",
+	"winter_wind_in_trees_261226.wav",
+	"snow_fall.mp3",
+	"fire.mp3",
+]
 
 ## Octave-ish bands. The three wind layers are supposed to live in different
 ## ones; the report is what says whether they do.
@@ -330,6 +345,28 @@ def circular_filter(loop, rate, high_pass=0.0, low_pass=0.0, slope_octaves=1.0):
 	return np.fft.irfft(spec * gain, n)
 
 
+def circular_notches(loop, rate, notches, depth_fraction=1.0):
+	"""Remove stable tonal lines without changing the loop join.
+
+	Each notch is (centre Hz, FWHM Hz, total attenuation dB). The filter runs
+	once before loop search and once after the crossfade, so each pass applies
+	half the requested depth. Gaussian skirts keep the affected bandwidth tiny
+	and avoid the hollow sound of a full harmonic comb.
+	"""
+	if not notches:
+		return loop
+	n = len(loop)
+	spec = np.fft.rfft(loop)
+	freqs = np.fft.rfftfreq(n, 1.0 / rate)
+	gain = np.ones_like(freqs)
+	for centre, width, depth_db in notches:
+		sigma = max(float(width) / 2.354820045, 1e-6)
+		shape = np.exp(-0.5 * ((freqs - float(centre)) / sigma) ** 2)
+		centre_gain = 10.0 ** (-float(depth_db) * depth_fraction / 20.0)
+		gain *= 1.0 - (1.0 - centre_gain) * shape
+	return np.fft.irfft(spec * gain, n)
+
+
 def k_weight(freqs, rate):
 	"""ITU-R BS.1770's K-weighting, as a magnitude response on an FFT grid.
 
@@ -478,25 +515,30 @@ def write_wav(path, samples, rate):
 
 
 # layer, source, segments [(start s, end s, gain dB)], flatten, loop s, fade s,
-# high-pass Hz, low-pass Hz, target RMS dBFS, why
+# high-pass Hz, low-pass Hz, notches [(centre Hz, FWHM Hz, attenuation dB)],
+# target RMS dBFS, why
 #
 # THE ASSIGNMENT IS BY MEASUREMENT, NOT BY FILENAME -- see the header.
 CUTS = [
-	("wind_low", "wind_mid.mp3", [(5.0, 23.8, 0.0)], 0.0, 16.0, 2.0, 30.0, 900.0, -20.0,
-	 "71% of its energy under 250 Hz and 19 s of it steady within 2 dB. The body of the air."),
-	("wind_mid", "wind_low.wav", [(0.50, 5.00, 0.0)], 1.0, 3.6, 0.6, 200.0, 900.0, -20.0,
-	 "80% in 250-800 Hz. One gust with a 31 dB decay, flattened -- see flatten_envelope()."),
-	("wind_high", "wind_high.wav", [(0.30, 6.10, 0.0)], 0.6, 4.6, 0.7, 700.0, 0.0, -20.0,
+	("wind_low", "winter_wind_in_trees_261226.wav", [(80.00, 152.80, 0.0)], 0.0, 60.0, 10.0, 35.0, 900.0,
+	 [(60.5, 8.0, 36.0), (124.0, 7.0, 18.0), (184.5, 16.0, 14.0),
+	  (248.0, 6.0, 10.0), (496.0, 10.0, 8.0), (558.0, 10.0, 8.0)], -20.0,
+	 "The always-on air bed. A later passage than wind_mid, with mains-like tones removed and no breathing envelope."),
+	("wind_mid", "winter_wind_in_trees_261226.wav", [(0.50, 71.10, 0.0)], 0.0, 60.0, 10.0, 200.0, 2500.0,
+	 [(185.5, 4.0, 12.0), (247.0, 3.0, 12.0), (370.5, 14.0, 10.0),
+	  (432.0, 3.0, 6.0), (494.0, 5.0, 10.0), (555.0, 5.0, 8.0)], -20.0,
+	 "The gust layer. An early passage kept separate from wind_low, with the old take's 500 Hz ring absent."),
+	("wind_high", "wind_high.wav", [(0.30, 6.10, 0.0)], 0.6, 4.6, 0.7, 700.0, 0.0, [], -20.0,
 	 "86% in 0.8-2.5 kHz, the top of the three. Partly flattened: 36 dB of its own gusts would fight the driver."),
-	("snow_fall", "snow_fall.mp3", [(0.30, 6.80, 0.0)], 0.0, 5.4, 0.9, 700.0, 0.0, -20.0,
+	("snow_fall", "snow_fall.mp3", [(0.30, 6.80, 0.0)], 0.0, 5.4, 0.9, 700.0, 0.0, [], -20.0,
 	 "Steady within 4 dB, but 56% of it is wind under 250 Hz -- high-passed off, or the wind is heard twice."),
-	("fire", "fire.mp3", [(0.50, 14.30, 0.0)], 0.0, 12.0, 1.3, 0.0, 0.0, -20.0,
+	("fire", "fire.mp3", [(0.50, 14.30, 0.0)], 0.0, 12.0, 1.3, 0.0, 0.0, [], -20.0,
 	 "Steady within 4 dB across the take and NO transient above 6x the median envelope -- nothing to mark the loop."),
 ]
 
 
 def build(layer, source, segments, flatten, length_s, fade_s, high_pass, low_pass,
-          target_rms_db, why, mono, rate):
+          notches, target_rms_db, why, mono, rate):
 	print("-" * 78)
 	print("%s  <-  %s" % (layer, source))
 	print("  %s" % why)
@@ -516,6 +558,8 @@ def build(layer, source, segments, flatten, length_s, fade_s, high_pass, low_pas
 	# what ships.
 	if high_pass > 0.0 or low_pass > 0.0:
 		piece = circular_filter(piece, rate, high_pass, low_pass)
+	if notches:
+		piece = circular_notches(piece, rate, notches, 0.5)
 	found = best_loop(piece, rate, length_s, fade_s)
 	if found is None:
 		print("  REFUSED: %.2f s of material cannot carry a %.2f s loop plus a %.2f s crossfade" % (
@@ -533,6 +577,8 @@ def build(layer, source, segments, flatten, length_s, fade_s, high_pass, low_pas
 	# Applied again, and circularly this time: the pre-search filter was on an
 	# open segment, and only a circular pass can leave the wrap alone.
 	loop = circular_filter(loop, rate, high_pass, low_pass)
+	if notches:
+		loop = circular_notches(loop, rate, notches, 0.5)
 	if high_pass > 0.0 or low_pass > 0.0:
 		print("  filter: %s%s(circular, so the join is untouched)" % (
 			"high-pass %.0f Hz " % high_pass if high_pass > 0 else "",
@@ -545,6 +591,8 @@ def build(layer, source, segments, flatten, length_s, fade_s, high_pass, low_pas
 		print("  filter: none beyond DC removal")
 		print("    bands  " + " ".join("%s %4.1f%%" % (l, s * 100)
 			for l, s in zip(BAND_NAMES, band_shares(loop, rate))))
+	if notches:
+		print("  notches: " + ", ".join("%.1f Hz/%.1f Hz/%g dB" % notch for notch in notches))
 
 	loop, applied = normalise(loop, target_rms_db)
 	lufs = loudness_lufs(loop, rate)
@@ -557,6 +605,16 @@ def build(layer, source, segments, flatten, length_s, fade_s, high_pass, low_pas
 
 
 def main():
+	only = None
+	if "--only" in sys.argv:
+		index = sys.argv.index("--only")
+		if index + 1 >= len(sys.argv):
+			raise ValueError("--only requires a layer id")
+		only = sys.argv[index + 1]
+		known = [cut[0] for cut in CUTS]
+		if only not in known:
+			raise ValueError("unknown layer %r; expected one of %s" % (only, ", ".join(known)))
+
 	print("=" * 78)
 	print("SUPPLIED MATERIAL")
 	print("=" * 78)
@@ -574,9 +632,11 @@ def main():
 	print("=" * 78)
 	os.makedirs(OUT, exist_ok=True)
 	measured = {}
-	for layer, source, segments, flatten, length_s, fade_s, hp, lp, target, why in CUTS:
+	for layer, source, segments, flatten, length_s, fade_s, hp, lp, notches, target, why in CUTS:
+		if only is not None and layer != only:
+			continue
 		mono, rate = loaded[source]
-		built = build(layer, source, segments, flatten, length_s, fade_s, hp, lp, target, why,
+		built = build(layer, source, segments, flatten, length_s, fade_s, hp, lp, notches, target, why,
 			mono, rate)
 		if built is None:
 			continue

@@ -36,11 +36,15 @@ func test_focus_boldens_the_choice_by_one_weight_step() -> void:
 	assert_eq(_weight_of(focused) - _weight_of(resting),
 		SpatialScript.FOCUS_WEIGHT_STEP)
 
-func test_unfocused_choices_dim_to_the_second_opacity_step() -> void:
+func test_unfocused_choices_recede_to_the_quiet_alpha() -> void:
+	# Owner ruling 2026-08-14: unfocused choices keep the SAME cream ink; only
+	# the alpha steps down. The dim-grey drop was rejected -- too much contrast.
 	_spatial.set_state(&"menu")
 	_spatial.set_focus(SpatialPauseMenu.CONTINUE)
 	var resting := _label(&"Exit") as Label3D
-	assert_almost_eq(resting.modulate.a, Tokens.opacity_steps[1], 0.02)
+	assert_almost_eq(resting.modulate.a, SpatialScript.UNFOCUSED_ALPHA, 0.02)
+	assert_almost_eq(resting.modulate.r, Tokens.pause_ink_bright.r, 0.001,
+		"unfocused choices keep the cream ink, not a grey one")
 
 func test_the_focused_choice_lifts_two_pixels() -> void:
 	_spatial.set_state(&"menu")
@@ -64,6 +68,19 @@ func test_focus_moves_between_settings_rows() -> void:
 	assert_almost_eq(_spatial.focus_lift_for(&"row_stroke_bold"),
 		SpatialScript.FOCUS_LIFT_PIXELS)
 	assert_almost_eq(_spatial.focus_lift_for(&"row_prompt_hold"), 0.0)
+
+func test_the_focus_diamond_glows_like_an_ember() -> void:
+	# 雪夜一点火：焦点菱形是界面上唯一自发光的元素。
+	var found := false
+	for ornament in _spatial.ornaments():
+		if ornament.name == "FocusDiamond":
+			found = true
+			var material := ornament.material_override as StandardMaterial3D
+			assert_not_null(material)
+			assert_true(material.emission_enabled,
+				"the focus diamond lost its ember glow")
+			assert_eq(material.emission, Tokens.pause_ember)
+	assert_true(found, "the focus diamond is missing")
 
 func _label(label_name: String) -> Label3D:
 	for label in _spatial.labels():

@@ -146,6 +146,28 @@ const BUILDING_FOOTPRINT_EVENT := &"building.footprint"
 @export var max_depth_m := 0.6
 @export var deep_depth_m := 0.42
 
+## The second deep-snow level: only the cores of the fullest drifts ask for the
+## high-stepping gait. Snow from deep_depth_m up to this line is still a trudge
+## for movement, furrows and leg loading, but it keeps the ordinary walk.
+##
+## This is the ENTER line, not the beginning of a continuously sampled blend.
+## The field is noisy and the player compacts it under each boot, so mapping raw
+## depth straight onto an animation weight makes the two full-body poses flicker
+## through their least compatible mixtures. PlayerController latches the state
+## here and does not release it until very_deep_exit_depth_m.
+@export var very_deep_depth_m := 0.58
+
+## The lower half of the very-deep gait's hysteresis. A single 9% player print
+## can pull the centre of a 0.60 m column below the 0.58 m enter line, but not
+## below 0.52 m. That makes one step incapable of cancelling the gait while a
+## genuinely beaten-flat route can still return to the ordinary walk.
+@export var very_deep_exit_depth_m := 0.52
+
+## Radius of the fixed-world cross used to classify a patch of snow. 0.40 m is
+## just beyond one packed footprint radius. Centre-only sampling reads the
+## player's latest print; this disc-sized average reads the drift being crossed.
+@export var very_deep_sample_radius_m := 0.40
+
 ## The wind's work, in normalised terrain height. At or below scour_hollow the
 ## snow is at full depth; at or above scour_crest the ground is swept bare.
 ##
@@ -1178,6 +1200,25 @@ func wade_factor(world: Vector3) -> float:
 	if deep_depth_m <= 0.0:
 		return 0.0
 	return clampf(structural_depth_at(world) / deep_depth_m, 0.0, 1.0)
+
+
+## Structural depth across approximately one footprint-sized disc. The offsets
+## stay on world X/Z rather than rotating with the player: turning in place must
+## not rotate the probe across an uneven field and invent a state change.
+##
+## Kept separate from wade_factor(): wade intentionally saturates at 0.42 m and
+## therefore cannot tell a merely deep patch from a 0.60 m drift core.
+func very_deep_sample_depth(world: Vector3) -> float:
+	var radius := maxf(very_deep_sample_radius_m, 0.0)
+	if radius <= 0.0001:
+		return structural_depth_at(world)
+	return (
+		structural_depth_at(world)
+		+ structural_depth_at(world + Vector3(radius, 0.0, 0.0))
+		+ structural_depth_at(world - Vector3(radius, 0.0, 0.0))
+		+ structural_depth_at(world + Vector3(0.0, 0.0, radius))
+		+ structural_depth_at(world - Vector3(0.0, 0.0, radius))
+	) / 5.0
 
 
 ## Tread the snow down. `amount` is how much of what is left gets compacted at

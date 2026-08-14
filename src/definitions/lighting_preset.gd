@@ -215,6 +215,7 @@ extends Resource
 
 ## Art Bible rule 12's warm quota: the lit windows and the firebox, the only warm
 ## light in a blue frame. Published by LightingDirector.warm_accent_energy() for
-## whatever burns to scale itself by; nothing warm has been placed in the world
-## yet, so today it is a seam rather than a value with a consumer.
+## whatever burns to scale itself by. FarmhouseWindowLight consumes the
+## crossfaded value so its pane, halo and snow spill strengthen continuously as
+## the world darkens or a whiteout closes in.
 @export var warm_accent_energy := 1.0

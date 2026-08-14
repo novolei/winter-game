@@ -111,6 +111,12 @@ const OCCLUSION_LAYER := 1 << 19
 ## only the guard against a pathological scene.
 const MAX_HITS := 8
 
+## A one-sample edge hit is not evidence that a whole object changed state.
+## Two 20 Hz samples add at most 50 ms after the first observation and prevent
+## a thin wall/character-edge intersection from repeatedly reversing a fade.
+const ENTER_CONFIRMATION_SAMPLES := 2
+const EXIT_CONFIRMATION_SAMPLES := 2
+
 ## How finely the drawn trunk is followed. Small enough to catch the lean,
 ## large enough that a 600-triangle tree is one cheap pass at startup.
 const TRUNK_BAND := 0.4
@@ -123,6 +129,14 @@ const TRUNK_BAND := 0.4
 ## Fallbacks for the subject's size, used only when it publishes neither.
 @export var subject_height := 1.9
 @export var subject_radius := 0.3
+
+## Physics occlusion is sampled independently of render FPS.  Twenty hertz is
+## faster than the authored fade gesture can reveal a new result, but bounds a
+## 120/240 Hz machine to the same query cost as a 60 Hz one.  A stationary
+## camera/subject pair reuses the exact result indefinitely.
+@export_range(15.0, 20.0, 1.0) var occlusion_sample_hz := 20.0
+@export var occlusion_motion_epsilon_m := 0.005
+@export var occlusion_teleport_m := 1.0
 
 var _settings: OccluderFadeSettings
 var _tint: Material
@@ -142,6 +156,15 @@ var _tween: Dictionary = {}
 var _release_at: Dictionary = {}
 var _requests: Dictionary = {}
 var _clock := 0.0
+var _occlusion_sample_elapsed := 0.0
+var _has_occlusion_sample := false
+var _last_occlusion_camera := Transform3D.IDENTITY
+var _last_occlusion_aim := Vector3.ZERO
+var _cached_blocked: Dictionary = {}
+var _stable_blocked: Dictionary = {}
+var _hit_streak: Dictionary = {}
+var _clear_streak: Dictionary = {}
+var _occlusion_query_count := 0
 
 
 func _ready() -> void:
@@ -188,6 +211,13 @@ static func units_in(root: Node, exclude: Node) -> Array:
 static func _collect(node: Node, exclude: Node, found: Array) -> void:
 	for child in node.get_children():
 		if child == exclude:
+			continue
+		# A boot/main wrapper may instance the whole world. Treating that wrapper
+		# as one occluder makes every mesh below it -- including the player -- one
+		# fade unit. Walk through the ancestor until the excluded subject has been
+		# cut out, then resume ordinary unit discovery around it.
+		if exclude != null and child.is_ancestor_of(exclude):
+			_collect(child, exclude, found)
 			continue
 		if not (child is Node3D):
 			_collect(child, exclude, found)
@@ -530,6 +560,68 @@ func blocking_units(camera: Camera3D, at: Vector3) -> Dictionary:
 	return found
 
 
+## Whether the exact ray stack needs refreshing this frame.  The game uses an
+## orthographic camera, so rotation matters as well as camera origin: it moves
+## the ray's projected origin even when the camera has not translated.
+func occlusion_sample_due(
+		delta: float, camera_transform: Transform3D, at: Vector3) -> bool:
+	_occlusion_sample_elapsed += maxf(delta, 0.0)
+	if not _has_occlusion_sample:
+		_store_occlusion_sample(camera_transform, at)
+		return true
+	var camera_distance := camera_transform.origin.distance_to(_last_occlusion_camera.origin)
+	var aim_distance := at.distance_to(_last_occlusion_aim)
+	var teleported := maxf(camera_distance, aim_distance) >= maxf(occlusion_teleport_m, 0.0)
+	var rotated := not camera_transform.basis.is_equal_approx(_last_occlusion_camera.basis)
+	var moved := maxf(camera_distance, aim_distance) >= maxf(occlusion_motion_epsilon_m, 0.0)
+	var interval := 1.0 / maxf(occlusion_sample_hz, 0.001)
+	if not teleported and (_occlusion_sample_elapsed < interval or (not moved and not rotated)):
+		return false
+	_store_occlusion_sample(camera_transform, at)
+	return true
+
+
+func _store_occlusion_sample(camera_transform: Transform3D, at: Vector3) -> void:
+	_has_occlusion_sample = true
+	_occlusion_sample_elapsed = 0.0
+	_last_occlusion_camera = camera_transform
+	_last_occlusion_aim = at
+
+
+func reset_occlusion_sampling() -> void:
+	_has_occlusion_sample = false
+	_occlusion_sample_elapsed = 0.0
+	_cached_blocked.clear()
+	_stable_blocked.clear()
+	_hit_streak.clear()
+	_clear_streak.clear()
+	_occlusion_query_count = 0
+
+
+## Debounced membership of one occluder. Entry and release both need two
+## consecutive physics samples, so an edge hit cannot start a fade and an edge
+## miss cannot reverse one. The authored time dwell remains the final release
+## cushion after this geometric confirmation.
+func confirmed_occlusion(unit: Object, observed: bool) -> bool:
+	if unit == null:
+		return false
+	if observed:
+		_hit_streak[unit] = int(_hit_streak.get(unit, 0)) + 1
+		_clear_streak[unit] = 0
+		if int(_hit_streak[unit]) >= ENTER_CONFIRMATION_SAMPLES:
+			_stable_blocked[unit] = true
+	else:
+		_clear_streak[unit] = int(_clear_streak.get(unit, 0)) + 1
+		_hit_streak[unit] = 0
+		if int(_clear_streak[unit]) >= EXIT_CONFIRMATION_SAMPLES:
+			_stable_blocked.erase(unit)
+	return _stable_blocked.has(unit)
+
+
+func occlusion_query_count() -> int:
+	return _occlusion_query_count
+
+
 # --- how it moves -------------------------------------------------------------
 
 ## The curve, by size, and NOTHING HERE OVERSHOOTS.
@@ -756,7 +848,15 @@ func _process(delta: float) -> void:
 	if _units.is_empty():
 		return
 
-	var blocked := blocking_units(camera, aim_point(subject))
+	var at := aim_point(subject)
+	if occlusion_sample_due(delta, camera.global_transform, at):
+		var observed := blocking_units(camera, at)
+		_cached_blocked.clear()
+		for unit in _units:
+			if confirmed_occlusion(unit, observed.has(unit)):
+				_cached_blocked[unit] = true
+		_occlusion_query_count += 1
+	var blocked := _cached_blocked
 	var dwell: float = settings().dwell_seconds
 	for unit in _units:
 		if not is_instance_valid(unit):
@@ -889,6 +989,10 @@ func _rediscover(subject: Node3D) -> void:
 	_proxies.name = "OcclusionProxies"
 	add_child(_proxies)
 	for unit in units_in(current, subject):
+		# Defensive backstop for scene ownership changes: even if discovery is
+		# refactored later, no ancestor containing the player can ever be painted.
+		if unit == subject or (unit as Node).is_ancestor_of(subject):
+			continue
 		var placed := (unit as Node3D).global_transform
 		var shapes := proxy_shapes(unit)
 		if shapes.is_empty():
@@ -937,6 +1041,10 @@ func _forget() -> void:
 	_target.clear()
 	_release_at.clear()
 	_by_rid.clear()
+	_stable_blocked.clear()
+	_hit_streak.clear()
+	_clear_streak.clear()
+	reset_occlusion_sampling()
 	if _proxies != null and is_instance_valid(_proxies):
 		_proxies.queue_free()
 	_proxies = null

@@ -14,6 +14,12 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 ## to remain versioned even when local art packs are intentionally ignored.
 const SHADER_PATH := "res://src/rendering/snow_ground.gdshader"
 
+## Visual layer 4 belongs exclusively to snow surfaces. Most local lights stay
+## on ordinary exterior layer 1 and cannot accidentally paint the terrain.
+## Vetted open fires opt into this layer and reach the shader's dedicated soft
+## coloured local-light path; directional world lighting reaches every layer.
+const SNOW_RENDER_LAYER := 1 << 3
+
 ## Wider than the 120 m heightfield on purpose: the drawn plane has to run past
 ## the top of the frame or the shot contains the field's own edge and the
 ## horizon behind it. The shader flattens the surface outside the window, which
@@ -82,12 +88,18 @@ const SHADER_PATH := "res://src/rendering/snow_ground.gdshader"
 ##
 ## **DRIVEN PER PRESET SINCE THE ATMOSPHERE WAVE.** This is now the *fallback*,
 ## and the value the daylight presets are pinned to -- LightingDirector pushes
-## `LightingPreset.cel_band_threshold` through `apply_world_shading()` every
-## frame, so more of the field falls into the shadow band as the light goes.
+## `LightingPreset.cel_band_threshold` through `apply_world_shading()` during
+## its crossfade, so more of the field falls into the shadow band as the light goes.
 ## tests/unit/test_lighting_presets.gd reads this export rather than duplicating
 ## it, so the two cannot disagree without going red.
 @export var band_threshold := 0.12
 @export var band_softness := 0.07
+
+## Local fire is additive warmth, never a second copy of the whole snow band.
+## Keep it restrained: the 3D light supplies distance falloff and cast-shadow
+## attenuation, while this gain prevents the small night pool from bleaching
+## the snow under its centre.
+@export_range(0.0, 1.0, 0.01) var local_light_snow_gain := 1.0
 
 ## THE SNOW GRAIN -- style document section 15.
 ##
@@ -192,6 +204,31 @@ var _accumulation: Node
 ## frame; a window recenter changes only field_origin and the native-generated
 ## raw mature-noise texture.
 var _mature_route_source: Node
+## Last value submitted for each uniform.  ImageTexture updates mutate the same
+## resource, so rebinding that RID every frame is redundant; origins and tuning
+## values still submit on the exact frame their value changes.
+var _material_parameter_cache: Dictionary = {}
+var _material_parameter_writes := 0
+
+
+func _set_material_parameter(parameter: StringName, value: Variant) -> bool:
+	if _material == null:
+		return false
+	if _material_parameter_cache.has(parameter) \
+			and _material_parameter_cache[parameter] == value:
+		return false
+	_material.set_shader_parameter(parameter, value)
+	_material_parameter_cache[parameter] = value
+	_material_parameter_writes += 1
+	return true
+
+
+func material_parameter_write_count() -> int:
+	return _material_parameter_writes
+
+
+func reset_material_parameter_write_count() -> void:
+	_material_parameter_writes = 0
 
 
 ## The two-band contract's world side, pushed in from the lighting. The preset
@@ -200,12 +237,13 @@ var _mature_route_source: Node
 func apply_world_shading(threshold: float, softness: float, tint: Color) -> void:
 	if _material == null:
 		return
-	_material.set_shader_parameter("band_threshold", threshold)
-	_material.set_shader_parameter("band_softness", softness)
-	_material.set_shader_parameter("light_tint", Vector3(tint.r, tint.g, tint.b))
+	_set_material_parameter(&"band_threshold", threshold)
+	_set_material_parameter(&"band_softness", softness)
+	_set_material_parameter(&"light_tint", Vector3(tint.r, tint.g, tint.b))
 
 
 func _ready() -> void:
+	layers = SNOW_RENDER_LAYER
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(ground_size, ground_size)
 	plane.subdivide_width = subdivisions
@@ -215,30 +253,33 @@ func _ready() -> void:
 	var bible: ColorBible = load(PALETTE_PATH)
 	_material = ShaderMaterial.new()
 	_material.shader = load(SHADER_PATH)
+	_material_parameter_cache.clear()
+	_material_parameter_writes = 0
 	# Four palette entries, one per (band x track) combination. Rule 10's
 	# "one step darker from the table" taken literally: the shadow band is
 	# snow tone 4 to the lit band's tone 1, and a print is another step down
 	# again within whichever band it falls in. Nothing is multiplied.
-	_material.set_shader_parameter("snow_lit", bible.snow_tones[0])
-	_material.set_shader_parameter("snow_shade", bible.snow_tones[3])
-	_material.set_shader_parameter("track_lit", bible.snow_tones[2])
-	_material.set_shader_parameter("track_shade", bible.snow_tones[4])
+	_set_material_parameter(&"snow_lit", bible.snow_tones[0])
+	_set_material_parameter(&"snow_shade", bible.snow_tones[3])
+	_set_material_parameter(&"track_lit", bible.snow_tones[2])
+	_set_material_parameter(&"track_shade", bible.snow_tones[4])
 	# The grain's second tone: one step down the same family from the lit band,
 	# so the field dithers between two adjacent entries of the twelve and never
 	# produces a colour that is not one of them.
-	_material.set_shader_parameter("snow_grain_tone", bible.snow_tones[1])
-	_material.set_shader_parameter("grain_threshold", grain_threshold)
-	_material.set_shader_parameter("grain_softness", grain_softness)
-	_material.set_shader_parameter("grain_amount", grain_amount)
-	_material.set_shader_parameter("grain_scale", grain_scale)
+	_set_material_parameter(&"snow_grain_tone", bible.snow_tones[1])
+	_set_material_parameter(&"grain_threshold", grain_threshold)
+	_set_material_parameter(&"grain_softness", grain_softness)
+	_set_material_parameter(&"grain_amount", grain_amount)
+	_set_material_parameter(&"grain_scale", grain_scale)
+	_set_material_parameter(&"local_light_snow_gain", local_light_snow_gain)
 	# The fallback light, until a preset says otherwise on the first frame.
 	apply_world_shading(band_threshold, band_softness, Color.WHITE)
 	# ...and the fallback weather. A scene with no accumulation node in it draws
 	# the road exactly as it was cut, which is what this one drew before the snow
 	# started arriving.
-	_material.set_shader_parameter("static_burial", 0.0)
-	_material.set_shader_parameter("static_burial_power", static_burial_power)
-	_material.set_shader_parameter("static_tint_boost", static_tint_boost)
+	_set_material_parameter(&"static_burial", 0.0)
+	_set_material_parameter(&"static_burial_power", static_burial_power)
+	_set_material_parameter(&"static_tint_boost", static_tint_boost)
 	# ...and the shape of a mark, which until now was pushed ONLY from _process
 	# and only once the snow, the tracks and the material had all resolved. The
 	# shader carries its own defaults for these, and `track_depth`'s is 0.05
@@ -247,9 +288,9 @@ func _ready() -> void:
 	# no test could see it because no test looked at the material before the
 	# first tick. Found by writing that test.
 	_stamp_marks()
-	_material.set_shader_parameter("field_extent", SnowField.EXTENT_M)
-	_material.set_shader_parameter("track_extent", TrackMask.EXTENT_M)
-	_material.set_shader_parameter("static_extent", TrackMask.STATIC_EXTENT_M)
+	_set_material_parameter(&"field_extent", SnowField.EXTENT_M)
+	_set_material_parameter(&"track_extent", TrackMask.EXTENT_M)
+	_set_material_parameter(&"static_extent", TrackMask.STATIC_EXTENT_M)
 	_stamp_visual_field_continuity()
 	material_override = _material
 	_build_horizon_skirt()
@@ -270,11 +311,13 @@ func _build_horizon_skirt() -> void:
 	if existing != null:
 		existing.mesh = horizon_skirt_mesh(ground_size, horizon_size)
 		existing.material_override = _material
+		existing.layers = SNOW_RENDER_LAYER
 		return
 	var skirt := MeshInstance3D.new()
 	skirt.name = "HorizonSkirt"
 	skirt.mesh = horizon_skirt_mesh(ground_size, horizon_size)
 	skirt.material_override = _material
+	skirt.layers = SNOW_RENDER_LAYER
 	# The shader displaces every ring corner by the same flat outside-window
 	# snow height. Keep the culling bounds generous so its edge never vanishes
 	# while the parent follows the player.
@@ -363,10 +406,10 @@ func _smoothstep(low: float, high: float, value: float) -> float:
 func _stamp_visual_field_continuity() -> void:
 	if _material == null:
 		return
-	_material.set_shader_parameter("visual_field_fade_start", visual_field_fade_start)
-	_material.set_shader_parameter("visual_field_fade_end", visual_field_fade_end)
-	_material.set_shader_parameter("visual_field_warp_scale", visual_field_warp_scale)
-	_material.set_shader_parameter("visual_field_warp_amount", visual_field_warp_amount)
+	_set_material_parameter(&"visual_field_fade_start", visual_field_fade_start)
+	_set_material_parameter(&"visual_field_fade_end", visual_field_fade_end)
+	_set_material_parameter(&"visual_field_warp_scale", visual_field_warp_scale)
+	_set_material_parameter(&"visual_field_warp_amount", visual_field_warp_amount)
 
 
 ## SnowFieldProfile owns these paths.  The renderer only translates the
@@ -380,31 +423,31 @@ func _stamp_mature_routes() -> void:
 		return
 	var data: Dictionary = _snow.mature_route_shader_data()
 	var counts: PackedInt32Array = data.get("counts", PackedInt32Array())
-	_material.set_shader_parameter("mature_route_count", counts.size())
-	_material.set_shader_parameter("mature_route_offsets", data.get("offsets", PackedInt32Array()))
-	_material.set_shader_parameter("mature_route_counts", counts)
-	_material.set_shader_parameter("mature_route_half_widths", data.get("half_widths", PackedFloat32Array()))
-	_material.set_shader_parameter("mature_route_feathers", data.get("feathers", PackedFloat32Array()))
-	_material.set_shader_parameter("mature_route_points", data.get("points", PackedVector2Array()))
+	_set_material_parameter(&"mature_route_count", counts.size())
+	_set_material_parameter(&"mature_route_offsets", data.get("offsets", PackedInt32Array()))
+	_set_material_parameter(&"mature_route_counts", counts)
+	_set_material_parameter(&"mature_route_half_widths", data.get("half_widths", PackedFloat32Array()))
+	_set_material_parameter(&"mature_route_feathers", data.get("feathers", PackedFloat32Array()))
+	_set_material_parameter(&"mature_route_points", data.get("points", PackedVector2Array()))
 	_mature_route_source = _snow
 
 
 ## How a mark in the snow is SHAPED -- how deep, how tinted, the rim around it,
 ## and the two scales the per-pixel normal is rebuilt at. None of it moves at
-## runtime; it is pushed from _ready() so the first frame is right and re-pushed
-## from _process() so a tuner dragging one of these in the inspector sees it.
+## runtime; it is pushed from _ready() so the first frame is right and checked
+## from _process() so a tuner dragging one in the inspector updates only that value.
 func _stamp_marks() -> void:
 	if _material == null:
 		return
 	var response_depth := track_depth
 	if _snow != null and _snow.has_method(&"footprint_response_depth_m"):
 		response_depth = float(_snow.call(&"footprint_response_depth_m"))
-	_material.set_shader_parameter("track_depth", response_depth)
-	_material.set_shader_parameter("track_tint", track_tint)
-	_material.set_shader_parameter("track_rim", track_rim)
-	_material.set_shader_parameter("track_rim_extent", track_rim_extent)
-	_material.set_shader_parameter("ground_normal_epsilon", ground_normal_epsilon)
-	_material.set_shader_parameter("track_normal_epsilon", track_normal_epsilon)
+	_set_material_parameter(&"track_depth", response_depth)
+	_set_material_parameter(&"track_tint", track_tint)
+	_set_material_parameter(&"track_rim", track_rim)
+	_set_material_parameter(&"track_rim_extent", track_rim_extent)
+	_set_material_parameter(&"ground_normal_epsilon", ground_normal_epsilon)
+	_set_material_parameter(&"track_normal_epsilon", track_normal_epsilon)
 
 
 ## The world's snow, from bare to as covered as this weather gets, on both the
@@ -417,15 +460,15 @@ func _stamp_marks() -> void:
 ## handle on the ground material and a licence to reach for the paint shop.
 ## Deleting the whole rendering layer must leave the accumulation compiling.
 ##
-## Pushed every frame rather than on change. The cover moves continuously for
-## the whole run by design; there is no event to subscribe to and there must not
-## be one, because an event is a step and a step is what this feature exists to
-## make impossible.
+## Evaluated every frame because cover moves continuously for the whole run by
+## design; the cached uniform boundary submits only when the scalar actually
+## changes. There is no event to subscribe to and there must not be one, because
+## an event is a step and a step is what this feature exists to make impossible.
 func apply_snow_cover(cover: float) -> void:
 	var settled := clampf(cover, 0.0, 1.0)
 	if _material != null:
-		_material.set_shader_parameter("static_burial", settled * static_burial_share)
-		_material.set_shader_parameter("static_burial_power", static_burial_power)
+		_set_material_parameter(&"static_burial", settled * static_burial_share)
+		_set_material_parameter(&"static_burial_power", static_burial_power)
 	CelPainter.set_snow_cover(settled)
 
 
@@ -454,8 +497,8 @@ func _resolve() -> void:
 func _process(_delta: float) -> void:
 	_resolve()
 	if _lighting != null and _material != null:
-		# Pushed every frame rather than on change, because a crossfade moves all
-		# three for eight seconds twice a day and there is nothing to subscribe to.
+		# Evaluated every frame because a crossfade moves all three for eight
+		# seconds twice a day; settled values stop at the cached uniform boundary.
 		apply_world_shading(
 			_lighting.cel_band_threshold(),
 			_lighting.cel_band_softness(),
@@ -478,30 +521,30 @@ func _process(_delta: float) -> void:
 
 	var field_origin: Vector2 = _snow.origin()
 	var track_origin: Vector2 = _tracks.origin()
-	_material.set_shader_parameter("snow_terrain", _snow.terrain_texture())
-	_material.set_shader_parameter("snow_packed", _snow.packed_texture())
-	_material.set_shader_parameter("mature_snow", _snow.mature_snow_texture())
-	_material.set_shader_parameter("mature_variation_m", _snow.mature_variation_limit_m())
-	_material.set_shader_parameter("minimum_imprintable_cover_m", _snow.minimum_imprintable_cover_m())
-	_material.set_shader_parameter("track_mask", _tracks.texture())
-	_material.set_shader_parameter("field_origin", field_origin)
-	_material.set_shader_parameter("track_origin", track_origin)
+	_set_material_parameter(&"snow_terrain", _snow.terrain_texture())
+	_set_material_parameter(&"snow_packed", _snow.packed_texture())
+	_set_material_parameter(&"mature_snow", _snow.mature_snow_texture())
+	_set_material_parameter(&"mature_variation_m", _snow.mature_variation_limit_m())
+	_set_material_parameter(&"minimum_imprintable_cover_m", _snow.minimum_imprintable_cover_m())
+	_set_material_parameter(&"track_mask", _tracks.texture())
+	_set_material_parameter(&"field_origin", field_origin)
+	_set_material_parameter(&"track_origin", track_origin)
 	# The baked layer's window never moves, so this pair never changes after the
-	# first frame. Pushed every frame anyway rather than cached, because the one
-	# thing that must not happen is the shader reading a stale origin against a
-	# freshly rebaked image -- the furrows would be somewhere else in the world.
-	_material.set_shader_parameter("static_mask", _tracks.static_texture())
-	_material.set_shader_parameter("static_origin", _tracks.static_origin())
+	# first frame.  Both go through the same value cache as the moving window, so
+	# a replacement texture or origin reaches the shader immediately without
+	# rebinding an unchanged RID every render frame.
+	_set_material_parameter(&"static_mask", _tracks.static_texture())
+	_set_material_parameter(&"static_origin", _tracks.static_origin())
 	# Pushed from the field rather than duplicated here: the shader and
 	# SnowField.depth_at() have to be the same formula with the same numbers, or
 	# the drift you see is not the drift you walk in.
-	_material.set_shader_parameter("terrain_amplitude", _snow.terrain_amplitude_m)
-	_material.set_shader_parameter("terrain_contrast", _snow.terrain_contrast)
-	_material.set_shader_parameter("drift_flatten", _snow.drift_flatten)
-	_material.set_shader_parameter("drift_sharpness", _snow.drift_sharpness)
-	_material.set_shader_parameter("max_depth", _snow.max_depth_m)
-	_material.set_shader_parameter("scour_hollow", _snow.scour_hollow)
-	_material.set_shader_parameter("scour_crest", _snow.scour_crest)
+	_set_material_parameter(&"terrain_amplitude", _snow.terrain_amplitude_m)
+	_set_material_parameter(&"terrain_contrast", _snow.terrain_contrast)
+	_set_material_parameter(&"drift_flatten", _snow.drift_flatten)
+	_set_material_parameter(&"drift_sharpness", _snow.drift_sharpness)
+	_set_material_parameter(&"max_depth", _snow.max_depth_m)
+	_set_material_parameter(&"scour_hollow", _snow.scour_hollow)
+	_set_material_parameter(&"scour_crest", _snow.scour_crest)
 	_stamp_marks()
 	_stamp_visual_field_continuity()
 	# The plane is centred on the window; the window is described by its corner.

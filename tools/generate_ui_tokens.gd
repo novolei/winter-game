@@ -104,6 +104,24 @@ func _initialize() -> void:
 	tokens.breath_cjk_weight = 600
 	tokens.breath_latin_weight = 500
 
+	# Pause surface -- owner ruling 2026-08-13 freed the ESC menu from the
+	# twelve. These hexes are authored HERE (the generator), never in src/,
+	# data/, scenes/ or assets/. One cold field, one warm point: the ember is
+	# the only warm pixel the pause surface is allowed, and it means "focus".
+	tokens.pause_ink_bright = Color("#F6F1E6")   # 奶白 -- titles, focus
+	tokens.pause_ink_dim = Color("#C4CDD6")      # 亮冷灰 -- secondary, readable on snow
+	tokens.pause_hairline = Color("#7E8B99")     # cold grey -- rules and rails
+	tokens.pause_ember = Color("#D9A05B")        # hearth amber -- focus only
+	tokens.pause_scrim = Color("#0A0E14")        # cold black -- the type shadow
+
+	tokens.pause_push_seconds = 1.6
+	tokens.pause_return_seconds = 0.55
+	tokens.pause_drift_frame_amplitude = 0.012
+	tokens.pause_drift_frame_seconds = 40.0
+	tokens.pause_drift_yaw_degrees = 0.15
+	tokens.pause_drift_yaw_seconds = 57.0
+	tokens.pause_muffle_cutoff_hz = 900.0
+
 	var missing: Array[String] = []
 	for path in tokens.font_paths():
 		if not FileAccess.file_exists(path):

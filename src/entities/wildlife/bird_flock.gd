@@ -916,6 +916,12 @@ func _anyone_near(radius: float) -> bool:
 		return false
 	var at := _disturbance()
 	for bird in _birds:
+		# Only birds actually standing on a flock perch belong to this shared
+		# flush test. A species may also keep ground visitors in the same flock;
+		# those own their closer, individual fear radius and must not launch a
+		# distant wire flock merely because the player is near the ground bird.
+		if not bird.is_perched():
+			continue
 		if _flat_gap(bird.where(), at) <= radius:
 			return true
 	if not _birds.is_empty():

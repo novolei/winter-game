@@ -137,6 +137,48 @@ func test_an_empty_list_reveals_nothing_and_complains_about_nothing() -> void:
 	assert_eq(reveal.unresolved().size(), 0, "an empty list has nothing unresolved")
 
 
+## A fixed camera can be blocked by something that does not belong to the
+## building -- the farmhouse's power line is the real case. It is still an
+## authored decision, not a raycast: the scene names the exact visual that must
+## leave with the near wall and it returns when the room closes.
+func test_an_authored_external_sightline_part_fades_and_returns() -> void:
+	var reveal := _build()
+	var wire_root := Node3D.new()
+	wire_root.name = "ForegroundWire"
+	var wire := MeshInstance3D.new()
+	wire.name = "WireMesh"
+	wire_root.add_child(wire)
+	_building.add_child(wire_root)
+	var paths: Array[NodePath] = [NodePath("../ForegroundWire")]
+	reveal.fade_paths = paths
+	reveal.resolve()
+	assert_true(reveal.parts().has(wire), "the authored sightline path did not resolve")
+	reveal.reveal()
+	assert_almost_eq(wire.transparency, 1.0, 0.0001, "the wire still bisects the open room")
+	assert_eq(wire.cast_shadow, GeometryInstance3D.SHADOW_CASTING_SETTING_OFF,
+		"the invisible sightline part still casts through the room")
+	reveal.conceal()
+	assert_almost_eq(wire.transparency, 0.0, 0.0001, "the wire did not return outside")
+
+
+func test_a_sightline_visual_created_after_resolve_is_caught_on_entry() -> void:
+	var reveal := _build()
+	var wire_root := Node3D.new()
+	wire_root.name = "ForegroundWire"
+	_building.add_child(wire_root)
+	var paths: Array[NodePath] = [NodePath("../ForegroundWire")]
+	reveal.fade_paths = paths
+	reveal.resolve()
+	var snow_cap := MeshInstance3D.new()
+	snow_cap.name = "SnowCaps"
+	wire_root.add_child(snow_cap)
+	reveal.reveal()
+	assert_true(reveal.parts().has(snow_cap),
+		"a runtime visual added below the authored blocker escaped the entry refresh")
+	assert_almost_eq(snow_cap.transparency, 1.0, 0.0001,
+		"the late wire cap still bisects the revealed room")
+
+
 # --- the fade --------------------------------------------------------------
 
 func test_a_fresh_reveal_is_concealed() -> void:

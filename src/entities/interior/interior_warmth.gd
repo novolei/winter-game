@@ -421,13 +421,10 @@ func apply_warmth(value: float) -> void:
 ## not heat -- which is the one thing that rule forbids. It reaches a cold room
 ## in full and a burning one not at all.
 ##
-## WHAT IS NOT HERE, AND IS A FINDING RATHER THAN AN OMISSION.
-## `LightingPreset.warm_accent_energy` is authored on all six -- 0.5 at PALE DAY
-## rising to 2.2 at DEEP NIGHT -- and Art Bible section 4.2 lists it among a
-## preset's contents. It has NO consumer anywhere in the project. It is the
-## Art Bible's own answer to "what should a fire do as the world darkens", and
-## wiring it changes the warm-pixel share, which rule 12's own revision says must
-## be re-measured rather than assumed. Reported, not taken.
+## `LightingPreset.warm_accent_energy` is intentionally absent here: it is an
+## exterior readability control, now consumed by FarmhouseWindowLight. The room
+## continues to express only physical stove warmth; the exterior window scales
+## that same fire against the changing cold world and is re-measured per preset.
 func apply_world_shading(threshold: float, softness: float, tint: Color) -> void:
 	_world_threshold = threshold
 	_world_softness = softness

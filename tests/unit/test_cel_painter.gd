@@ -255,6 +255,21 @@ func test_painting_reads_the_bare_mark_off_the_material_name() -> void:
 func test_a_bare_world_has_no_mass_and_a_buried_one_has_all_of_it() -> void:
 	assert_almost_eq(CelPainterScript.snow_mass(0.0), 0.0, 0.0001, "a bare world must show no mass at all")
 	assert_almost_eq(CelPainterScript.snow_mass(1.0), 1.0, 0.0001, "the deepest weather must settle the mass fully")
+	var opening := CelPainterScript.snow_mass(0.62)
+	assert_true(
+		opening >= 0.14 and opening <= 0.18,
+		"the opening cover already grows %.1f%% of the roof mass; it should begin as a thin layer"
+			% (opening * 100.0)
+	)
+	assert_true(
+		CelPainterScript.snow_mass(0.80) >= 0.60
+			and CelPainterScript.snow_mass(0.80) <= 0.75,
+		"a later storm should grow a substantial but not-yet-finished settled layer"
+	)
+	assert_true(
+		CelPainterScript.snow_mass(0.97) >= 0.98,
+		"the late-winter cover never finishes burying the roof"
+	)
 
 
 ## 切记突变: the owner's one hard requirement on the whole accumulation. The mass
@@ -263,14 +278,17 @@ func test_a_bare_world_has_no_mass_and_a_buried_one_has_all_of_it() -> void:
 func test_the_mass_never_jumps() -> void:
 	var previous := CelPainterScript.snow_mass(0.0)
 	var biggest := 0.0
-	for step in range(1, 201):
-		var mass := CelPainterScript.snow_mass(step / 200.0)
-		assert_true(mass >= previous - 0.0001, "the mass went backwards at cover %.3f" % (step / 200.0))
+	for step in range(1, 1001):
+		var cover := step / 1000.0
+		var mass := CelPainterScript.snow_mass(cover)
+		assert_true(mass >= previous - 0.0001, "the mass went backwards at cover %.3f" % cover)
 		biggest = maxf(biggest, mass - previous)
 		previous = mass
-	# A linear ramp over the same span would move 0.0053 per step; anything much
-	# above that is a corner rather than a curve.
-	assert_true(biggest < 0.012, "the mass moves %.4f in one 0.005 step of cover, which is a jump" % biggest)
+	# Sample finely because the deliberately later 0.50..0.98 growth window is
+	# steeper than the old almost-full-range ramp. Its mathematical maximum is
+	# about 0.00313 per 0.001 step; anything above this small margin would be a
+	# corner rather than the smooth curve. Play moves by far less per frame.
+	assert_true(biggest < 0.0036, "the mass moves %.4f in one 0.001 step of cover, which is a jump" % biggest)
 
 
 func test_a_mesh_that_ships_a_mass_is_driven_by_the_weather() -> void:

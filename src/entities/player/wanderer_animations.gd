@@ -6,12 +6,12 @@ extends RefCounted
 ##
 ## The takes arrived in three files and none of them was authoritative about
 ## what it held. The character file carried eighteen under Meshy's own names;
-## two more came later as animation-only FBXs, one of them named after a UUID.
+## several more came later as animation-only FBXs, one of them named after a UUID.
 ## Each one below was identified by rendering it and watching the motion, not by
 ## reading its filename -- and the renamings are recorded in TAKES so the
 ## cross-reference back to Meshy survives the next delivery.
 ##
-## ALL TWENTY-ONE COME OUT OF ONE FILE, and that is a build-time decision rather
+## ALL TWENTY-TWO COME OUT OF ONE FILE, and that is a build-time decision rather
 ## than a convenience. The two later takes are merged into the character `.glb`
 ## by tools/decimate_character.py, through the same Blender round trip that
 ## produced the model. Reading them out of their own `.fbx` instead does not
@@ -24,12 +24,13 @@ extends RefCounted
 ## exactly this reason.
 ##
 ## What is left here is naming, loop flags, and one path fix, and no retargeting
-## at all for those twenty-one -- one rig, one file, one space.
+## at all for those twenty-two -- one rig, one file, one space.
 ##
-## THE TWENTY-SECOND IS THE EXCEPTION AND IT IS DELIBERATE. `idle_hunched` comes
-## out of a `.tres` baked by tools/retarget_hunch.gd from another pack's rig,
-## because the posture 饥饿 needed does not exist in this library and was
-## measured not to exist rather than assumed. See IDLE_HUNCHED below.
+## TWO TAKES ARE DELIBERATE BAKED EXCEPTIONS. `idle_hunched` comes from another
+## pack because the posture 饥饿 needed does not exist in the merged model.
+## `feed` is the same pack's short standing reach, selected as a temporary crumb
+## scattering gesture. Both are retargeted offline and arrive here as measured
+## `.tres` resources rather than as runtime cross-rig work.
 
 const MODEL_PATH := "res://assets/models/characters/winter_wanderer.glb"
 
@@ -44,7 +45,20 @@ const IDLE_COLD := &"idle_cold"
 const WALK := &"walk"
 const RUN := &"run"
 
-## The fifth: what a man walks like when his feet have gone.
+## The accepted take for deep snow. The supplied 60 fps FBX contains
+## two slow, in-place cycles over 5.5 seconds. Its rig is the wanderer's own, so
+## it needs no retargeting; only its source name is translated here.
+const WALK_DEEP := &"walk_deep"
+const WALK_DEEP_CYCLES := 2
+
+## Ground speed its stance feet were authored for, in m/s. The stable support
+## sections measured 0.34-0.38 m/s; 0.36 is the centre of that measured band.
+## This is below the game's 0.88-1.09 m/s deep-snow speed, so the source take is
+## capped at 1.5x rather than distorted to match mathematically. The resulting
+## motion was accepted in an in-game playtest as the desired heavy-snow read.
+const WALK_DEEP_SPEED := 0.36
+
+## The sixth: what a man walks like when his feet have gone.
 ##
 ## ---------------------------------------------------------------------------
 ## THE TAKE NAMED `Limping_Walk_inplace` DOES NOT LIMP. MEASURED, NOT READ.
@@ -118,8 +132,7 @@ const WALK_GUARDED_CYCLES := 3
 ## value is a relationship and not a constant.
 const WALK_GUARDED_SPEED := 0.924
 
-## The sixth, and the only one that is not in the character file: what a starving
-## man's stand looks like.
+## The first baked action: what a starving man's stand looks like.
 ##
 ## ---------------------------------------------------------------------------
 ## IT IS NOT MESHY'S, AND IT WAS MEASURED BEFORE IT WAS WANTED
@@ -162,6 +175,12 @@ const IDLE_HUNCHED := &"idle_hunched"
 ## appears in the world.
 const HUNCH_PATH := "res://data/animation/wanderer_hunch.tres"
 
+## The temporary feeding one-shot.  `UnarmedActivate` is a 1.0333 s standing
+## single-arm reach on the RPG-Character rig; tools/retarget_feed.gd transfers
+## its torso and arms while holding the wanderer's root and both legs neutral.
+const FEED := &"feed"
+const FEED_PATH := "res://data/animation/wanderer_feed.tres"
+
 ## [source file, take name in that file, name in the library, loops].
 ##
 ## LOOPS is measured, not guessed: the take loops when its last pose returns to
@@ -175,6 +194,9 @@ const TAKES: Array = [
 	[MODEL_PATH, "idle_neutral", "idle", true],
 	[MODEL_PATH, "Walking", "walk", true],
 	[MODEL_PATH, "Running", "run", true],
+	# The accepted deep-snow take. The short source filename avoids
+	# Blender's 63-character action-name truncation.
+	[MODEL_PATH, "slow_orc_walk", "walk_deep", true],
 	# Named for what it is rather than for what Meshy called it -- see
 	# WALK_GUARDED above for the measurements that renamed it.
 	[MODEL_PATH, "Limping_Walk_inplace", "walk_guarded", true],
@@ -230,10 +252,11 @@ static func build() -> AnimationLibrary:
 		animation.loop_mode = Animation.LOOP_LINEAR if bool(row[3]) else Animation.LOOP_NONE
 		library.add_animation(StringName(row[2]), animation)
 	_add_hunch(library)
+	_add_feed(library)
 	return library
 
 
-## The one take that comes out of a `.tres` instead of out of the model.
+## The looping hunger take that comes out of a `.tres` instead of the model.
 ##
 ## Warns rather than fails when the bake is absent: every other take still
 ## works, and a library that refuses to build would take the whole character
@@ -255,6 +278,23 @@ static func _add_hunch(library: AnimationLibrary) -> void:
 	var animation: Animation = (resource as Animation).duplicate(true)
 	animation.loop_mode = Animation.LOOP_LINEAR
 	library.add_animation(IDLE_HUNCHED, animation)
+
+
+## A one-shot baked from the same donor rig as the hunch.  It is duplicated for
+## the same shared-resource reason, and its non-loop contract is reasserted here
+## so a stale generated file cannot turn feeding into a repeating arm gesture.
+static func _add_feed(library: AnimationLibrary) -> void:
+	if not ResourceLoader.exists(FEED_PATH):
+		push_warning("wanderer_animations: %s is missing; the feeding gesture will not play"
+			% FEED_PATH)
+		return
+	var resource := ResourceLoader.load(FEED_PATH)
+	if not (resource is Animation):
+		push_warning("wanderer_animations: %s did not load as an Animation" % FEED_PATH)
+		return
+	var animation: Animation = (resource as Animation).duplicate(true)
+	animation.loop_mode = Animation.LOOP_NONE
+	library.add_animation(FEED, animation)
 
 
 ## Every animation in an imported scene, by the name its AnimationPlayer knows.

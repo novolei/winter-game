@@ -20,9 +20,10 @@ extends GPUParticles3D
 ## flat white ground, it needs no new art -- the same soft dot the snowfall
 ## already draws -- and its entire value is the ONSET.
 ##
-## Hence `stream_onset`. Below it this emits NOTHING. A spindrift that is always
-## on is ground fog, it flattens the picture, and it removes the only thing that
-## made it worth building.
+## Hence `stream_onset`, with a narrow feather below it. Below that feather this
+## emits NOTHING; inside it the first powder appears continuously. A spindrift
+## that is always on is ground fog, it flattens the picture, and it removes the
+## only thing that made it worth building.
 ##
 ## ---------------------------------------------------------------------------
 ## IT IS NOT A SNOWFALL LAYER
@@ -49,19 +50,24 @@ extends GPUParticles3D
 
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
 
-## The strength a gust must reach before ANY snow lifts. See the header: this is
-## the whole effect.
+## The centre of the pickup shoulder. See `stream_onset_softness` below.
 ##
 ## 0.28 sits above the valley profile's gust midpoint and below its peak, so
 ## spindrift happens on the bigger half of ordinary gusts and on every squall --
 ## often enough to be part of the weather, rare enough to be an event.
 @export var stream_onset := 0.28
 
+## The onset is the centre of a soft shoulder, not a guillotine.  The gale
+## profile's authored floor is exactly 0.28; without this shoulder every return
+## to that floor empties the emitter and the next rise arrives as a packet.
+## Strengths below `stream_onset - stream_onset_softness` remain truly silent.
+@export_range(0.0, 0.25, 0.005) var stream_onset_softness := 0.10
+
 ## How fast the sheet travels, at the onset and at a full gale, in metres per
 ## second. Fast: the readability of this cue is almost entirely its SPEED against
 ## the stillness of the ground it crosses.
-@export var stream_speed_min := 3.4
-@export var stream_speed_max := 9.5
+@export var stream_speed_min := 2.8
+@export var stream_speed_max := 7.4
 
 ## The emission volume, in world metres, centred on the point the camera is
 ## looking at. Wide enough to cover the widest framing the rig offers, and THIN:
@@ -85,12 +91,29 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 
 ## How long a streak lives. Short: it is a thing being flung, not a thing
 ## falling, and a long life carries it out of the box and lets it read as fog.
-@export var life_seconds := 1.15
+@export var life_seconds := 0.72
 
-## The streak, in metres: narrow across, long along travel. `transform_align`
-## puts the quad's +Y on the particle's velocity, so `y` here IS the streak.
-@export var streak_width := 0.050
-@export var streak_length := 0.55
+## The powder shard, in metres. Direction belongs to the SHEET and its lanes;
+## locking every individual quad onto velocity duplicates that information as a
+## field of parallel tracer rounds. A compact, freely rotating shard lets the
+## same wind read as powder breaking up.
+@export var streak_width := 0.060
+@export var streak_length := 0.12
+
+## Birth timing, speed variation and aerodynamic drag. All three are bounded:
+## variation breaks marching rows without letting a flake reverse, while
+## frictional drag takes the mechanical constancy out of its flight.
+@export_range(0.0, 1.0, 0.01) var birth_randomness := 0.58
+@export var speed_ratio_range := Vector2(0.72, 1.0)
+@export var drag_range := Vector2(0.25, 0.70)
+@export var angular_velocity_range := Vector2(-140.0, 140.0)
+@export_range(0.0, 1.0, 0.01) var spin_end_multiplier := 0.08
+## Stock turbulence is safe here only because the particle lives 0.72 seconds,
+## the influence is very small, and the settling gravity remains dominant. It
+## supplies a last irregular flutter rather than becoming the motion model.
+@export var turbulence_influence_range := Vector2(0.002, 0.007)
+@export_range(0.01, 2.0, 0.01) var turbulence_noise_scale := 0.18
+@export_range(0.0, 1.0, 0.01) var turbulence_noise_speed := 0.10
 
 ## The cone the snow leaves in.
 ##
@@ -107,23 +130,21 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 ## screen that shows a direction, and at 14 degrees its own angle scatter buried
 ## the signal it was supposed to carry.
 ##
-## The number is a CROSSWIND DISTANCE, not an angle. A streak travels
-## `stream_speed_max * life_seconds` -- about 11 m -- and the cone smears that by
-## `travel * tan(spread)`. At 14 degrees that is 2.7 m of sideways wander for a
-## mark 0.55 m long, so a streak's own path is five times its own length wide and
-## every instant of the sheet samples the whole cone at once. At 3.5 degrees it is
-## 0.67 m, of the same order as the mark, and the sheet states one direction.
+## The number is a CROSSWIND DISTANCE, not an angle. The rejected 14-degree,
+## 11-metre flight wandered 2.7 m sideways and erased its own heading. The
+## shipped short flight and three-degree cone remain small beside the soft lane,
+## so the field still states one direction.
 ##
 ## See `crosswind_spread_m()`, which is where that arithmetic lives, and
 ## `tests/unit/test_wind.gd`, which holds it against the two lengths it must stay
 ## under: the streak, and the ribbon spacing the sheet is emitted on.
-@export var spread_degrees := 3.5
+@export var spread_degrees := 3.0
 
 ## How far the palette's lightest snow is taken toward white, and the most alpha
 ## a streak ever has.
 ##
-## WHITER than the falling flake (0.62) and LESS OPAQUE (0.78), and both halves
-## were measured off a frame rather than reasoned. A streak is seen against SNOW,
+## Slightly whiter than the falling flake and substantially more translucent,
+## measured from the full-gale frame rather than reasoned. A shard is seen against SNOW,
 ## where the flake is mostly seen against sky and against the dark solids -- so at
 ## the flake's whiteness this cue was pale-blue-on-pale-blue and, at a strength of
 ## 0.7, invisible in the capture while every number said it was running. The alpha
@@ -131,10 +152,10 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 ## flakes in a layer, and at the flake's opacity the sheet became a white bar
 ## across the bottom of the picture.
 ##
-## Still far under the bloom threshold: linear 0.91 x 0.60 = 0.55 against 0.95.
+## Still far under the bloom threshold; the test below computes the exact value.
 ## `test_wind.gd` pins that, the same way `test_snowfall.gd` pins the flake.
-@export var streak_whiteness := 0.78
-@export var streak_alpha := 0.60
+@export var streak_whiteness := 0.70
+@export var streak_alpha := 0.34
 
 ## Where the ground is taken to be when nothing can be asked. Snowfall's own
 ## figure, for the same reason: it is the height the camera's view axis is taken
@@ -162,11 +183,24 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 # points are a 4096-pixel Image built on the CPU, and the only per-frame cost is
 # rebuilding it a few times a second so the pattern lives.
 
-## How far apart the ribbons run, and how wide each one is, in world metres. The
-## field figures. `ribbon_spacing_m` is also the length scale everything else on
-## this node has to stay under -- see `crosswind_spread_m()`.
+## How far apart the ribbons run, and how wide each diffuse coverage band is, in
+## world metres.  The old 0.30 m uniform strip made every lane a hard isolated
+## packet.  This wider support is distributed with a dense powder core and sparse
+## edges by `soft_lane_offset()` below.
 @export var ribbon_spacing_m := 5.0
-@export var ribbon_width_m := 0.30
+@export var ribbon_width_m := 1.30
+
+## Exponent applied to a uniform cross-lane sample.  One is a hard uniform band;
+## values above one progressively feather the edges while remaining bounded by
+## `ribbon_width_m`, so diffuse never becomes an unbounded fog fill.
+@export_range(1.0, 3.0, 0.05) var ribbon_edge_falloff := 1.8
+
+## Most lifted grains form a thin continuous bed; the remainder reinforce the
+## authored soft ribbons. Without this bed, even a feathered lane is followed by
+## several metres of literal zero and the full-gale frame separates into clumps.
+## It is still not fog: the bed exists only above the wind pickup shoulder, lasts
+## less than a second, and is carried flat across the surface.
+@export_range(0.0, 1.0, 0.01) var diffuse_share := 0.72
 
 ## How far a ribbon wanders across the wind over its length, in metres, and over
 ## what distance along the wind it does it. A ribbon that ran straight would be a
@@ -176,21 +210,18 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 ## AND IT IS BOUNDED BY THE SAME BUDGET THE CONE IS -- MEASURED, NOT REASONED
 ## ---------------------------------------------------------------------------
 ## A STREAK FLIES STRAIGHT. It is born on the ribbon and then holds the line it
-## was given, so the ink at any point across the sheet is fed by the ribbon's
-## position over the whole 11 m a streak covers in its life -- which is most of a
-## meander period. A ribbon that wanders by A therefore paints a band 2A wide, and
-## the meander is not decoration on the lane, it is a SMEAR of it.
+## was given, so the meander is not decoration on the lane, it is a SMEAR of it.
 ##
-## Authored at 1.9 m first, from the field figures, and the emission histogram
-## said what that costs: cone 0.67 + swing 3.80 + width 0.30 = **4.77 m of a 5.0 m
-## spacing, 95%**. The lanes were fully closed up and the rendered frame was
-## indistinguishable from the cone-only one. At 0.55 m the budget is 2.07 m, 41%,
-## and the sheet reads as lanes that wander.
+## The first broadening attempt widened only the meander and closed the lanes up.
+## This version spends the budget on soft COVERAGE instead: about 0.28 m of cone,
+## 0.60 m of meander swing and a 1.30 m feathered band total about 2.18 m, still
+## under half the five-metre spacing.  The lanes breathe without reading as
+## isolated thirty-centimetre strips or dissolving into uniform fog.
 ##
 ## `crosswind_smear_m()` is that arithmetic, and `tests/unit/test_wind.gd` holds
 ## it against the spacing so the next person to reach for a livelier meander is
 ## told what it costs before the frame is rendered.
-@export var ribbon_meander_m := 0.55
+@export var ribbon_meander_m := 0.30
 @export var ribbon_meander_period_m := 11.0
 
 ## How fast the whole pattern slides across the wind, in metres per second.
@@ -201,21 +232,22 @@ const PALETTE_PATH := "res://data/palette/color_bible.tres"
 ## stripes in the same places for as long as he stood there. Real snow snakes
 ## advance and wander. Slow on purpose: this is the field breathing, not a
 ## scrolling texture.
-@export var ribbon_drift_mps := 0.42
+@export var ribbon_drift_mps := 0.28
 
-## How fast the meander travels ALONG the ribbon, in metres per second. The field
-## figure for how fast a snow snake advances is 2-3 m/s, and it is a third of what
-## the streaks themselves are doing -- which is the point: the snow is faster than
-## the shape it is drawing, exactly as a wave is slower than the water in it.
-@export var ribbon_advance_mps := 2.4
+## How fast the meander phase travels ALONG the ribbon, in metres per second.
+## This is deliberately much slower than the lifted grains: the broad pattern
+## breathes while each short shard crosses it, without a rebake visibly relocating
+## a powder band.
+@export var ribbon_advance_mps := 0.65
 
 ## How many points the cloud holds, and how often it is rebuilt.
 ##
 ## A REBAKE IS SEAMLESS AND THAT IS NOT LUCK. `emission_point_texture` is read
 ## only when a particle is BORN, so replacing it moves nothing already in flight;
 ## and because the pattern is a continuous function of time sampled at fixed
-## per-point offsets, two consecutive bakes differ by `ribbon_drift_mps *
-## rebake_seconds` -- 10 cm at the shipped figures, a fifth of a streak. See
+## per-point offsets, two consecutive bakes differ principally by
+## `ribbon_drift_mps * rebake_seconds` -- 7 cm at the shipped figures, half a
+## short shard. See
 ## `tests/unit/test_wind.gd`, which asserts exactly that rather than trusting it.
 @export var ribbon_points := 4096
 @export var rebake_seconds := 0.25
@@ -249,11 +281,15 @@ var _points_image: Image = null
 var _points_texture: ImageTexture = null
 var _along: PackedFloat32Array = PackedFloat32Array()
 var _across: PackedFloat32Array = PackedFloat32Array()
+var _diffuse_across: PackedFloat32Array = PackedFloat32Array()
+var _distribution: PackedFloat32Array = PackedFloat32Array()
 var _lift: PackedFloat32Array = PackedFloat32Array()
 var _lane: PackedInt32Array = PackedInt32Array()
 var _since_bake := 0.0
 var _baked_at := -1.0
 var _clock := 0.0
+var _was_streaming := false
+var _bake_count := 0
 
 
 func _ready() -> void:
@@ -276,13 +312,14 @@ func wind_strength() -> float:
 	return _strength
 
 
-## How much of the sheet is running, 0 .. 1. Zero below the onset, and that zero
-## is the effect.
-static func stream_ratio(strength: float, onset: float) -> float:
+## How much of the sheet is running, 0 .. 1. Zero below the onset shoulder, and
+## smoothly increasing through it so a gale cannot chatter on its own floor.
+static func stream_ratio(strength: float, onset: float, softness: float = 0.0) -> float:
 	var held := clampf(strength, 0.0, 1.0)
-	if held <= onset:
+	var start := maxf(clampf(onset, 0.0, 1.0) - maxf(softness, 0.0), 0.0)
+	if held <= start:
 		return 0.0
-	var span := 1.0 - onset
+	var span := 1.0 - start
 	if span <= 0.0:
 		return 1.0
 	# Raised to 1.5, so the sheet builds through a gust rather than arriving
@@ -290,8 +327,16 @@ static func stream_ratio(strength: float, onset: float) -> float:
 	# already a switch and two of them land together -- and the square this was
 	# written as first was the other error: it put only a third of the sheet on at
 	# a strength of 0.7, which is most of a gale, and the cue did not read.
-	var t := (held - onset) / span
+	var t := (held - start) / span
 	return clampf(pow(t, 1.5), 0.0, 1.0)
+
+
+## Maps a uniform -1..1 sample into a broad lane with a dense centre and sparse
+## shoulders.  Unlike clipping or a second hard strip, the transform is smooth,
+## symmetric and strictly bounded by half the authored coverage width.
+static func soft_lane_offset(sample: float, width: float, falloff: float) -> float:
+	var held := clampf(sample, -1.0, 1.0)
+	return signf(held) * pow(absf(held), maxf(falloff, 1.0)) * maxf(width, 0.0) * 0.5
 
 
 ## Where one ribbon's middle sits ACROSS the wind, at a point `along` it, at time
@@ -420,11 +465,26 @@ static func ground_focus(camera_position: Vector3, forward: Vector3, height: flo
 
 func _process(delta: float) -> void:
 	_clock += maxf(delta, 0.0)
-	_since_bake += maxf(delta, 0.0)
 	_place()
-	if _since_bake >= maxf(rebake_seconds, 0.0):
-		_since_bake = 0.0
+	var streaming := stream_ratio(_strength, stream_onset, stream_onset_softness) > 0.0
+	if streaming and not _was_streaming:
+		# Direction and ribbon phase must be correct on the first visible frame;
+		# waiting for the periodic refresh would briefly reuse the lull's heading.
 		bake(_clock)
+		_since_bake = 0.0
+	elif streaming:
+		_since_bake += maxf(delta, 0.0)
+		# Fifteen 60 Hz frames are mathematically 0.25 seconds but their floating
+		# representation can land a hair below it.  Do not postpone a visual bake
+		# by a whole render frame for that rounding residue.
+		if _since_bake + 0.000001 >= maxf(rebake_seconds, 0.0):
+			_since_bake = 0.0
+			bake(_clock)
+	else:
+		# Do not accumulate idle time into a burst of immediate uploads.  A sheet
+		# beginning after a lull gets exactly the single onset bake above.
+		_since_bake = 0.0
+	_was_streaming = streaming
 	_apply()
 
 
@@ -451,6 +511,8 @@ func _seed_points() -> void:
 		rng.randf()
 	_along.resize(count)
 	_across.resize(count)
+	_diffuse_across.resize(count)
+	_distribution.resize(count)
 	_lift.resize(count)
 	_lane.resize(count)
 	var lanes := lane_count()
@@ -458,6 +520,8 @@ func _seed_points() -> void:
 	for i in count:
 		_along[i] = rng.randf_range(-half, half)
 		_across[i] = rng.randf_range(-1.0, 1.0)
+		_diffuse_across[i] = rng.randf_range(-half, half)
+		_distribution[i] = rng.randf()
 		_lift[i] = rng.randf_range(-1.0, 1.0)
 		_lane[i] = i % lanes
 
@@ -487,10 +551,16 @@ func bake(at: float) -> void:
 	var width := _points_image.get_width()
 	for i in _along.size():
 		var along: float = _along[i]
-		var across := ribbon_centre(
+		var ribbon_across := ribbon_centre(
 			_lane[i], lanes, ribbon_spacing_m, along, at,
 			ribbon_meander_m, ribbon_meander_period_m, ribbon_drift_mps, ribbon_advance_mps
-		) + _across[i] * ribbon_width_m * 0.5
+		) + soft_lane_offset(_across[i], ribbon_width_m, ribbon_edge_falloff)
+		# The continuous bed shares the slow crosswind slide. Leaving its births
+		# static while only the accent ribbons moved made most of the field read as
+		# wallpaper, despite the flakes themselves travelling through it.
+		var diffuse_across := _diffuse_across[i] + ribbon_drift_mps * at
+		var across: float = diffuse_across \
+			if _distribution[i] < clampf(diffuse_share, 0.0, 1.0) else ribbon_across
 		# Wrapped, so a lane that has slid off one side of the volume comes back on
 		# the other. The field is unbounded; the box it is sampled through is not.
 		across = wrapf(across, -half, half)
@@ -510,6 +580,15 @@ func bake(at: float) -> void:
 	if _process_material != null:
 		_process_material.emission_point_texture = _points_texture
 	_baked_at = at
+	_bake_count += 1
+
+
+func bake_count() -> int:
+	return _bake_count
+
+
+func reset_bake_count() -> void:
+	_bake_count = 0
 
 
 ## How many points the cloud actually holds: `ribbon_points` rounded to fill the
@@ -576,11 +655,12 @@ func _build() -> void:
 	local_coords = false
 	one_shot = false
 	explosiveness = 0.0
+	randomness = clampf(birth_randomness, 0.0, 1.0)
 	amount = maxi(streaks, 1)
 	lifetime = maxf(life_seconds, 0.05)
-	# Velocity-aligned, billboarded round it: the quad's +Y lies along travel, so
-	# a streak IS a streak rather than a dot with motion blur nobody rendered.
-	transform_align = GPUParticles3D.TRANSFORM_ALIGN_Z_BILLBOARD_Y_TO_VELOCITY
+	# The sheet's lanes and bulk travel already carry direction. Individual powder
+	# shards billboard and tumble, so they do not become a parallel tracer field.
+	transform_align = GPUParticles3D.TRANSFORM_ALIGN_DISABLED
 	draw_order = GPUParticles3D.DRAW_ORDER_VIEW_DEPTH
 	cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
@@ -607,6 +687,22 @@ func _build() -> void:
 	_process_material.gravity = Vector3(0.0, -0.45, 0.0)
 	_process_material.scale_min = 0.7
 	_process_material.scale_max = 1.25
+	_process_material.particle_flag_damping_as_friction = true
+	_process_material.damping_min = maxf(minf(drag_range.x, drag_range.y), 0.0)
+	_process_material.damping_max = maxf(maxf(drag_range.x, drag_range.y), 0.0)
+	_process_material.particle_flag_rotate_y = true
+	_process_material.angle_min = -180.0
+	_process_material.angle_max = 180.0
+	_process_material.angular_velocity_min = angular_velocity_range.x
+	_process_material.angular_velocity_max = angular_velocity_range.y
+	_process_material.angular_velocity_curve = _spin_drag_curve(spin_end_multiplier)
+	_process_material.turbulence_enabled = turbulence_influence_range.y > 0.0
+	_process_material.turbulence_influence_min = maxf(turbulence_influence_range.x, 0.0)
+	_process_material.turbulence_influence_max = maxf(
+		turbulence_influence_range.y, turbulence_influence_range.x
+	)
+	_process_material.turbulence_noise_scale = maxf(turbulence_noise_scale, 0.01)
+	_process_material.turbulence_noise_speed = Vector3.ONE * maxf(turbulence_noise_speed, 0.0)
 	_process_material.alpha_curve = _fade_ramp()
 	process_material = _process_material
 	bake(0.0)
@@ -616,9 +712,7 @@ func _build() -> void:
 ## banned list has nothing left to switch off; MIX rather than ADD, so two
 ## streaks crossing are not brighter than either.
 ##
-## Billboarding is DISABLED on the material on purpose: `transform_align` on the
-## node is already orienting the quad, and a material billboard would overwrite
-## that orientation and turn every streak back into a dot.
+## Particle billboarding keeps CUSTOM.x available as the flake's readable roll.
 func _streak_material(bible) -> StandardMaterial3D:
 	var surface := StandardMaterial3D.new()
 	var snow: Color = bible.snow_tones[0]
@@ -632,31 +726,43 @@ func _streak_material(bible) -> StandardMaterial3D:
 	surface.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	surface.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	surface.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
-	surface.billboard_mode = BaseMaterial3D.BILLBOARD_DISABLED
+	surface.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	surface.billboard_keep_scale = true
 	surface.disable_receive_shadows = true
 	surface.vertex_color_use_as_albedo = true
 	return surface
 
 
-## A streak that is solid through the middle and tapers at both ends, so the
-## quad's edges never read as edges. Vertical fill, because the quad's +Y is the
-## direction of travel.
+## An off-centre radial lentil rather than a white rectangle. Its asymmetry is
+## what makes the damped roll readable without drawing a literal snowflake icon.
 func _streak_texture() -> GradientTexture2D:
 	var gradient := Gradient.new()
-	gradient.offsets = PackedFloat32Array([0.0, 0.22, 0.78, 1.0])
+	gradient.offsets = PackedFloat32Array([0.0, 0.44, 0.74, 1.0])
 	gradient.colors = PackedColorArray([
-		Color(1.0, 1.0, 1.0, 0.0),
 		Color(1.0, 1.0, 1.0, 1.0),
 		Color(1.0, 1.0, 1.0, 1.0),
+		Color(1.0, 1.0, 1.0, 0.48),
 		Color(1.0, 1.0, 1.0, 0.0),
 	])
 	var texture := GradientTexture2D.new()
 	texture.gradient = gradient
-	texture.fill = GradientTexture2D.FILL_LINEAR
-	texture.fill_from = Vector2(0.5, 0.0)
-	texture.fill_to = Vector2(0.5, 1.0)
-	texture.width = 8
-	texture.height = 64
+	texture.fill = GradientTexture2D.FILL_RADIAL
+	texture.fill_from = Vector2(0.43, 0.48)
+	texture.fill_to = Vector2(0.98, 0.48)
+	texture.width = 32
+	texture.height = 32
+	return texture
+
+
+func _spin_drag_curve(end_multiplier: float) -> CurveTexture:
+	var curve := Curve.new()
+	curve.min_value = 0.0
+	curve.max_value = 1.0
+	curve.add_point(Vector2(0.0, 1.0))
+	curve.add_point(Vector2(0.35, 0.62))
+	curve.add_point(Vector2(1.0, clampf(end_multiplier, 0.0, 1.0)))
+	var texture := CurveTexture.new()
+	texture.curve = curve
 	return texture
 
 
@@ -682,15 +788,15 @@ func _fade_ramp() -> GradientTexture1D:
 func _apply() -> void:
 	if _process_material == null:
 		return
-	var ratio := stream_ratio(_strength, stream_onset)
+	var ratio := stream_ratio(_strength, stream_onset, stream_onset_softness)
 	# ...times the field's own slow surge. The gust decides WHETHER there is a
 	# sheet; the pulse decides how much of it is running at this moment, and it is
 	# what stops a sustained gale drawing a constant wash. Safe on `amount_ratio`
 	# for the reason the header gives -- it never re-allocates -- and safe on THIS
-	# emitter in particular because a streak lives 1.15 s, so the sheet answers a
+	# emitter in particular because a streak lives 0.72 s, so the sheet answers a
 	# change within about a second rather than over the eleven a snow layer takes.
 	amount_ratio = ratio * pulse_at(_clock, pulse_seconds, pulse_depth)
-	# Stopped outright below the onset rather than merely emptied: an emitter at
+	# Stopped outright below the onset shoulder rather than merely emptied: an emitter at
 	# amount_ratio 0 still runs, and this one is meant to be nothing at all for
 	# most of the game. Judged on the GUST, not on the pulsed figure: a pulse that
 	# could switch the emitter off would restart the sheet from empty every time it
@@ -702,5 +808,7 @@ func _apply() -> void:
 	var speed := travel.length()
 	if speed > 0.0001:
 		_process_material.direction = travel / speed
-	_process_material.initial_velocity_min = speed * 0.65
-	_process_material.initial_velocity_max = speed
+	var ratio_min := clampf(minf(speed_ratio_range.x, speed_ratio_range.y), 0.0, 1.0)
+	var ratio_max := clampf(maxf(speed_ratio_range.x, speed_ratio_range.y), ratio_min, 1.0)
+	_process_material.initial_velocity_min = speed * ratio_min
+	_process_material.initial_velocity_max = speed * ratio_max

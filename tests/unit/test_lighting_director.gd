@@ -648,8 +648,31 @@ func test_the_volumetric_air_reaches_as_far_as_the_camera_can_see() -> void:
 			+ "the far half of the frame is outside it"
 	)
 	assert_almost_eq(
-		env.volumetric_fog_density, preset.volumetric_fog_density, 0.000001, "volumetric density"
+		env.volumetric_fog_density,
+		preset.volumetric_fog_density if preset.volumetric_fog_enabled else 0.0,
+		0.000001,
+		"disabled global volumetric density"
 	)
+
+
+func test_local_snow_fog_opens_only_the_froxel_buffer_not_global_haze() -> void:
+	var director := _build()
+	director.apply_preset(&"whiteout")
+	var env := director.environment
+	var preset := director.preset(&"whiteout")
+	if env == null or preset == null:
+		return
+	assert_false(preset.volumetric_fog_enabled, "the fixture no longer proves local-only air")
+	_bus.emit_event(&"rendering.local_volumetric_fog_changed", {"active": true})
+	assert_true(env.volumetric_fog_enabled, "local snow fog did not open the froxel buffer")
+	assert_almost_eq(
+		env.volumetric_fog_density,
+		0.0,
+		0.000001,
+		"opening a local volume also revived the preset's whole-world haze"
+	)
+	_bus.emit_event(&"rendering.local_volumetric_fog_changed", {"active": false})
+	assert_false(env.volumetric_fog_enabled, "the volumetric pass stayed on after local snow fog cleared")
 
 
 func test_a_blend_carries_the_air_and_the_sky_with_it() -> void:

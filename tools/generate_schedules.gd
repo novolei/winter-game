@@ -75,10 +75,10 @@ func _initialize() -> void:
 	# day, daylight, night, day preset, night preset, allowed events, forced event, beacon
 	var rows := [
 		[1, 600.0, 300.0, &"pale_day",  &"nightfall",  [],                              &"clear_break", &"farmhouse_chimney"],
-		[2, 600.0, 300.0, &"pale_day",  &"nightfall",  [&"snow_fog"],                                 &"",         &"fuel_station"],
+		[2, 600.0, 300.0, &"pale_day",  &"nightfall",  [&"snow_fog"],                                 &"",         &"gas_station"],
 		[3, 480.0, 420.0, &"nightfall", &"deep_night", [&"snow_fog", &"clear_break"],                 &"",         &"church_tower"],
 		[4, 480.0, 420.0, &"deep_night",&"deep_night", [&"wind_shift", &"snow_fog"],                  &"",         &"logging_camp"],
-		[5, 420.0, 480.0, &"sunrise",   &"deep_night", [&"clear_break", &"cold_snap"],                &"",         &"power_pylon"],
+		[5, 420.0, 480.0, &"sunrise",   &"deep_night", [&"clear_break", &"cold_snap"],                &"",         &"transmission_tower"],
 		[6, 300.0, 600.0, &"nightfall", &"whiteout",   [&"cold_snap", &"freezing_rain", &"wind_shift"], &"",       &""],
 		[7, 240.0, 660.0, &"whiteout",  &"whiteout",   [&"wind_shift"],                               &"blizzard", &""],
 	]

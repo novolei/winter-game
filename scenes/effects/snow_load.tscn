@@ -22,6 +22,5 @@
 ; that made them; this node's own transform is nothing but a culling box, which
 ; its parent now carries between footfalls for free.
 
-[node name="SnowLoad" type="Node3D"]
-groups = ["wind_consumer"]
+[node name="SnowLoad" type="Node3D" groups=["wind_consumer"]]
 script = ExtResource("1_snowload")

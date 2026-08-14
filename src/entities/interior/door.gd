@@ -35,6 +35,11 @@ extends Area3D
 
 const EVENT_OPENED := &"door.opened"
 const EVENT_CLOSED := &"door.closed"
+const EVENT_OFFER_ENTERED := &"interaction.offer_entered"
+const EVENT_OFFER_CHANGED := &"interaction.offer_changed"
+const EVENT_OFFER_EXITED := &"interaction.offer_exited"
+const EVENT_ACTIVATED := &"interaction.activated"
+const EVENT_ENTRY_REQUESTED := &"door.entry_requested"
 
 ## The hinged leaf, by name, resolved under `building_path` -- the same
 ## authored-name convention as InteriorReveal.fade_parts.
@@ -58,9 +63,23 @@ const EVENT_CLOSED := &"door.closed"
 ## use it, and a real input map added later wins.
 @export var interact_action: StringName = &"interact"
 
+## Stable content identity for the central interaction focus. An empty value
+## falls back to the scene path, while authored/runtime doors should set it.
+@export var interaction_id: StringName = &""
+
 ## For a door that should just swing as you walk up to it. Off by default: the
 ## design says `E`.
 @export var opens_on_approach := false
+
+## Some fixed-camera doors are hard to steer through by hand. When enabled, E
+## opens the leaf and publishes one value-only destination just beyond the
+## threshold. PlayerController owns the short walk and releases control at the
+## destination; the door never calls the player directly.
+@export var guides_entry := false
+@export var entry_target_offset := Vector3.ZERO
+## Optional Marker3D kept on the visible door while the much larger Area3D may
+## sit farther outside to make discovery forgiving.
+@export var interaction_anchor_path: NodePath = ^""
 
 @export var occupant_service: StringName = &"player"
 
@@ -74,10 +93,12 @@ var _near := false
 var _bus = null
 var _registry = null
 var _occupant: Node = null
+var _offer_present := false
 
 
 func _ready() -> void:
-	_register_action()
+	if _bus == null:
+		set_event_bus(get_node_or_null("/root/EventBus"))
 	resolve()
 	_complain()
 	apply_swing(0.0)
@@ -87,18 +108,26 @@ func _ready() -> void:
 		body_exited.connect(on_body_exited)
 
 
-func _register_action() -> void:
-	if InputMap.has_action(interact_action):
-		return
-	InputMap.add_action(interact_action)
-	for key in [KEY_E]:
-		var event := InputEventKey.new()
-		event.physical_keycode = key
-		InputMap.action_add_event(interact_action, event)
+func _exit_tree() -> void:
+	_withdraw_offer()
+	_disconnect_interaction()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		_withdraw_offer()
+		_disconnect_interaction()
 
 
 func set_event_bus(bus) -> void:
+	if bus == _bus:
+		_connect_interaction()
+		return
+	_withdraw_offer()
+	_disconnect_interaction()
 	_bus = bus
+	_connect_interaction()
+	_publish_offer()
 
 
 func set_occupant(node: Node) -> void:
@@ -206,9 +235,11 @@ func close() -> void:
 
 func set_open(wanted: bool) -> void:
 	if wanted == _open:
+		_publish_offer()
 		return
 	_open = wanted
 	_announce(EVENT_OPENED if wanted else EVENT_CLOSED)
+	_publish_offer()
 	var target := 1.0 if wanted else 0.0
 	if _tween != null and _tween.is_valid():
 		_tween.kill()
@@ -237,12 +268,14 @@ func on_body_entered(body: Node) -> void:
 	_near = true
 	if opens_on_approach:
 		open()
+	_publish_offer()
 
 
 func on_body_exited(body: Node) -> void:
 	if not accepts(body):
 		return
 	_near = false
+	_withdraw_offer()
 
 
 ## Fails closed, for the same reason InteriorReveal.accepts does: with no
@@ -266,15 +299,100 @@ func occupant() -> Node:
 	return _occupant
 
 
-## Polled rather than handled in _unhandled_input, to match PlayerController,
-## which reads its four movement actions with Input.get_vector. It also has a
-## practical edge: Input.action_press() -- which is how tools/capture_interior.gd
-## drives a run, and how a test would -- sets action state without synthesising
-## an InputEvent, so an _unhandled_input door could not be opened by anything
-## except a human at a keyboard.
-func _process(_delta: float) -> void:
-	if _near and Input.is_action_just_pressed(interact_action):
-		toggle()
+## The main interaction director owns input. This handler validates its
+## value-only command again so a stale focus cannot operate a departed door.
+func _on_interaction_activated(payload) -> void:
+	if not (payload is Dictionary):
+		return
+	if StringName(payload.get("id", &"")) != _offer_id() or not _near:
+		return
+	if guides_entry:
+		open()
+		_announce_entry_request()
+		_withdraw_offer()
+		return
+	toggle()
+
+
+func _publish_offer() -> void:
+	if not _near:
+		return
+	var bus = _event_bus()
+	if bus == null:
+		return
+	var payload := {
+		"id": _offer_id(),
+		"kind": &"door",
+		"verb": "Enter" if guides_entry else ("Close" if _open else "Open"),
+		"label": String(building_node().name) if guides_entry and building_node() != null else "Door",
+		"world_position": _interaction_anchor(),
+		"enabled": true,
+	}
+	bus.emit_event(EVENT_OFFER_CHANGED if _offer_present else EVENT_OFFER_ENTERED, payload)
+	_offer_present = true
+
+
+func _withdraw_offer() -> void:
+	if not _offer_present:
+		return
+	if _bus != null and is_instance_valid(_bus):
+		_bus.emit_event(EVENT_OFFER_EXITED, {"id": _offer_id()})
+	_offer_present = false
+
+
+func _offer_id() -> StringName:
+	var stable := interaction_id
+	if stable == &"":
+		stable = StringName(String(get_path()) if is_inside_tree() else String(name))
+	return StringName("door:%s" % String(stable))
+
+
+func _interaction_anchor() -> Vector3:
+	if not interaction_anchor_path.is_empty():
+		var authored := get_node_or_null(interaction_anchor_path) as Node3D
+		if authored != null:
+			return InteriorReveal.world_of(authored) * Vector3.ZERO
+	# The Area's authored centre stays in the doorway even while the leaf swings.
+	# It is also the centre of the generous interaction range, so the prompt and
+	# the physical affordance agree. Imported leaf bounds are only a fallback:
+	# once the leaf opens their centre travels into the room with the mesh.
+	for child in get_children():
+		if child is CollisionShape3D:
+			var shape := child as CollisionShape3D
+			if is_inside_tree():
+				return shape.global_position
+			return position + shape.position
+	var hole := opening()
+	if hole.size.length_squared() > 0.000001:
+		return hole.get_center()
+	return global_position if is_inside_tree() else position
+
+
+func entry_destination() -> Vector3:
+	var building := building_node() as Node3D
+	if building == null:
+		return entry_target_offset
+	return InteriorReveal.world_of(building) * entry_target_offset
+
+
+func _announce_entry_request() -> void:
+	var bus = _event_bus()
+	if bus == null:
+		return
+	bus.emit_event(EVENT_ENTRY_REQUESTED, {
+		"door_id": _offer_id(),
+		"destination": entry_destination(),
+	})
+
+
+func _connect_interaction() -> void:
+	if _bus != null and is_instance_valid(_bus):
+		_bus.subscribe(EVENT_ACTIVATED, _on_interaction_activated)
+
+
+func _disconnect_interaction() -> void:
+	if _bus != null and is_instance_valid(_bus):
+		_bus.unsubscribe(EVENT_ACTIVATED, _on_interaction_activated)
 
 
 ## Which door, whether it is open -- and WHO worked it. The last of those was

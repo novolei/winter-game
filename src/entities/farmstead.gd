@@ -61,6 +61,10 @@ extends Node3D
 ## have no ground contact at all.
 @export var wire_root := NodePath("Wires")
 
+## The line cannot honestly disappear into the sky. It leaves the original
+## pole and terminates at this second, truck-side pole instead.
+@export var truck_power_pole_path := NodePath("TruckPowerPole")
+
 ## ---------------------------------------------------------------------------
 ## The fence
 ## ---------------------------------------------------------------------------
@@ -74,6 +78,40 @@ extends Node3D
 ## the axis `look_at()` aims, the same convention the wire uses. It is never
 ## scaled: scaling would stretch the post along with the rails.
 const FENCE_SEGMENT := preload("res://assets/models/props/fence_segment.glb")
+const WinterWheatCoverScript := preload("res://src/entities/winter_wheat_cover.gd")
+const WOODPILE := preload("res://assets/models/props/woodpile.glb")
+const SUPPLY_CACHE := preload("res://assets/models/props/supply_cache.glb")
+const FIELD_MARKER := preload("res://assets/models/props/field_marker.glb")
+const FALLEN_LIMB := preload("res://assets/models/props/fallen_limb.glb")
+const EMERGENCY_SLED := preload("res://assets/models/props/emergency_sled.glb")
+const DEPARTURE_PACK := preload("res://assets/models/props/departure_pack.glb")
+const CHOPPING_BLOCK := preload("res://assets/models/props/chopping_block.glb")
+const EVACUATION_CART := preload("res://assets/models/props/evacuation_cart.glb")
+const PANEL_VAN := preload("res://assets/models/props/panel_van.glb")
+const SYNTY_SUPPLY_SACKS := preload("res://assets/models/props/synty_supply_sacks.glb")
+const SYNTY_WOODEN_BARREL := preload("res://assets/models/props/synty_wooden_barrel.glb")
+const SYNTY_FIELD_CRATE := preload("res://assets/models/props/synty_field_crate.glb")
+const SYNTY_WORK_LOG := preload("res://assets/models/props/synty_work_log.glb")
+const SYNTY_FIELD_STUMP := preload("res://assets/models/props/synty_field_stump.glb")
+const SYNTY_PICKAXE := preload("res://assets/models/props/synty_pickaxe.glb")
+const SYNTY_EVACUATION_CACHE := preload("res://assets/models/props/synty_evacuation_cache.glb")
+const SYNTY_WOODWORK_STATION := preload("res://assets/models/props/synty_woodwork_station.glb")
+const SYNTY_LARDER_CHEST := preload("res://assets/models/props/synty_larder_chest.glb")
+const SYNTY_PROVISION_STACK := preload("res://assets/models/props/synty_provision_stack.glb")
+const SYNTY_YARD_TABLE := preload("res://assets/models/props/synty_yard_table.glb")
+const SYNTY_TARPED_CACHE := preload("res://assets/models/props/synty_tarped_cache.glb")
+const SYNTY_BROKEN_GATEWAY := preload("res://assets/models/props/synty_broken_gateway.glb")
+const SYNTY_FIREPIT := preload("res://assets/models/props/synty_firepit.glb")
+const SYNTY_GENERATOR_CACHE := preload("res://assets/models/props/synty_generator_cache.glb")
+const SYNTY_FIELD_CLINIC := preload("res://assets/models/props/synty_field_clinic.glb")
+const SYNTY_FISH_CAMP := preload("res://assets/models/props/synty_fish_camp.glb")
+const SYNTY_FUEL_DEPOT := preload("res://assets/models/props/synty_fuel_depot.glb")
+const SYNTY_ROAD_BLOCKADE := preload("res://assets/models/props/synty_road_blockade.glb")
+const SYNTY_RADIO_RELAY := preload("res://assets/models/props/synty_radio_relay.glb")
+const SYNTY_REFUGE_BEDROLL := preload("res://assets/models/props/synty_refuge_bedroll.glb")
+const SYNTY_ROCK_CLUSTER_NORTH := preload("res://assets/models/props/synty_rock_cluster_north.glb")
+const SYNTY_ROCK_CLUSTER_SOUTH := preload("res://assets/models/props/synty_rock_cluster_south.glb")
+const SYNTY_ROCK_CLUSTER_EAST := preload("res://assets/models/props/synty_rock_cluster_east.glb")
 const FENCE_SPAN := 2.6
 
 @export var fence_root := NodePath("Fence")
@@ -100,15 +138,6 @@ const FENCE_RUNS := [
 	# South, down past the well house and off the bottom edge.
 	[Vector2(0.351, 0.936), 13, false],
 ]
-
-## The house is a sibling, not a child -- it has its own placement script -- but
-## the service drop has to start on its eave.
-@export var farmhouse_path := NodePath("../Farmhouse")
-
-## Where on the house the drop is fixed, in the house's own metres. The main
-## block's right wall is at x = +3.89 and its eave at y = 5.00; this sits just
-## inside both, on the front half of the wall.
-@export var house_wire_anchor := Vector3(3.7, 4.85, 1.2)
 
 ## Tie points on the power pole, in pole-local metres, printed by
 ## tools/blender/build_power_pole.py. Blender Z-up (x, y, z) becomes Godot
@@ -349,18 +378,208 @@ const TRAIL_TO_THE_WELL := [
 @export var trail_strength := 0.5
 
 var _painter: CelPainter
+var _survival_props: Array[Node3D] = []
 
 
 func _ready() -> void:
+	_build_survival_props()
+	_install_winter_wheat_cover()
 	# Before the painter, so the fence is repainted with everything else rather
 	# than arriving in the world on the glTF importer's materials.
 	_build_fences()
 	_painter = CelPainter.new()
 	_painter.paint(self)
+	# The copied survival props are exposed on the open field. Repaint only these
+	# meshes with a denser top-snow profile; native Synty albedo maps remain in
+	# place beneath it because CelPainter carries their source texture through.
+	for prop in _survival_props:
+		_painter.paint(
+			prop,
+			CelPainter.EXPOSED_PROP_SNOW_RECEPTIVITY,
+			CelPainter.EXPOSED_PROP_SNOW_THRESHOLD_BIAS
+		)
 	_settle_all()
 	_string_wires()
 	_draw_the_lines()
 	_join_the_wind()
+
+
+## The field is a world feature, not an authored scene child.  Keeping this
+## installation beside the furrow bake prevents the main scene from becoming a
+## second, fragile owner of Farmstead's field rectangle.  The parent check keeps
+## small Farmstead unit subjects from allocating the whole wheat field.
+func _install_winter_wheat_cover() -> void:
+	if get_node_or_null("WinterWheatCover") != null:
+		return
+	if get_parent() == null or get_parent().name != &"Main":
+		return
+	var cover: Node3D = WinterWheatCoverScript.new()
+	cover.name = "WinterWheatCover"
+	add_child(cover)
+
+
+## The farmstead carries two readable survival stories.  The close cluster is
+## the work of maintaining a fire (wood, cache, stump); the distant cluster is
+## an attempted departure that stopped in the snow (sled, pack, cart, van,
+## supplies).
+## One table owns both their placement and the model list the art gate checks.
+## As with fences, this belongs here because these locations are world facts,
+## not fragile hand-authored scene state.
+func _build_survival_props() -> void:
+	if get_parent() == null or get_parent().name != &"Main":
+		return
+	for entry in _survival_prop_layout():
+		var prop_name: StringName = entry[&"name"]
+		if get_node_or_null(NodePath(prop_name)) != null:
+			continue
+		var scene: PackedScene = entry[&"scene"]
+		var prop := scene.instantiate() as Node3D
+		if prop == null:
+			continue
+		prop.name = prop_name
+		prop.transform = entry[&"transform"]
+		add_child(prop)
+		_survival_props.append(prop)
+
+
+func _survival_prop_layout() -> Array[Dictionary]:
+	return [
+		{&"name": &"Woodpile", &"scene": WOODPILE,
+			&"transform": _placement_transform(0.9063078, 0, -0.42261827, 0, 1, 0, 0.42261827, 0, 0.9063078, -11, 0, -22)},
+		{&"name": &"SupplyCache", &"scene": SUPPLY_CACHE,
+			&"transform": _placement_transform(0.81915206, 0, 0.57357645, 0, 1, 0, -0.57357645, 0, 0.81915206, 8, 0, -16)},
+		{&"name": &"FieldMarker", &"scene": FIELD_MARKER,
+			&"transform": _placement_transform(0.9659258, 0, -0.25881904, 0, 1, 0, 0.25881904, 0, 0.9659258, 14, 0, -34)},
+		{&"name": &"FallenLimbWest", &"scene": FALLEN_LIMB,
+			&"transform": _placement_transform(0.42261827, 0, -0.9063078, 0, 1, 0, 0.9063078, 0, 0.42261827, -20, 0, -29)},
+		{&"name": &"FallenLimbEast", &"scene": FALLEN_LIMB,
+			&"transform": _placement_transform(0.57357645, 0, 0.81915206, 0, 1, 0, -0.81915206, 0, 0.57357645, 36, 0, 5)},
+		{&"name": &"EmergencySled", &"scene": EMERGENCY_SLED,
+			&"transform": _placement_transform(0.81915206, 0, -0.57357645, 0, 1, 0, 0.57357645, 0, 0.81915206, 14.1, 0, -28.6)},
+		# The flatbed stops at the yard; the horse cart is deliberately stranded
+		# farther up the road, and the panel van is the last cold silhouette near
+		# the map edge. Three separated attempts read as a route, not a vehicle pile.
+		{&"name": &"EvacuationCart", &"scene": EVACUATION_CART,
+			&"transform": _placement_transform(0.8375, 0, 0.925, 0, 1.25, 0, -0.925, 0, 0.8375, 32.3, 0, -48.0)},
+		{&"name": &"PanelVan", &"scene": PANEL_VAN,
+			&"transform": _placement_transform(0.9063078, 0, 0.42261827, 0, 1, 0, -0.42261827, 0, 0.9063078, 49.0, 0, -66.0)},
+		# These remain separate on purpose.  The player can read sacks, barrel,
+		# crate, log and stump as a working fuel/provision station rather than as
+		# one anonymous dark cache.  Each Synty mesh keeps its original authored
+		# topology under the per-asset and aggregate low-poly budgets.
+		{&"name": &"SyntySupplySacks", &"scene": SYNTY_SUPPLY_SACKS,
+			&"transform": _placement_transform(0.9396926, 0, -0.34202015, 0, 1, 0, 0.34202015, 0, 0.9396926, -0.8, 0, -25.0)},
+		{&"name": &"SyntyWoodenBarrel", &"scene": SYNTY_WOODEN_BARREL,
+			&"transform": _placement_transform(0.81915206, 0, 0.57357645, 0, 1, 0, -0.57357645, 0, 0.81915206, -1.4, 0, -22.7)},
+		{&"name": &"SyntyFieldCrate", &"scene": SYNTY_FIELD_CRATE,
+			&"transform": _placement_transform(0.9659258, 0, 0.25881904, 0, 1, 0, -0.25881904, 0, 0.9659258, 0.8, 0, -23.8)},
+		{&"name": &"SyntyWorkLog", &"scene": SYNTY_WORK_LOG,
+			&"transform": _placement_transform(0.34202015, 0, -0.9396926, 0, 1, 0, 0.9396926, 0, 0.34202015, -4.3, 0, -22.2)},
+		{&"name": &"SyntyFieldStump", &"scene": SYNTY_FIELD_STUMP,
+			&"transform": _placement_transform(0.9063078, 0, 0.42261827, 0, 1, 0, -0.42261827, 0, 0.9063078, -3.6, 0, -24.4)},
+		{&"name": &"SyntyPickaxe", &"scene": SYNTY_PICKAXE,
+			&"transform": _placement_transform(0.42261827, 0, -0.9063078, 0, 1, 0, 0.9063078, 0, 0.42261827, -3.1, 0, -23.5)},
+		{&"name": &"SyntyEvacuationCache", &"scene": SYNTY_EVACUATION_CACHE,
+			&"transform": _placement_transform(1.0422995, 0, 0.5999983, 0, 1.2, 0, -0.5999983, 0, 1.0422995, 28.9, 0, -43.9)},
+		# Seven first-batch source clusters, exported as one mesh each. They make
+		# the farm feel inhabited without turning a wide survival vista into a
+		# scatter of unrelated one-draw-call objects.
+		{&"name": &"SyntyWoodworkStation", &"scene": SYNTY_WOODWORK_STATION,
+			&"transform": _placement_transform(0.81915206, 0, -0.57357645, 0, 1, 0, 0.57357645, 0, 0.81915206, -12.9, 0, -26.3)},
+		{&"name": &"SyntyLarderChest", &"scene": SYNTY_LARDER_CHEST,
+			&"transform": _placement_transform(0.9659258, 0, 0.25881904, 0, 1, 0, -0.25881904, 0, 0.9659258, 5.0, 0, -24.0)},
+		{&"name": &"SyntyProvisionStack", &"scene": SYNTY_PROVISION_STACK,
+			&"transform": _placement_transform(0.9063078, 0, -0.42261827, 0, 1, 0, 0.42261827, 0, 0.9063078, 1.3, 0, -29.0)},
+		{&"name": &"SyntyYardTable", &"scene": SYNTY_YARD_TABLE,
+			&"transform": _placement_transform(0.81915206, 0, 0.57357645, 0, 1, 0, -0.57357645, 0, 0.81915206, -1.5, 0, -18.3)},
+		{&"name": &"SyntyTarpedCache", &"scene": SYNTY_TARPED_CACHE,
+			&"transform": _placement_transform(0.9396926, 0, -0.34202015, 0, 1, 0, 0.34202015, 0, 0.9396926, 36.0, 0, -52.0)},
+		{&"name": &"SyntyBrokenGateway", &"scene": SYNTY_BROKEN_GATEWAY,
+			&"transform": _placement_transform(0.34202015, 0, -0.9396926, 0, 1, 0, 0.9396926, 0, 0.34202015, -24.0, 0, -34.0)},
+		{&"name": &"SyntyFirepit", &"scene": SYNTY_FIREPIT,
+			&"transform": _placement_transform(0.98480775, 0, 0.17364818, 0, 1, 0, -0.17364818, 0, 0.98480775, 2.1, 0, -15.6)},
+		# The outer ring is deliberately made of legible survival situations rather
+		# than random clutter: a silent generator, triage, food, fuel, a blocked
+		# route, a radio call and an abandoned bedroll read as one failed escape.
+		{&"name": &"SyntyGeneratorCache", &"scene": SYNTY_GENERATOR_CACHE,
+			&"transform": _placement_transform(0.8660254, 0, -0.5, 0, 1, 0, 0.5, 0, 0.8660254, -8.2, 0, -13.3)},
+		{&"name": &"SyntyFieldClinic", &"scene": SYNTY_FIELD_CLINIC,
+			&"transform": _placement_transform(0.76604444, 0, 0.6427876, 0, 1, 0, -0.6427876, 0, 0.76604444, 13.6, 0, -20.8)},
+		{&"name": &"SyntyFishCamp", &"scene": SYNTY_FISH_CAMP,
+			&"transform": _placement_transform(0.9396926, 0, 0.34202015, 0, 1, 0, -0.34202015, 0, 0.9396926, 5.6, 0, -34.6)},
+		{&"name": &"SyntyFuelDepot", &"scene": SYNTY_FUEL_DEPOT,
+			&"transform": _placement_transform(0.6427876, 0, -0.76604444, 0, 1, 0, 0.76604444, 0, 0.6427876, 19.0, 0, -36.7)},
+		{&"name": &"SyntyRoadBlockade", &"scene": SYNTY_ROAD_BLOCKADE,
+			&"transform": _placement_transform(0.42261827, 0, -0.9063078, 0, 1, 0, 0.9063078, 0, 0.42261827, 28.6, 0, -40.8)},
+		{&"name": &"SyntyRadioRelay", &"scene": SYNTY_RADIO_RELAY,
+			&"transform": _placement_transform(0.9063078, 0, 0.42261827, 0, 1, 0, -0.42261827, 0, 0.9063078, 21.0, 0, -47.0)},
+		{&"name": &"SyntyRefugeBedroll", &"scene": SYNTY_REFUGE_BEDROLL,
+			&"transform": _placement_transform(0.81915206, 0, -0.57357645, 0, 1, 0, 0.57357645, 0, 0.81915206, 17.0, 0, -48.0)},
+		# Three low rock clusters break the vast white plane at the vista edges,
+		# framing the field without changing its terrain or playable silhouette.
+		{&"name": &"SyntyRockClusterNorth", &"scene": SYNTY_ROCK_CLUSTER_NORTH,
+			&"transform": _placement_transform(0.98480775, 0, -0.17364818, 0, 1, 0, 0.17364818, 0, 0.98480775, -26.0, 0, -15.0)},
+		{&"name": &"SyntyRockClusterSouth", &"scene": SYNTY_ROCK_CLUSTER_SOUTH,
+			&"transform": _placement_transform(0.76604444, 0, -0.6427876, 0, 1, 0, 0.6427876, 0, 0.76604444, -31.0, 0, -35.0)},
+		{&"name": &"SyntyRockClusterEast", &"scene": SYNTY_ROCK_CLUSTER_EAST,
+			# Pulled clear of TreeA's tire swing: its broad cluster silhouette used
+			# to sit directly behind the tire at the game camera and read as one prop.
+			&"transform": _placement_transform(0.57357645, 0, 0.81915206, 0, 1, 0, -0.81915206, 0, 0.57357645, 43.0, 0, -9.0)},
+		{&"name": &"DeparturePack", &"scene": DEPARTURE_PACK,
+			&"transform": _placement_transform(0.9659258, 0, 0.25881904, 0, 1, 0, -0.25881904, 0, 0.9659258, 7.3, 0, -20.5)},
+		{&"name": &"ChoppingBlock", &"scene": CHOPPING_BLOCK,
+			&"transform": _placement_transform(0.9063078, 0, -0.42261827, 0, 1, 0, 0.42261827, 0, 0.9063078, -14.5, 0, -23.2)},
+	]
+
+
+static func _placement_transform(
+	xx: float, xy: float, xz: float,
+	yx: float, yy: float, yz: float,
+	zx: float, zy: float, zz: float,
+	tx: float, ty: float, tz: float
+) -> Transform3D:
+	return Transform3D(
+		Basis(Vector3(xx, xy, xz), Vector3(yx, yy, yz), Vector3(zx, zy, zz)),
+		Vector3(tx, ty, tz)
+	)
+
+
+static func survival_prop_model_paths() -> PackedStringArray:
+	return PackedStringArray([
+		"res://assets/models/props/woodpile.glb",
+		"res://assets/models/props/supply_cache.glb",
+		"res://assets/models/props/field_marker.glb",
+		"res://assets/models/props/fallen_limb.glb",
+		"res://assets/models/props/emergency_sled.glb",
+		"res://assets/models/props/departure_pack.glb",
+		"res://assets/models/props/chopping_block.glb",
+		"res://assets/models/props/evacuation_cart.glb",
+		"res://assets/models/props/panel_van.glb",
+		"res://assets/models/props/synty_supply_sacks.glb",
+		"res://assets/models/props/synty_wooden_barrel.glb",
+		"res://assets/models/props/synty_field_crate.glb",
+		"res://assets/models/props/synty_work_log.glb",
+		"res://assets/models/props/synty_field_stump.glb",
+		"res://assets/models/props/synty_pickaxe.glb",
+		"res://assets/models/props/synty_evacuation_cache.glb",
+		"res://assets/models/props/synty_woodwork_station.glb",
+		"res://assets/models/props/synty_larder_chest.glb",
+		"res://assets/models/props/synty_provision_stack.glb",
+		"res://assets/models/props/synty_yard_table.glb",
+		"res://assets/models/props/synty_tarped_cache.glb",
+		"res://assets/models/props/synty_broken_gateway.glb",
+		"res://assets/models/props/synty_firepit.glb",
+		"res://assets/models/props/synty_generator_cache.glb",
+		"res://assets/models/props/synty_field_clinic.glb",
+		"res://assets/models/props/synty_fish_camp.glb",
+		"res://assets/models/props/synty_fuel_depot.glb",
+		"res://assets/models/props/synty_road_blockade.glb",
+		"res://assets/models/props/synty_radio_relay.glb",
+		"res://assets/models/props/synty_refuge_bedroll.glb",
+		"res://assets/models/props/synty_rock_cluster_north.glb",
+		"res://assets/models/props/synty_rock_cluster_south.glb",
+		"res://assets/models/props/synty_rock_cluster_east.glb",
+	])
 
 
 ## ---------------------------------------------------------------------------
@@ -589,9 +808,9 @@ func _build_fences() -> void:
 ## ---------------------------------------------------------------------------
 
 
-## Rule 11 calls the line across the frame the detail, so the wires are three
-## spans that between them cut a single continuous line from the top right of
-## the frame, through the house, down to the pole and off the bottom left.
+## Rule 11 calls the line across the frame the detail, so the one surviving span
+## joins the original pole to a second pole by the stranded truck. The former
+## house drop was removed: its unresolved end read as a broken cable in the sky.
 ##
 ## The asset is one metre of wire running along its own -Z with its origin at
 ## one end, which is the axis look_at() aims. Stringing one is therefore three
@@ -600,30 +819,13 @@ func _build_fences() -> void:
 func _string_wires() -> void:
 	var wires := get_node_or_null(wire_root)
 	var pole := get_node_or_null("PowerPole") as Node3D
-	var house := get_node_or_null(farmhouse_path) as Node3D
-	if wires == null or pole == null:
+	var truck_pole := get_node_or_null(truck_power_pole_path) as Node3D
+	if wires == null or pole == null or truck_pole == null:
 		return
 
-	var west: Vector3 = pole.global_transform * POLE_CROSSARM_WEST
 	var east: Vector3 = pole.global_transform * POLE_CROSSARM_EAST
-	var eave := west + Vector3(0.0, 1.0, 0.0)
-	if house != null:
-		eave = house.global_transform * house_wire_anchor
-
-	# Down the screen and to the left, past the bottom edge: the next pole is
-	# out of frame and the line simply leaves. Slightly lower at the far end,
-	# which is the only sag a straight element can honestly carry.
-	var away := west + Vector3(-33.0, -1.2, 11.8)
-	# Up the screen and to the right from the house, off the top edge -- the
-	# span that arrives at the farm in the first place. The -Z is larger than
-	# the reference's line would suggest and that is deliberate: at the shallower
-	# angle the span ran straight through TreeA's crown, which at this camera
-	# reads as a wire snagged in the branches. Poles get sited to avoid trees.
-	var arriving := eave + Vector3(30.0, 2.6, -32.0)
-
-	_span(wires.get_node_or_null("WireArriving"), arriving, eave)
-	_span(wires.get_node_or_null("WireDrop"), eave, west)
-	_span(wires.get_node_or_null("WireLeaving"), east, away)
+	var truck_west: Vector3 = truck_pole.global_transform * POLE_CROSSARM_WEST
+	_span(wires.get_node_or_null("WireToTruckPole"), east, truck_west)
 
 
 func _span(wire: Node3D, from: Vector3, to: Vector3) -> void:

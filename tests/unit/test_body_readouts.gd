@@ -252,6 +252,24 @@ func test_the_guarded_walk_take_is_present_and_loops() -> void:
 	)
 
 
+func test_the_deep_snow_take_is_present_loops_and_contains_two_cycles() -> void:
+	var library := _library()
+	assert_true(
+		library.has_animation(WandererAnimations.WALK_DEEP),
+		"the merged library holds no take called %s" % WandererAnimations.WALK_DEEP
+	)
+	if not library.has_animation(WandererAnimations.WALK_DEEP):
+		return
+	var take := library.get_animation(WandererAnimations.WALK_DEEP)
+	assert_eq(take.loop_mode, Animation.LOOP_LINEAR, "the deep-snow gait does not loop")
+	assert_almost_eq(
+		take.length / float(WandererAnimations.WALK_DEEP_CYCLES),
+		2.7667,
+		0.05,
+		"the 5.5 s Orc take is no longer being read as two slow gait cycles"
+	)
+
+
 ## The take is THREE cycles in one clip, and the whole graph depends on knowing
 ## that. Treating its length as its period would step three strides per stride.
 ##
@@ -318,6 +336,19 @@ func test_the_guarded_walk_speed_names_the_take_it_was_measured_on() -> void:
 	)
 
 
+func test_the_deep_walk_speed_names_the_take_it_was_measured_on() -> void:
+	var source := ""
+	for row in WandererAnimations.TAKES:
+		if StringName(String(row[2])) == WandererAnimations.WALK_DEEP:
+			source = String(row[1])
+	assert_eq(
+		source,
+		"slow_orc_walk",
+		"WALK_DEEP_SPEED = %.3f m/s was measured on slow_orc_walk, not '%s'"
+			% [WandererAnimations.WALK_DEEP_SPEED, source]
+	)
+
+
 func test_the_graph_carries_the_guarded_walk_on_its_own_rate_node() -> void:
 	var graph := PlayerControllerScript.build_blend_tree()
 	for name in ["walk_guarded", "guarded_rate", "footing"]:
@@ -339,24 +370,43 @@ func test_the_graph_carries_the_guarded_walk_on_its_own_rate_node() -> void:
 	)
 
 
-## The invariant that makes the feet plant, stated for all three locomotion
+func test_the_graph_carries_the_deep_walk_on_a_synced_snow_branch() -> void:
+	var graph := PlayerControllerScript.build_blend_tree()
+	for name in ["walk_deep", "deep_rate", "snow_stride"]:
+		assert_true(graph.has_node(name), "the blend tree has no '%s' node" % name)
+	if not graph.has_node("deep_rate") or not graph.has_node("snow_stride"):
+		return
+	assert_true(
+		graph.get_node("deep_rate") is AnimationNodeTimeScale,
+		"deep_rate must carry each slow Orc cycle onto the shared gait timeline"
+	)
+	assert_true(
+		(graph.get_node("snow_stride") as AnimationNodeBlend2).sync,
+		"the deep-snow walk re-enters at a stale phase because snow_stride is unsynced"
+	)
+
+
+## The invariant that makes the feet plant, stated for all four locomotion
 ## takes: at the ground speed a clip was authored for, and with the graph mixed
 ## fully onto that clip, the clip plays at EXACTLY its authored rate.
 ##
 ## rate_node_scale * pace == 1. That is what "the feet plant" means arithmetically,
-## and it is the one property that would break silently if a fourth clip were
-## added without blending its stride into pace_for().
+## and it is the one property that would break silently if the deep-snow clip
+## were added without blending its stride into pace_for().
 func test_every_locomotion_take_plays_at_its_own_rate_at_its_own_speed() -> void:
 	var player := _build(false)
 	var shared: float = player._cycle_period
 	var cases := [
-		["walk", player.anim_walk_speed, 0.0, 0.0, player._walk_period],
-		["run", player.anim_run_speed, 1.0, 0.0, player._run_period],
-		["guarded", player.anim_guarded_speed, 0.0, 1.0, player._guarded_period],
+		["walk", player.anim_walk_speed, 0.0, 0.0, 0.0, player._walk_period],
+		["run", player.anim_run_speed, 1.0, 0.0, 0.0, player._run_period],
+		["guarded", player.anim_guarded_speed, 0.0, 1.0, 0.0, player._guarded_period],
+		["deep", player.anim_deep_speed, 0.0, 0.0, 1.0, player._deep_period],
 	]
 	for row in cases:
-		var pace: float = player.pace_for(float(row[1]), float(row[2]), float(row[3]))
-		var clip_rate: float = float(row[4]) / maxf(shared, 0.0001) * pace
+		var pace: float = player.pace_for(
+			float(row[1]), float(row[2]), float(row[3]), float(row[4])
+		)
+		var clip_rate: float = float(row[5]) / maxf(shared, 0.0001) * pace
 		assert_almost_eq(
 			clip_rate, 1.0, 0.0001,
 			"the %s take plays at %f of its authored rate at the %f m/s it was "
@@ -377,6 +427,33 @@ func test_the_guarded_walk_stays_inside_the_pace_guard() -> void:
 		"on the fastest ground in the game (%f m/s) the guarded walk wants a pace "
 			% top
 			+ "of %f against the guard's %f" % [pace, player.anim_max_pace]
+	)
+
+
+## At the project's full-drift speed the asset wants more than 1.5x. The
+## accepted in-game result caps the animation there while leaving gameplay
+## movement unchanged, so a future retune cannot silently remove that guard.
+func test_the_deep_walk_caps_the_source_rate_without_changing_traversal() -> void:
+	var player := _build(false)
+	var speed := _settled_speed(player, DRIFT)
+	var desired_pace: float = player.pace_for(speed, 0.0, 0.0, 1.0)
+	var ceiling: float = player.pace_ceiling_for(1.0)
+	var deep_rate := player._deep_period / maxf(player._cycle_period, 0.0001)
+	assert_true(
+		desired_pace > ceiling,
+		"the deep take no longer exceeds its playtest ceiling; re-measure its authored speed"
+	)
+	assert_almost_eq(
+		deep_rate * ceiling,
+		player.anim_max_pace,
+		0.0001,
+		"the slow Orc source can play faster than the project's 1.5x animation guard"
+	)
+	var middle_ceiling: float = player.pace_ceiling_for(0.5)
+	assert_true(
+		deep_rate * middle_ceiling < 2.0,
+		"the half-visible Orc take spins at %.2fx during its full-body crossfade"
+			% (deep_rate * middle_ceiling)
 	)
 
 

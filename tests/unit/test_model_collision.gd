@@ -227,10 +227,19 @@ func test_a_tree_becomes_one_cylinder_far_narrower_than_the_model() -> void:
 	assert_true(built[0]["shape"] is CylinderShape3D, "a tree must collide as a cylinder on the trunk")
 
 
-func test_a_wire_gets_nothing_at_all() -> void:
+func test_a_wire_stays_hollow_but_the_tire_swing_collides_at_its_tire() -> void:
 	var mesh := BoxMesh.new()
 	assert_eq(CollisionScript.shapes_for("Power_Wire", mesh).size(), 0)
-	assert_eq(CollisionScript.shapes_for("Tire_Swing", mesh).size(), 0)
+	mesh.size = Vector3(0.64, 2.15, 0.22)
+	var built: Array = CollisionScript.shapes_for("Tire_Swing", mesh)
+	assert_eq(built.size(), 1, "the tire swing needs one player-facing collider")
+	if built.is_empty():
+		return
+	assert_true(built[0]["shape"] is SphereShape3D, "the swing must collide as the tire, not a rope-sized box")
+	assert_true(
+		(built[0]["transform"] as Transform3D).origin.y < 0.0,
+		"the tire collider must sit below the rope anchor"
+	)
 
 
 func test_an_undeclared_mesh_gets_nothing_at_all() -> void:

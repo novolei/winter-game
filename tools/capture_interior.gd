@@ -7,8 +7,9 @@ extends Node
 ##   approach     outside, roof on, the house solid
 ##   crossing     caught mid-tween, at the doorway -- the moment itself
 ##   inside       at the stove, the room open
-##   game-camera  the same instant at UNTOUCHED gameplay framing, which is the
-##                only one of the four that proves the room reads in play
+##   game-camera  the same instant with the live interior framing modifier,
+##                which is the only one of the four that proves the room reads
+##                as the player now sees it
 ##
 ##   Godot_console.exe --path <project> res://tools/capture_interior.tscn \
 ##       --resolution 1600x1000 -- --out D:/somewhere/dir [--preset PALE_DAY]
@@ -26,6 +27,7 @@ extends Node
 ## here -- the same Area3D overlap on the same physics tick.
 
 const REVEAL_ENTERED := &"interior.entered"
+const REVEAL_EXITED := &"interior.exited"
 
 ## Where the farmhouse stands in scenes/main.tscn, and the door in the model's
 ## own coordinates: the front door panel spans x 1.30 .. 2.30 at z 0, and the
@@ -67,6 +69,8 @@ var _stove = null
 var _door = null
 var _warmth = null
 var _crossed := false
+var _entry_events := 0
+var _exit_events := 0
 var _held: Array[StringName] = []
 
 
@@ -100,6 +104,7 @@ func _ready() -> void:
 	var bus := get_node_or_null("/root/EventBus")
 	if bus != null:
 		bus.subscribe(REVEAL_ENTERED, _on_crossed)
+		bus.subscribe(REVEAL_EXITED, _on_exited)
 	await _run()
 
 
@@ -169,7 +174,10 @@ func _run() -> void:
 				% [_warmth.warmth(), fading])
 
 	await _shoot("interior-4-inside", _wide)
-	await _shoot("interior-5-game-camera", _gameplay_size)
+	await _shoot("interior-5-game-camera", _rig.framing_target())
+	if _entry_events != 1 or _exit_events != 0:
+		push_error("capture_interior: unstable threshold emitted %d enters and %d exits"
+			% [_entry_events, _exit_events])
 	_report()
 	get_tree().quit()
 
@@ -203,7 +211,12 @@ func _release_all() -> void:
 
 
 func _on_crossed(_payload) -> void:
+	_entry_events += 1
 	_crossed = true
+
+
+func _on_exited(_payload) -> void:
+	_exit_events += 1
 
 
 ## Horizontal only: the player walks on the snow surface and the stove stands on
@@ -252,6 +265,9 @@ func _report() -> void:
 	])
 	print("capture_interior: reveal revealed=%s fade=%.3f fading %d part(s)" % [
 		_reveal.is_revealed(), _reveal.fade(), _reveal.parts().size(),
+	])
+	print("capture_interior: threshold events entered=%d exited=%d" % [
+		_entry_events, _exit_events,
 	])
 	for part in _reveal.parts():
 		print("capture_interior:   %-18s transparency=%.2f cast_shadow=%d visible=%s" % [

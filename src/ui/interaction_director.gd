@@ -246,6 +246,20 @@ func _upsert_offer(payload) -> void:
 	var facing_dot_min := float(payload.get("facing_dot_min", -1.0))
 	if not is_finite(facing_dot_min):
 		facing_dot_min = -1.0
+	var accent_color := Color.TRANSPARENT
+	var raw_accent: Variant = payload.get("accent_color", null)
+	if raw_accent is Color:
+		var candidate: Color = raw_accent
+		if is_finite(candidate.r) and is_finite(candidate.g) \
+				and is_finite(candidate.b) and is_finite(candidate.a):
+			accent_color = candidate
+	var guide_color := Color.TRANSPARENT
+	var raw_guide: Variant = payload.get("guide_color", null)
+	if raw_guide is Color:
+		var guide_candidate: Color = raw_guide
+		if is_finite(guide_candidate.r) and is_finite(guide_candidate.g) \
+				and is_finite(guide_candidate.b) and is_finite(guide_candidate.a):
+			guide_color = guide_candidate
 	var clean := {
 		"id": id,
 		"kind": StringName(payload.get("kind", &"")),
@@ -258,6 +272,8 @@ func _upsert_offer(payload) -> void:
 		"hold_seconds": maxf(hold_seconds, 0.0),
 		"facing_dot_min": clampf(facing_dot_min, -1.0, 1.0),
 		"guide_line": bool(payload.get("guide_line", false)),
+		"accent_color": accent_color,
+		"guide_color": guide_color,
 	}
 	var was_focused := id == _focused
 	var previous: Dictionary = _offers.get(id, {})
@@ -300,6 +316,12 @@ func _rebuild_prompt() -> void:
 		prompt.free()
 		return
 	prompt.set_guide_line(bool(offer.get("guide_line", false)))
+	var accent: Variant = offer.get("accent_color", Color.TRANSPARENT)
+	if accent is Color:
+		prompt.set_accent_color(accent)
+	var guide: Variant = offer.get("guide_color", Color.TRANSPARENT)
+	if guide is Color:
+		prompt.set_guide_color(guide)
 	prompt.set_hold_progress(
 		0.0 if float(offer.get("hold_seconds", 0.0)) > 0.0 else 1.0
 	)
@@ -414,6 +436,8 @@ func _same_offer_content(left: Dictionary, right: Dictionary) -> bool:
 	var right_content := right.duplicate(true)
 	left_content.erase("world_position")
 	right_content.erase("world_position")
+	left_content.erase("target_position")
+	right_content.erase("target_position")
 	return left_content == right_content
 
 

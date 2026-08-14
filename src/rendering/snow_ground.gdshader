@@ -225,6 +225,14 @@ uniform float band_softness = 0.05;
 // and its red channel goes above 1.0 whenever the light is warm.
 uniform vec3 light_tint = vec3(1.0);
 
+// A local open flame is not another sun. Before this branch existed every
+// OmniLight3D ran the complete two-band calculation below and added another
+// full copy of the snow colour inside its range, producing a cold, pixel-edged
+// bright disc. Local lights now contribute only their own palette colour,
+// distance falloff and shadow attenuation. The modest gain is authored by
+// TerrainRenderer; the light's own range remains the only radius control.
+uniform float local_light_snow_gain = 1.0;
+
 // THE SNOW GRAIN -- style document section 15, made legal.
 //
 // The field was one flat fill. The document asks for it to vary slightly, and
@@ -588,6 +596,12 @@ void fragment() {
 
 void light() {
 	float lambert = clamp(dot(normalize(NORMAL), normalize(LIGHT)), 0.0, 1.0);
+	if (!LIGHT_IS_DIRECTIONAL) {
+		float local_response = lambert * ATTENUATION * local_light_snow_gain;
+		// Godot supplies LIGHT_COLOR multiplied by PI for spatial lights. Divide
+		// it back out so the authored energy remains the energy on screen.
+		DIFFUSE_LIGHT += snow_lit.rgb * LIGHT_COLOR * (local_response / PI);
+	} else {
 	// Reconstruct the broad surface response from the varying world position so
 	// the already-computed footprint detail can be amplified around it. A cavity
 	// needs one wall to turn toward the raking sun and the other away; without
@@ -647,5 +661,6 @@ void light() {
 	// still be a palette colour once it reaches the screen. `light_tint` is not
 	// LIGHT_COLOR -- it is an authored, luminance-normalised hue rotation on the
 	// lit band alone, and the shade band never sees it.
-	DIFFUSE_LIGHT += mix(shade, lit * light_tint, band);
+		DIFFUSE_LIGHT += mix(shade, lit * light_tint, band);
+	}
 }

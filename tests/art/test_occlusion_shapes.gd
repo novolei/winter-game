@@ -48,6 +48,9 @@ const BOXED := [
 
 const HOLLOW := [
 	"res://assets/models/props/power_wire.glb",
+]
+
+const TIRE_SWINGS := [
 	"res://assets/models/props/tire_swing.glb",
 ]
 
@@ -274,9 +277,21 @@ func test_a_vehicle_and_a_fence_panel_occlude_with_their_box() -> void:
 			"%s's box is not the height of the thing it stands for" % path)
 
 
-## Nothing solid in it, so it cannot be in anybody's way. Seven centimetres of
-## steel strung thirty metres across the frame hides nobody, and a swing hangs
-## off a tree that is already an occluder.
-func test_the_wires_and_the_swing_occlude_with_nothing() -> void:
+## Seven centimetres of steel strung thirty metres across the frame hides
+## nobody. The swing is excluded: its tire is now deliberately physical and
+## should also cover the same compact silhouette for the camera ray.
+func test_the_wires_occlude_with_nothing() -> void:
 	for path in HOLLOW:
 		assert_eq(_proxy(path).size(), 0, "%s produced an occlusion proxy" % path)
+
+
+func test_the_tire_swing_occludes_only_as_its_compact_tire() -> void:
+	for path in TIRE_SWINGS:
+		var shapes := _proxy(path)
+		assert_eq(shapes.size(), 1, "%s must have one compact tire proxy" % path)
+		if shapes.is_empty():
+			continue
+		assert_true(
+			shapes[0]["shape"] is SphereShape3D,
+			"%s must occlude as its tire, not its rope" % path
+		)

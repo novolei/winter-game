@@ -41,6 +41,30 @@ half_width_m = 0.75
 feather_m = 1.25
 
 [sub_resource type="Resource" id="Resource_ejt5h"]
+script = ExtResource("1_3rrh4")
+points = PackedVector2Array(42, 22, 45, 10, 44, -3, 45, -16, 43, -28, 42, -38)
+half_width_m = 1.15
+feather_m = 1.25
+
+[sub_resource type="Resource" id="Resource_khjfp"]
+script = ExtResource("1_3rrh4")
+points = PackedVector2Array(-38, 7, -26, 10, -9, 15, 9, 18, 27, 20, 42, 22)
+half_width_m = 1.15
+feather_m = 1.25
+
+[sub_resource type="Resource" id="Resource_g1ct0"]
+script = ExtResource("1_3rrh4")
+points = PackedVector2Array(42, -38, 28, -42, 12, -41, -5, -40, -23, -38, -40, -34)
+half_width_m = 1.15
+feather_m = 1.25
+
+[sub_resource type="Resource" id="Resource_6sb5k"]
+script = ExtResource("1_3rrh4")
+points = PackedVector2Array(-40, -34, -38, -25, -37, -15, -36, -6, -37, 2, -38, 7)
+half_width_m = 1.15
+feather_m = 1.25
+
+[sub_resource type="Resource" id="Resource_k0nrh"]
 script = ExtResource("3_4k0c1")
 centre = Vector2(21, -13)
 radius_m = 3.0
@@ -48,7 +72,7 @@ lee_length_m = 10.0
 lee_half_width_m = 5.0
 shelter_strength = 0.75
 
-[sub_resource type="Resource" id="Resource_khjfp"]
+[sub_resource type="Resource" id="Resource_6kdja"]
 script = ExtResource("3_4k0c1")
 centre = Vector2(-18, -10)
 radius_m = 2.0
@@ -56,7 +80,7 @@ lee_length_m = 8.0
 lee_half_width_m = 4.0
 shelter_strength = 0.6
 
-[sub_resource type="Resource" id="Resource_g1ct0"]
+[sub_resource type="Resource" id="Resource_5vh20"]
 script = ExtResource("3_4k0c1")
 centre = Vector2(30, 18)
 radius_m = 2.5
@@ -71,5 +95,5 @@ full_imprint_depth_m = 0.08
 max_boot_depression_m = 0.044
 residual_cover_m = 0.02
 footprint_response_depth_m = 0.16
-protected_routes = Array[ExtResource("1_3rrh4")]([SubResource("Resource_cg5ic"), SubResource("Resource_0cjig"), SubResource("Resource_gojuo"), SubResource("Resource_0ussm"), SubResource("Resource_otl2o"), SubResource("Resource_g6a7x")])
-shelters = Array[ExtResource("3_4k0c1")]([SubResource("Resource_ejt5h"), SubResource("Resource_khjfp"), SubResource("Resource_g1ct0")])
+protected_routes = Array[ExtResource("1_3rrh4")]([SubResource("Resource_cg5ic"), SubResource("Resource_0cjig"), SubResource("Resource_gojuo"), SubResource("Resource_0ussm"), SubResource("Resource_otl2o"), SubResource("Resource_g6a7x"), SubResource("Resource_ejt5h"), SubResource("Resource_khjfp"), SubResource("Resource_g1ct0"), SubResource("Resource_6sb5k")])
+shelters = Array[ExtResource("3_4k0c1")]([SubResource("Resource_k0nrh"), SubResource("Resource_6kdja"), SubResource("Resource_5vh20")])

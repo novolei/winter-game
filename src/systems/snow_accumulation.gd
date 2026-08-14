@@ -92,24 +92,31 @@ extends Node
 ## So the loss is now gated on the three things that actually remove snow, and
 ## the normal case in this game is the one where none of them is happening:
 ##
-##   COLD AND STILL -> IT STAYS.   creep_seconds, and it is 70 minutes: over a
-##                                 whole game day of clear weather four fifths
-##                                 of the snow is still on the roof. This is the
-##                                 default, not the exception.
-##   WIND           -> SCOUR.      scour_seconds, on the wind hook.
+##   COLD AND STILL -> IT STAYS.   creep_seconds is a numerical tail longer
+##                                 than a day: over one 15-minute game day more
+##                                 than 99% of the blanket remains.
+##   STRONG WIND    -> SCOUR.      ordinary valley air is below the exposure
+##                                 threshold; only storm wind contributes.
 ##   ABOVE FREEZING -> MELT.       melt_seconds, on the thaw hook, which is 0
 ##                                 today and belongs to Wave 3.
 ##
-## `creep_seconds` is not zero, and that is deliberate rather than a survival of
-## the old term. Settled snow really does consolidate and slide off a pitch, on
-## a time constant far longer than a game day; and a shed that could reach zero
-## would put the equilibrium at exactly 1.0, which is the clamp, which is the
-## one corner this whole design exists to keep out of the curve.
+## `creep_seconds` is not mathematically zero only because a shed that reaches
+## zero puts the equilibrium exactly on the 1.0 clamp. Its roughly 28-hour time
+## constant is not an authored visible melt or slide.
 
 ## THE WEATHER, as this reads it. Both are HOOKS in the vocabulary TrackMask and
 ## Snowfall already share: 0 clear .. 1 heavy, and 0 dead still .. 1 full gale.
 const SNOWFALL_SERVICE := &"snowfall"
 const REGISTRY_NAME := &"snow_accumulation"
+
+## Ordinary valley air shifts loose flakes but does not peel an established
+## winter blanket off every roof, bonnet and wire. Scouring begins only above
+## this exposure threshold, then ramps across the remaining 0..1 range. The
+## threshold is intentionally below the shipped gale profile and above the
+## opening valley's sustained 0.04..0.38 band. A brief valley squall may cross
+## it weakly, but not long or hard enough to reverse day one's settling; a real
+## storm still strips snow while the clear break cannot reverse the whole farm.
+const WIND_SCOUR_THRESHOLD := 0.42
 
 ## Spelled out rather than preloaded off WorldClock, the same way
 ## LightingDirector and MusicDirector spell them out: systems never hold
@@ -124,22 +131,24 @@ const EVENT_NIGHT_STARTED := &"clock.night_started"
 ## what fell before the run began. A model that can only ramp from wherever it
 ## starts needs its start authored, and this is it.
 ##
-## 0.62 IS A NUMBER ABOUT THE PICTURE, not about the weather, and it was chosen
-## against the cel shader's own mapping (CelPainter's SNOW_* constants, measured
-## over 20000 samples of the shader's noise):
+## 0.62 IS A NUMBER ABOUT THE PICTURE, not about the weather. Flat props still
+## read it through the cel shader; modelled roofs mark their old planes bare and
+## grow CelPainter's `snow_mass` geometry on a deliberately later curve. That
+## separation keeps the world recognisably weeks into winter without making the
+## roof look nearly finished on the first frame:
 ##
-##     cover   farmhouse roof   flat top   45 deg pitch   truck panel
-##     0.359       0%              7%          0%             0%      <- shipped
-##     0.550      12%             74%          1%             0%
-##     0.620      33%             96%          5%             1%      <- here
-##     0.800      98%            100%         61%             7%
-##     0.970     100%            100%        100%            25%
+##     cover   roof mass   flat top   45 deg pitch   truck panel
+##     0.359       0%          7%          0%             0%
+##     0.550       3%         74%          1%             0%
+##     0.620      16%         96%          5%             1%      <- opening
+##     0.800      68%        100%         61%             7%
+##     0.970     100%        100%        100%            25%
 ##
-## At 0.62 the roof carries real snow with the dark slate still reading through
-## it, every flat top is white, and the week has the whole of 0.62..0.97 left to
-## bury it in. Lower and the roof opens bare, which is the defect. Higher and
-## the roof opens finished, which takes Art Bible rule 10's ridge line with it
-## on the first frame.
+## At 0.62 the roof carries a young visible lip with most dark slate still
+## reading through it, every flat top is snowy, and the week has the whole of
+## 0.62..0.97 left to bury the roof in. Lower and the props open too bare;
+## mapping the roof directly from zero made it open finished, which took Art
+## Bible rule 10's ridge line with it on the first frame.
 @export var opening_cover := 0.62
 
 ## Seconds of the heaviest snowfall it would take to lay a full cover on a bare
@@ -147,33 +156,20 @@ const EVENT_NIGHT_STARTED := &"clock.night_started"
 ## a given weather and how long it takes to get there, so the two are a pair and
 ## were tuned as one.
 ##
-## 240 s against a creep of 4200 gives a time constant of 3.8 minutes in a
-## blizzard and 23 minutes in the light snow of days 1-2. Measured on the model:
+## 240 s against the nearly-zero cold tail gives a time constant of about four
+## minutes in a blizzard and about half an hour in the light snow of days 1-2.
+## Measured on the model:
 ## the heaviest snowfall there is takes about 520 s to lay nine tenths of its
 ## cover, which is inside a single daylight phase and nowhere near a frame.
 @export var settle_seconds := 240.0
 
-## THE COLD, STILL LOSS: consolidation, and a slab sliding off a pitch. The two
-## things that take snow off a roof at -20, and both of them are slow.
+## A numerical cold consolidation tail, not a visible gameplay loss. One global
+## scalar cannot tell a steep roof slab from a flat truck bonnet or a cable, so
+## charging every exposed top at the old 70-minute rate made them all lose snow
+## in sync. At 100000 s, one whole 900 s game day retains more than 99% in still
+## clear air, while the equilibrium remains strictly below the hard clamp.
 ##
-## 4200 s is seventy minutes -- longer than any single game day, and two thirds
-## of a whole seven-day run. Over one game day of clear weather it leaves 81% of
-## the snow where it was, which is what "below freezing it stays" has to mean as
-## a number. It is NOT zero, for the reason in the header: a shed that reaches
-## zero puts the equilibrium on the clamp.
-##
-## The equilibrium cover is gain / (gain + shed), so with these two numbers and
-## Snowfall's own table the seven days run roughly:
-##
-##     PALE DAY   0.12 snowfall -> 0.68 by day, 0.78 at night
-##     DEEP NIGHT 0.28          -> 0.83        0.89
-##     NIGHTFALL  0.35          -> 0.86        0.91
-##     WHITEOUT   1.00          -> 0.95        0.97
-##
-## Simulated across the authored schedules from the opening 0.62, the cover runs
-## 0.62 -> 0.64 -> 0.74 -> 0.72 -> 0.79 -> 0.83 -> ... -> 0.97, moving every
-## single phase and never turning back on itself by more than a lull's worth.
-@export var creep_seconds := 4200.0
+@export var creep_seconds := 100000.0
 
 ## WIND STRIPS AN EXPOSED SURFACE -- the same 风大 TrackMask decays prints with,
 ## arriving here through the same hook. At rest this term is exactly zero and
@@ -351,18 +347,26 @@ func _gain() -> float:
 ## Snow leaving, per second, PER UNIT OF COVER -- so the loss term is
 ## _shed() * cover and a bare surface loses nothing.
 ##
-## Three terms, and in the weather this game actually has only the first one is
-## ever non-zero. See the header: that is the point of the change, not an
-## oversight in the wiring.
+## Three terms: the cold tail is always tiny, wind contributes only above the
+## exposure threshold, and thaw remains zero until a temperature source exists.
 func _shed() -> float:
 	var shed := 0.0
 	if creep_seconds > 0.0:
 		shed = (night_creep_factor if _night else 1.0) / creep_seconds
 	if scour_seconds > 0.0:
-		shed += _wind / scour_seconds
+		shed += wind_scour_exposure(_wind) / scour_seconds
 	if melt_seconds > 0.0:
 		shed += _thaw / melt_seconds
 	return shed
+
+
+## How much of the authored wind is strong enough to remove an established
+## surface blanket. Public and pure so the boundary cannot regress unnoticed.
+static func wind_scour_exposure(wind: float) -> float:
+	var clamped := clampf(wind, 0.0, 1.0)
+	if clamped <= WIND_SCOUR_THRESHOLD:
+		return 0.0
+	return (clamped - WIND_SCOUR_THRESHOLD) / (1.0 - WIND_SCOUR_THRESHOLD)
 
 
 ## The speed the weather is asking the cover to move at. The weather sets THIS,

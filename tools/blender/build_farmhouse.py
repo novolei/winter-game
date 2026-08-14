@@ -139,6 +139,9 @@ PALETTE = {
     "PAL_WARM_1": "6E2F2E",    # deep red -- the chimney
     "PAL_WARM_2": "A05A35",    # rust orange -- the trim line
     "PAL_WARM_3": "FFB257",    # amber -- lit windows, fire
+    # Same approved amber, split only so runtime can keep the lower window
+    # subordinate to the upper story light without inventing another colour.
+    "PAL_WARM_3_AUX": "FFB257",
 }
 
 SIDING = "PAL_STRUCT_1"
@@ -147,6 +150,7 @@ ROOF = "PAL_STRUCT_4"
 TRIM = "PAL_WARM_2"
 GLASS_DARK = "PAL_STRUCT_4"
 GLASS_LIT = "PAL_WARM_3"
+GLASS_LIT_AUX = "PAL_WARM_3_AUX"
 SURROUND = "PAL_SNOW_1"
 SNOW = "PAL_SNOW_1"
 ICE = "PAL_SNOW_2"
@@ -404,14 +408,15 @@ def panel(name, group, slot, axis, at, u0, u1, v0, v1):
     return emit(name, group, slot, pts, [(0, 1, 2, 3)])
 
 
-def window(name, group, axis, at, u_center, u_size, v0, v1, lit=False):
+def window(name, group, axis, at, u_center, u_size, v0, v1, lit=False, lit_slot=None):
     """A window: a dark or amber pane, and a shallow flat plane behind it for
     the white surround. Two flat rectangles, 4 triangles, no moulding."""
     proud = 0.03 if axis in ("+x", "+y") else -0.03
     u0, u1 = u_center - u_size / 2.0, u_center + u_size / 2.0
     panel(name + "_Surround", group, SURROUND, axis, at + proud * 0.5,
           u0 - 0.11, u1 + 0.11, v0 - 0.11, v1 + 0.11)
-    panel(name + "_Pane", group, GLASS_LIT if lit else GLASS_DARK, axis,
+    pane_slot = (lit_slot or GLASS_LIT) if lit else GLASS_DARK
+    panel(name + "_Pane", group, pane_slot, axis,
           at + proud, u0, u1, v0, v1)
 
 
@@ -539,8 +544,8 @@ def build_roof():
     main_run, main_rise = MAIN_X1, MAIN_RISE
     main_len = math.hypot(main_run, main_rise)
     main_ang = math.atan2(main_rise, main_run)
-    for sign, side, lobes in ((1, "Right", (0.58, 0.44, 0.66, 0.50)),
-                              (-1, "Left", (0.47, 0.68, 0.42, 0.61))):
+    for sign, side, lobes in ((1, "Right", (0.58, 0.44, 0.66)),
+                              (-1, "Left", (0.47, 0.68, 0.42))):
         slope_x("Roof_Main_" + side, F_ROOF, ROOF_BARE, sign, 0.0, MAIN_RIDGE_Z,
                 main_run, main_rise, MAIN_Y0 - VERGE, MAIN_Y1 + VERGE,
                 ROOF_T, -0.08, main_len + EAVE, -ROOF_T / 2.0)
@@ -552,7 +557,7 @@ def build_roof():
             0.0, main_len + EAVE,
             *((MAIN_Y0 - VERGE, MAIN_Y1 + VERGE) if sign > 0
               else (-MAIN_Y1 - VERGE, -MAIN_Y0 + VERGE)),
-            edge=lobes, spans=3)
+            edge=lobes, spans=2)
 
     wing_run, wing_rise = 1.80, WING_RISE
     wing_len = math.hypot(wing_run, wing_rise)
@@ -696,6 +701,33 @@ def build_flue_mouth():
     return mouth
 
 
+def build_warm_window_anchors():
+    """Authored origins and outward directions for the two high/low warm panes.
+
+    The upper pane remains the main story light and lands on the snowy porch
+    roof. The lower wing pane is quieter and lands on the snow just outside, so
+    both storeys read as inhabited in the game camera without turning the house
+    into an orange block. Like the chimney marker, these empties stay outside
+    every reveal mesh group and follow the generator whenever the facade changes.
+
+    Blender +Z is Godot +Y and Blender -Y is Godot +Z. Their local +Z therefore
+    faces out of the front facade after import.
+    """
+    anchors = []
+    for name, x, z in (
+        ("Warm_Window_Upper", 2.00, 4.10),
+        ("Warm_Window_Lower", -2.55, 1.85),
+    ):
+        anchor = bpy.data.objects.new(name, None)
+        anchor.empty_display_type = "PLAIN_AXES"
+        anchor.empty_display_size = 0.25
+        front_y = MAIN_Y0 if name == "Warm_Window_Upper" else WING_Y0
+        anchor.location = (x, front_y - 0.03, z)
+        bpy.context.scene.collection.objects.link(anchor)
+        anchors.append(anchor)
+    return anchors
+
+
 def build_openings():
     for tag, y in (("1", 1.60), ("2", 4.20)):
         window("Win_Left_G" + tag, F_LEFT, "-x", MAIN_X0, y, 1.10, 1.15, 2.45)
@@ -706,13 +738,13 @@ def build_openings():
     window("Win_Back_G1", SHELL, "+y", MAIN_Y1, -1.60, 1.10, 1.15, 2.45)
     window("Win_Back_U1", SHELL, "+y", MAIN_Y1, -1.60, 1.00, 3.55, 4.65)
     window("Win_Front_U1", F_FRONT, "-y", MAIN_Y0, -2.00, 1.00, 3.55, 4.65)
-    window("Win_Front_U2", F_FRONT, "-y", MAIN_Y0, 2.00, 1.00, 3.55, 4.65)
+    # The two story lights: upper is the hero, lower on the visible wing supports it.
+    window("Win_Front_U2", F_FRONT, "-y", MAIN_Y0, 2.00, 1.00, 3.55, 4.65, lit=True)
     # The one small attic window in the main gable.
     window("Win_Attic", F_FRONT, "-y", MAIN_Y0, 0.00, 0.80, 5.30, 6.00)
-    # Two windows are lit. That is the entire warm-window quota for this
-    # building: one beside the door, one on the wing's front.
-    window("Win_Front_G1", F_FRONT, "-y", MAIN_Y0, 2.90, 1.10, 1.15, 2.45, lit=True)
-    window("Win_Wing_F1", F_FRONT, "-y", WING_Y0, -2.55, 1.40, 1.15, 2.55, lit=True)
+    window("Win_Front_G1", F_FRONT, "-y", MAIN_Y0, 2.90, 1.10, 1.15, 2.45)
+    window("Win_Wing_F1", F_FRONT, "-y", WING_Y0, -2.55, 1.40, 1.15, 2.55,
+           lit=True, lit_slot=GLASS_LIT_AUX)
     window("Win_Wing_F2", F_FRONT, "-y", WING_Y0, -0.90, 1.00, 1.15, 2.45)
     window("Win_Wing_Porch", F_FRONT, "+x", WING_X1, -1.20, 1.00, 1.15, 2.45)
     window("Win_Wing_Left", F_LEFT, "-x", WING_X0, -1.80, 1.00, 1.15, 2.45)
@@ -923,8 +955,7 @@ def add_camera(name, target, azimuth, elevation, distance, scale):
 
 
 def add_warm_lamp(name, location, energy, radius):
-    """The amber inside the house. GDD section 6: on day one the whole valley is
-    one lit window, and it is this one."""
+    """The amber inside the house: one clustered home light in the valley."""
     data = bpy.data.lights.new(name, type="POINT")
     data.energy = energy
     data.shadow_soft_size = radius
@@ -982,8 +1013,8 @@ def do_renders(directory):
     scene.view_settings.view_transform = "Standard"
 
     setup_render_world()
-    # Reaching out of the two lit windows and the stove door, which is why the
-    # porch and the ground in front of it are warm in the exterior view.
+    # Reaching out of the high/low front windows and the stove door, which is why
+    # the porch and the ground in front of it are warm in the exterior view.
     add_warm_lamp("Lamp_Main", (0.4, 3.4, 2.10), 320.0, 1.2)
     add_warm_lamp("Lamp_Wing", (-1.9, -1.9, 2.10), 160.0, 1.0)
 
@@ -1045,6 +1076,7 @@ def main():
     # After every part, and outside GROUPS: it is an empty, so it joins nothing
     # and is counted in no budget.
     build_flue_mouth()
+    build_warm_window_anchors()
 
     parts = sum(PART_COUNT.values())
     order = [SHELL, F_ROOF, F_FRONT, F_PORCH, F_LEFT, F_DIVIDER, F_DOOR, PORCH, ROOM, FURN]

@@ -17,6 +17,8 @@ const CONFIRM_GUARD_MSEC := 180
 const QUIT_SOUND_SECONDS := 0.12
 const CAMERA_SERVICE_KEY := &"camera_rig"
 const CAMERA_MODIFIER_SOURCE := &"pause_cinematic"
+## 世界捂上耳朵的听感上限：自由场 22050 Hz，全开时降到 token 给的 900 Hz。
+const MUFFLE_FREE_FIELD_HZ := 22050.0
 ## A quiet aerial pause tableau. The ordinary -45/-35 three-quarter view opens
 ## by 1.85x, pitches eleven degrees further down and swings fifteen degrees
 ## across the valley. The player becomes the warm anchor inside a readable
@@ -52,9 +54,9 @@ var _status_label: Label = null
 var _remaining_caption: Label = null
 var _remaining_value: Label = null
 var _state_slot: Control = null
-var _menu_panel: VBoxContainer = null
-var _settings_panel: VBoxContainer = null
-var _confirm_panel: VBoxContainer = null
+var _menu_panel: Control = null
+var _settings_panel: Control = null
+var _confirm_panel: Control = null
 var _confirmation_label: Label = null
 var _hint_label: Label = null
 
@@ -91,6 +93,12 @@ var _camera_base_boom_factor := 1.0
 var _camera_pose_captured := false
 var _spatial_mode := false
 
+var _cinematic := PauseCinematic.new()
+var _drift_elapsed := 0.0
+var _return_from := 1.0
+var _muffle_bus := -1
+var _muffle_effect: AudioEffectLowPassFilter = null
+
 var _choreography = null   # PauseChoreography，打开/关闭期间持有
 
 
@@ -112,6 +120,8 @@ func build() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	layer = LAYER_ORDER
 	_tokens = ResourceLoader.load(TOKENS_PATH) as UITokens
+	if _tokens != null:
+		_cinematic.configure(_tokens)
 	_fonts = UIFonts.new()
 	_fonts.build(_tokens)
 	_audio = UIAudio.new()
@@ -134,8 +144,8 @@ func build() -> void:
 	_world_treatment.name = "FrozenWorldTreatment"
 	_world_treatment.mouse_filter = Control.MOUSE_FILTER_STOP
 	_world_treatment.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	# This node is only the modal input shield. Pause must preserve the world's
-	# authored palette, exposure and atmospheric colour exactly as rendered.
+	# This node is only the modal input shield. The pause look is carried by the
+	# spatial copy itself (cream type on the world, no plate, no film).
 	var transparent_world := _tokens.ink_primary
 	transparent_world.a = 0.0
 	_world_treatment.color = transparent_world
@@ -166,12 +176,12 @@ func _build_context() -> void:
 	_status_label.name = "DayAndPhase"
 	_status_label.text = "第 一 日 · 昼"
 	_status_label.add_theme_font_override("font", _fonts.display)
-	_status_label.add_theme_color_override("font_color", _tokens.ink_primary)
+	_status_label.add_theme_color_override("font_color", _tokens.pause_ink_bright)
 	_context.add_child(_status_label)
 
 	_context_line = ColorRect.new()
 	_context_line.name = "ContextHairline"
-	_context_line.color = _tokens.line_hairline
+	_context_line.color = _tokens.pause_hairline
 	_context_line.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_context_line.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	_context.add_child(_context_line)
@@ -185,14 +195,14 @@ func _build_context() -> void:
 	_remaining_caption.name = "Caption"
 	_remaining_caption.text = "天光尚余"
 	_remaining_caption.add_theme_font_override("font", _fonts.interface)
-	_remaining_caption.add_theme_color_override("font_color", _tokens.ink_secondary)
+	_remaining_caption.add_theme_color_override("font_color", _tokens.pause_ink_dim)
 	remaining.add_child(_remaining_caption)
 
 	_remaining_value = Label.new()
 	_remaining_value.name = "Time"
 	_remaining_value.text = "00:00"
 	_remaining_value.add_theme_font_override("font", _fonts.instrument)
-	_remaining_value.add_theme_color_override("font_color", _tokens.ink_primary)
+	_remaining_value.add_theme_color_override("font_color", _tokens.pause_ink_bright)
 	remaining.add_child(_remaining_value)
 
 
@@ -202,7 +212,10 @@ func _build_states() -> void:
 	_state_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_content.add_child(_state_slot)
 
-	_menu_panel = VBoxContainer.new()
+	# Plain Controls, not containers: every child is placed by
+	# layout_for_viewport() on the SAME numbers the spatial copy projects, so
+	# the hit rect and the visible word can never drift apart again.
+	_menu_panel = Control.new()
 	_menu_panel.name = "PauseActions"
 	_menu_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_menu_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -223,7 +236,7 @@ func _build_states() -> void:
 	_exit_button.pressed.connect(request_exit)
 	_menu_panel.add_child(_exit_button)
 
-	_settings_panel = VBoxContainer.new()
+	_settings_panel = Control.new()
 	_settings_panel.name = "AccessibilitySettings"
 	_settings_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_settings_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -234,11 +247,11 @@ func _build_states() -> void:
 	settings_heading.name = "Heading"
 	settings_heading.text = "设　置"
 	settings_heading.add_theme_font_override("font", _fonts.display)
-	settings_heading.add_theme_color_override("font_color", _tokens.ink_primary)
+	settings_heading.add_theme_color_override("font_color", _tokens.pause_ink_bright)
 	_settings_panel.add_child(settings_heading)
 	_build_settings_rows()
 
-	_confirm_panel = VBoxContainer.new()
+	_confirm_panel = Control.new()
 	_confirm_panel.name = "ExitConfirmation"
 	_confirm_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_confirm_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -248,30 +261,25 @@ func _build_states() -> void:
 	_confirmation_label.name = "Question"
 	_confirmation_label.text = "要离开这场长夜吗？"
 	_confirmation_label.add_theme_font_override("font", _fonts.display)
-	_confirmation_label.add_theme_color_override("font_color", _tokens.ink_primary)
+	_confirmation_label.add_theme_color_override("font_color", _tokens.pause_ink_bright)
 	_confirm_panel.add_child(_confirmation_label)
 
 	var detail := Label.new()
 	detail.name = "Consequence"
 	detail.text = "当前进度可能不会保留。"
 	detail.add_theme_font_override("font", _fonts.interface)
-	detail.add_theme_color_override("font_color", _tokens.ink_secondary)
+	detail.add_theme_color_override("font_color", _tokens.pause_ink_dim)
 	_confirm_panel.add_child(detail)
-
-	var actions := HBoxContainer.new()
-	actions.name = "ConfirmationActions"
-	actions.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	_confirm_panel.add_child(actions)
 
 	_cancel_button = _make_choice("返　回", 104.0)
 	_cancel_button.name = "Return"
 	_cancel_button.pressed.connect(cancel_exit)
-	actions.add_child(_cancel_button)
+	_confirm_panel.add_child(_cancel_button)
 
 	_confirm_button = _make_choice("确　认", 104.0)
 	_confirm_button.name = "ConfirmExit"
 	_confirm_button.pressed.connect(confirm_exit)
-	actions.add_child(_confirm_button)
+	_confirm_panel.add_child(_confirm_button)
 
 	_continue_button.focus_neighbor_bottom = _continue_button.get_path_to(_settings_button)
 	_settings_button.focus_neighbor_top = _settings_button.get_path_to(_continue_button)
@@ -308,7 +316,7 @@ func _build_hint() -> void:
 	_hint_label.text = "ESC   返回风雪"
 	_hint_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_hint_label.add_theme_font_override("font", _fonts.interface)
-	_hint_label.add_theme_color_override("font_color", _tokens.ink_secondary)
+	_hint_label.add_theme_color_override("font_color", _tokens.pause_ink_dim)
 	_content.add_child(_hint_label)
 
 
@@ -319,21 +327,19 @@ func _make_choice(text_value: String, underline_design_width: float) -> Button:
 	button.focus_mode = Control.FOCUS_ALL
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	button.add_theme_font_override("font", _fonts.display)
-	# The authored muted ink works for transient words standing on controlled
-	# plates. This menu deliberately has no plate; the real 720p capture showed
-	# its anti-aliased strokes disappearing into the paused snow. Secondary is
-	# still subordinate to focus/primary, but survives the world treatment.
-	button.add_theme_color_override("font_color", _tokens.ink_secondary)
-	button.add_theme_color_override("font_hover_color", _tokens.ink_primary)
-	button.add_theme_color_override("font_focus_color", _tokens.ink_primary)
-	button.add_theme_color_override("font_pressed_color", _tokens.ink_primary)
-	button.add_theme_color_override("font_hover_pressed_color", _tokens.ink_primary)
+	# One cold field, one warm point: resting choices sit in the dim ice tone,
+	# focus arrives in bright ice, and the single ember is the underline.
+	button.add_theme_color_override("font_color", _tokens.pause_ink_dim)
+	button.add_theme_color_override("font_hover_color", _tokens.pause_ink_bright)
+	button.add_theme_color_override("font_focus_color", _tokens.pause_ink_bright)
+	button.add_theme_color_override("font_pressed_color", _tokens.pause_ink_bright)
+	button.add_theme_color_override("font_hover_pressed_color", _tokens.pause_ink_bright)
 	for state in ["normal", "hover", "focus", "pressed", "hover_pressed", "disabled"]:
 		button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
 
 	var line := ColorRect.new()
 	line.name = "FocusHairline"
-	line.color = _tokens.line_hairline
+	line.color = _tokens.pause_ember
 	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	line.set_anchor(SIDE_TOP, 1.0)
 	line.set_anchor(SIDE_BOTTOM, 1.0)
@@ -365,7 +371,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func toggle() -> void:
 	if _is_open:
-		close(true)
+		close()
 	else:
 		open()
 
@@ -384,10 +390,14 @@ func open() -> void:
 	visible = true
 	_show_confirmation(false, false)
 	_pause_game()
+	_attach_muffle()
 	_prepare_camera_push()
 	Input.set_default_cursor_shape(Input.CURSOR_ARROW)
 	_focus(_continue_button)
-	_play(&"ui.bloom")
+	# The push has its own voice now -- a low cinematic swell, born on the same
+	# frame as the move (rule 6). ui.bloom stays with the day announcements.
+	_play(&"ui.pause_open")
+	_drift_elapsed = 0.0
 	_animate_open()
 
 
@@ -395,27 +405,29 @@ func continue_game() -> void:
 	if not _is_open:
 		return
 	_play(&"ui.confirm")
-	close(false)
+	close()
 
 
-func close(play_back_sound := false) -> void:
+func close() -> void:
 	if not _is_open:
 		return
 	_is_open = false
-	if play_back_sound:
-		_play(&"ui.back")
+	# The camera is returning to the world: the reverse swell is the sound of
+	# that, whichever path closed the menu. ui.back stays in the sub-pages.
+	_play(&"ui.pause_close")
 	if not is_inside_tree():
 		_finish_close()
 		return
 	_kill_animation()
 	_kill_transition()
+	_return_from = _camera_factor
 	_choreography = PauseChoreography.closing(_tokens, _cascade_ids())
 	_animation = create_tween()
 	_animation.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
 	_animation.tween_method(_apply_choreography, 0.0,
 		_choreography.total_seconds(), _choreography.total_seconds())
-	_animation.parallel().tween_method(_set_cinematic_factor, _camera_factor, 1.0,
-		_choreography.total_seconds())
+	_animation.parallel().tween_method(_apply_return_progress, 0.0, 1.0,
+		_cinematic.return_seconds)
 	_animation.chain().tween_callback(_finish_close)
 
 
@@ -427,7 +439,7 @@ func handle_cancel() -> void:
 	elif is_confirming():
 		cancel_exit()
 	else:
-		close(true)
+		close()
 
 
 func open_settings() -> void:
@@ -532,23 +544,42 @@ func layout_for_viewport(viewport_size: Vector2) -> void:
 	var state_y := (104.0 if compact else 144.0) * _frame_scale
 	_state_slot.position = Vector2(0.0, state_y)
 	_state_slot.size = Vector2(width, (164.0 if compact else 192.0) * _frame_scale)
-	_menu_panel.add_theme_constant_override("separation", maxi(int(roundf(8.0 * _frame_scale)), 6))
-	_settings_panel.add_theme_constant_override("separation", maxi(int(roundf(4.0 * _frame_scale)), 2))
-	_confirm_panel.add_theme_constant_override("separation", maxi(int(roundf(12.0 * _frame_scale)), 8))
 	_confirmation_label.add_theme_font_size_override("font_size", maxi(int(roundf(34.0 * _frame_scale)), 22))
 	var consequence := _confirmation_label.get_parent().get_node("Consequence") as Label
 	consequence.add_theme_font_size_override("font_size", maxi(int(roundf(17.0 * _frame_scale)), 14))
-	var confirmation_actions := _cancel_button.get_parent() as HBoxContainer
-	confirmation_actions.add_theme_constant_override("separation", maxi(int(roundf(64.0 * _frame_scale)), 32))
 
-	var hit_height := maxf(56.0 * _frame_scale, MIN_HIT_HEIGHT)
-	for button in _choice_lines.keys():
-		button.custom_minimum_size = Vector2(112.0 * _frame_scale, hit_height)
-		button.add_theme_font_size_override("font_size", maxi(int(roundf(34.0 * _frame_scale)), 22))
-		var line: ColorRect = _choice_lines[button]
-		line.offset_right = float(_choice_line_widths[button]) * _frame_scale
-		line.offset_top = -maxf(5.0 * _frame_scale, 4.0)
-		line.offset_bottom = line.offset_top + maxf(roundf(_frame_scale), 1.0)
+	# THE HIT LAYER AND THE SPATIAL COPY SHARE ONE SET OF NUMBERS. Each button
+	# is placed on the same anchor its Label3D projects to -- a VBox pitch and
+	# a hand-set spatial target drifting apart was the "the button answers
+	# somewhere else" defect. Spatial targets are screen-space, with the text
+	# CENTRED vertically on them; buttons are panel-relative.
+	var hit_height := maxf(50.0 * _frame_scale, MIN_HIT_HEIGHT)
+	var choice_size := maxi(int(roundf(34.0 * _frame_scale)), 22)
+	_place_choice(_continue_button, 0.0, 20.0 * _frame_scale, hit_height, choice_size)
+	_place_choice(_settings_button, 0.0, 70.0 * _frame_scale, hit_height, choice_size)
+	_place_choice(_exit_button, 0.0, 120.0 * _frame_scale, hit_height, choice_size)
+	_place_choice(_cancel_button, 0.0, 100.0 * _frame_scale, hit_height, choice_size)
+	_place_choice(_confirm_button, 128.0 * _frame_scale, 100.0 * _frame_scale, hit_height, choice_size)
+	var heading := _settings_panel.get_node_or_null("Heading") as Label
+	if heading != null:
+		heading.add_theme_font_size_override("font_size", maxi(int(roundf(24.0 * _frame_scale)), 16))
+		heading.position = Vector2(0.0, -44.0 * _frame_scale)
+		heading.size = Vector2(width, 30.0 * _frame_scale)
+	_confirmation_label.position = Vector2(0.0, 16.0 * _frame_scale)
+	_confirmation_label.size = Vector2(width, 40.0 * _frame_scale)
+	consequence.position = Vector2(0.0, 54.0 * _frame_scale)
+	consequence.size = Vector2(width, 24.0 * _frame_scale)
+	var row_hit := maxf(48.0 * _frame_scale, MIN_HIT_HEIGHT)
+	var row_text_size := maxi(int(roundf(15.0 * _frame_scale)), 12)
+	for i in range(_settings_row_buttons.size()):
+		var row := _settings_row_buttons[i]
+		row.add_theme_font_size_override("font_size", row_text_size)
+		row.position = Vector2(0.0,
+			(16.0 + 52.0 * i) * _frame_scale - row_hit * 0.5)
+		row.size = Vector2(312.0 * _frame_scale, row_hit)
+		var row_line := _choice_lines[row] as ColorRect
+		_place_choice_line(row, row_line, 264.0 * _frame_scale,
+			row_hit, row_text_size)
 
 	_hint_label.visible = not compact
 	_hint_label.position = Vector2(0.0, 392.0 * _frame_scale)
@@ -556,6 +587,33 @@ func layout_for_viewport(viewport_size: Vector2) -> void:
 	_hint_label.add_theme_font_size_override("font_size", maxi(int(roundf(14.0 * _frame_scale)), 12))
 	if _spatial != null:
 		_spatial.layout(Rect2(_content.position, _content.size), _frame_scale, compact, state_y)
+
+
+## Places a choice button so its text block sits exactly where the spatial
+## copy draws the word: `center_y` is the panel-relative vertical centre of
+## the projected text. The button's left edge IS the word's left edge (its
+## text starts there), so the two can never drift sideways.
+func _place_choice(button: Button, left: float, center_y: float,
+		hit_height: float, text_size: int) -> void:
+	button.add_theme_font_size_override("font_size", text_size)
+	button.position = Vector2(left, center_y - hit_height * 0.5)
+	button.size = Vector2(288.0 * _frame_scale, hit_height)
+	_place_choice_line(button, _choice_lines[button] as ColorRect,
+		float(_choice_line_widths[button]) * _frame_scale, hit_height, text_size)
+
+
+## The underline belongs to the WORD, not the button's bottom edge: anchor it
+## at the text block's baseline within the hit rect, so the two stay together
+## whatever the hit height is.
+func _place_choice_line(button: Button, line: ColorRect, line_width: float,
+		hit_height: float, text_size: int) -> void:
+	var baseline := ((hit_height - float(text_size)) * 0.5 + float(text_size) * 0.78) / hit_height
+	line.set_anchor(SIDE_TOP, baseline)
+	line.set_anchor(SIDE_BOTTOM, baseline)
+	line.offset_left = 0.0
+	line.offset_right = line_width
+	line.offset_top = 0.0
+	line.offset_bottom = maxf(roundf(_frame_scale), 1.0)
 
 
 func is_open() -> bool:
@@ -616,6 +674,10 @@ func spatial_labels() -> Array[Label3D]:
 	return [] if _spatial == null else _spatial.labels()
 
 
+func spatial_shadow_labels() -> Array[Label3D]:
+	return [] if _spatial == null else _spatial.shadow_labels()
+
+
 func spatial_ornaments() -> Array[MeshInstance3D]:
 	return [] if _spatial == null else _spatial.ornaments()
 
@@ -672,14 +734,14 @@ func _show_confirmation(show: bool, animate: bool) -> void:
 		_spatial.set_state(STATE_CONFIRM if show else STATE_MENU)
 	if animate and is_inside_tree():
 		_kill_transition()
-		_choreography = PauseChoreography.opening(_tokens, _cascade_ids())
+		_choreography = PauseChoreography.transition(_tokens, _cascade_ids())
 		_apply_choreography(0.0)
 		_transition = create_tween()
 		_transition.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
 		_transition.tween_method(_apply_choreography, 0.0,
 			_choreography.total_seconds(), _choreography.total_seconds())
 	else:
-		_choreography = PauseChoreography.opening(_tokens, _cascade_ids())
+		_choreography = PauseChoreography.transition(_tokens, _cascade_ids())
 		_apply_choreography(_choreography.total_seconds())
 
 
@@ -700,14 +762,14 @@ func _show_settings(show: bool, animate: bool) -> void:
 		_spatial.set_state(STATE_SETTINGS if show else STATE_MENU)
 	if animate and is_inside_tree():
 		_kill_transition()
-		_choreography = PauseChoreography.opening(_tokens, _cascade_ids())
+		_choreography = PauseChoreography.transition(_tokens, _cascade_ids())
 		_apply_choreography(0.0)
 		_transition = create_tween()
 		_transition.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
 		_transition.tween_method(_apply_choreography, 0.0,
 			_choreography.total_seconds(), _choreography.total_seconds())
 	else:
-		_choreography = PauseChoreography.opening(_tokens, _cascade_ids())
+		_choreography = PauseChoreography.transition(_tokens, _cascade_ids())
 		_apply_choreography(_choreography.total_seconds())
 	if show and not _settings_row_buttons.is_empty():
 		_focus(_settings_row_buttons[_settings_focus_index])
@@ -777,8 +839,12 @@ func _cascade_ids() -> Array[StringName]:
 	if _state == STATE_SETTINGS:
 		ids.append(SpatialPauseMenu.SETTINGS_HEADING)
 		if _spatial != null:
+			# Only the words cascade (row names AND value words -- the marker
+			# quad shares the value word's envelope id). The 21 rail/tick quads
+			# ride their row's envelope via tick-id mapping in SpatialPauseMenu;
+			# cascading them individually made the page take a full second.
 			ids.append_array(_spatial.row_label_ids())
-			ids.append_array(_spatial.track_ids())
+			ids.append_array(_spatial.row_value_ids())
 	elif _state == STATE_CONFIRM:
 		ids.append_array([SpatialPauseMenu.QUESTION, SpatialPauseMenu.CONSEQUENCE,
 			SpatialPauseMenu.RETURN, SpatialPauseMenu.CONFIRM])
@@ -846,8 +912,10 @@ func _animate_open() -> void:
 	_animation.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
 	_animation.tween_method(_apply_choreography, 0.0,
 		_choreography.total_seconds(), _choreography.total_seconds())
-	_animation.parallel().tween_method(_set_cinematic_factor, 1.0,
-		CINEMATIC_FRAME_FACTOR, _choreography.total_seconds())
+	# The camera decouples from the cascade: the type blooms in and settles
+	# while the lens is still gliding -- content first, then the frame stops.
+	_animation.parallel().tween_method(_apply_push_progress, 0.0, 1.0,
+		_cinematic.push_seconds)
 
 
 func _finish_close() -> void:
@@ -862,6 +930,8 @@ func _finish_close() -> void:
 	visible = false
 	_show_confirmation(false, false)
 	_set_cinematic_factor(1.0)
+	_drift_elapsed = 0.0
+	_detach_muffle()
 	_release_camera_push()
 	_content.modulate.a = 1.0
 	_content.position = _content_home
@@ -1027,15 +1097,79 @@ func _prepare_camera_push() -> void:
 func _set_cinematic_factor(value: float) -> void:
 	_camera_factor = clampf(value,
 		minf(1.0, CINEMATIC_FRAME_FACTOR), maxf(1.0, CINEMATIC_FRAME_FACTOR))
+	_apply_muffle()
+	_apply_camera()
+
+
+## The world heard through a closing door: a low-pass on Master whose cutoff
+## rides the SAME amount as the camera push -- the farther the lens glides,
+## the more muffled the valley. Zero extra state to keep in sync.
+func _attach_muffle() -> void:
+	if _muffle_effect != null or _tokens == null or not is_inside_tree():
+		return
+	var bus := AudioServer.get_bus_index(&"Master")
+	if bus < 0:
+		return
+	_muffle_bus = bus
+	_muffle_effect = AudioEffectLowPassFilter.new()
+	_muffle_effect.cutoff_hz = MUFFLE_FREE_FIELD_HZ
+	AudioServer.add_bus_effect(bus, _muffle_effect, 0)
+
+
+func _detach_muffle() -> void:
+	if _muffle_effect != null and _muffle_bus >= 0:
+		AudioServer.remove_bus_effect(_muffle_bus, 0)
+	_muffle_effect = null
+	_muffle_bus = -1
+
+
+func _apply_muffle() -> void:
+	if _muffle_effect == null or _tokens == null:
+		return
+	var amount := clampf(inverse_lerp(1.0, CINEMATIC_FRAME_FACTOR, _camera_factor),
+		0.0, 1.0)
+	_muffle_effect.cutoff_hz = lerpf(MUFFLE_FREE_FIELD_HZ,
+		_tokens.pause_muffle_cutoff_hz, amount)
+
+
+## The push and return tweens hand over LINEAR time; the curve lives in
+## PauseCinematic, where a test can read it without a single frame.
+func _apply_push_progress(t: float) -> void:
+	_set_cinematic_factor(lerpf(1.0, CINEMATIC_FRAME_FACTOR,
+		PauseCinematic.push_ease(t)))
+
+
+func _apply_return_progress(t: float) -> void:
+	_set_cinematic_factor(lerpf(_return_from, 1.0, PauseCinematic.return_ease(t)))
+
+
+## The living frame: while the menu holds, two slow sines breathe the dolly
+## and the yaw. They scale in with the push's own arrival, so the world never
+## breathes during play and the drift never snaps on entry. Both return to
+## exactly nothing on close because the push factor, not a snapshot, carries
+## them.
+func _process(delta: float) -> void:
+	if not _is_open or not _camera_pose_captured or _cinematic == null:
+		return
+	_drift_elapsed += maxf(delta, 0.0)
+	_apply_camera()
+
+
+func _apply_camera() -> void:
 	if _camera_rig == null or _camera_modifier == null:
 		return
-	_camera_modifier.value = _camera_factor
+	var amount := clampf(inverse_lerp(1.0, CINEMATIC_FRAME_FACTOR, _camera_factor),
+		0.0, 1.0)
+	var drift_scale := amount if _is_open else 0.0
+	_camera_modifier.value = _camera_factor * (1.0 + _cinematic.drift_frame(
+		_drift_elapsed) * drift_scale)
 	_camera_rig.settle_framing()
 	if not _camera_pose_captured:
 		return
-	var amount := clampf(inverse_lerp(1.0, CINEMATIC_FRAME_FACTOR, _camera_factor), 0.0, 1.0)
+	var yaw_drift := _cinematic.drift_yaw(_drift_elapsed) * drift_scale
 	if _camera_rig.has_method("set_lean"):
-		_camera_rig.set_lean(_camera_base_lean + CINEMATIC_LEAN * amount)
+		_camera_rig.set_lean(_camera_base_lean + CINEMATIC_LEAN * amount \
+			+ Vector3(0.0, yaw_drift, 0.0))
 	if _camera_rig.has_method("set_composition_offset"):
 		_camera_rig.set_composition_offset(
 			_camera_base_composition + CINEMATIC_COMPOSITION_OFFSET * amount)
@@ -1079,5 +1213,6 @@ func _exit_tree() -> void:
 	_kill_animation()
 	_kill_transition()
 	_set_cinematic_factor(1.0)
+	_detach_muffle()
 	_release_camera_push()
 	_resume_game()

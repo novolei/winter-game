@@ -474,19 +474,14 @@ const CHILL_SOURCE := &"snow_load"
 ## not read as grit, it reads as haze, which is the exact failure this population
 ## exists to avoid. Fewer grains that can be seen beat more that cannot.
 ##
-## The arithmetic, against the framing the game is played at -- CameraRig's
-## `orthographic_size` of 10.5 m over an 800 px frame, so 76.2 px per metre. The
-## size spread below runs to 0.85 of this at the small end, so the SMALLEST grain
-## in a burst is 0.0425 m and 3.2 px, and the largest is 4.4 px. The floor is
-## checked against the smallest, because a floor that only the average clears is
-## not a floor.
-##
-## At CameraRig's widest framing stop of 17.0 m the smallest grain falls to about
-## 2.0 px, under the floor. That is a deliberate line rather than an oversight:
-## the wide stop is a zoom-out and everything in it gets smaller. Sizing for it
-## instead would put 8 cm lumps of snow on his boots at the framing he is
-## actually played at.
-@export var grain_size_m := 0.05
+## The arithmetic follows CameraRig's player-approved default: 17.0 m over an
+## 800 px frame, or 47.1 px per metre. The spread below runs to 0.85 at the small
+## end, so a 0.064 m authored grain yields a 0.0544 m / 2.56 px smallest fleck;
+## the largest stays 0.0736 m / 3.46 px. The floor is checked against the
+## smallest, because a floor that only the average clears is not a floor. The
+## tighter stops make the same effect easier to read without turning it into a
+## different simulation.
+@export var grain_size_m := 0.064
 
 ## How much a grain's size varies within one burst, either side of the size
 ## above. Narrow, unlike the mist's: the floor above has to hold for the smallest
@@ -937,9 +932,15 @@ func total_load() -> float:
 func is_thawing() -> bool:
 	if _indoors:
 		return true
-	if _fires.is_empty() or _subject == null or not is_instance_valid(_subject):
+	if _subject == null or not is_instance_valid(_subject):
 		return false
 	var here := _origin_of(_subject)
+	# Fires is the live collection. This is what lets a newly lit beacon warm the
+	# carried snow without pretending to be a stove or publishing a stove event.
+	# At the shipped maximum of six burning points this bounded query is cheaper
+	# and safer than maintaining another scene-wide index.
+	if is_inside_tree() and Fires.warmth_at(self, here) > 0.0:
+		return true
 	for spot in _fires.values():
 		if (spot as Vector3).distance_to(here) <= fire_melt_radius_m:
 			return true

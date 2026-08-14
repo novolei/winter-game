@@ -34,10 +34,12 @@ extends EditorScenePostImport
 ## slot up in the palette resource and rebuilds the material flat: albedo from
 ## the table, metallic 0, specular disabled, no textures of any kind.
 ##
-## The consequence worth stating plainly: **the .glb carries geometry, UVs and
-## palette slot *names*; the palette resource carries the colours.** Retuning a
-## colour is an edit to color_bible.tres and a reimport, not a trip through
-## Blender. And no colour is hardcoded outside tools/, which is the rule.
+## The consequence worth stating plainly: ordinary .glbs carry geometry, UVs
+## and palette slot *names*; the palette resource carries their colours.
+## Approved native Synty props are the narrow exception: their names begin
+## `SYNTY_TEX_`, retain a copied albedo map and are sampled at runtime beneath
+## the snowfall. They still pass this importer, which removes Unity PBR maps
+## and installs collision before preserving that one map.
 ##
 ## Wired up by `import_script/path` in the model's .import file.
 ##
@@ -48,6 +50,7 @@ extends EditorScenePostImport
 
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
 const UNRESOLVED := Color(1.0, 0.0, 1.0)
+const SYNTY_TEXTURE_SLOT := "SYNTY_TEX_"
 
 ## What each mesh name collides as, and the geometry that works it out. See that
 ## file's header for why the trees get a trunk cylinder rather than a hull and
@@ -81,7 +84,10 @@ func _repaint(node: Node, bible: Resource) -> void:
 			for surface in range(mesh.get_surface_count()):
 				var existing := mesh.surface_get_material(surface)
 				var slot_name := "" if existing == null else existing.resource_name
-				mesh.surface_set_material(surface, _material_for(slot_name, bible))
+				if slot_name.begins_with(SYNTY_TEXTURE_SLOT):
+					mesh.surface_set_material(surface, _native_synty_material_for(slot_name, existing, bible))
+				else:
+					mesh.surface_set_material(surface, _material_for(slot_name, bible))
 	for child in node.get_children():
 		_repaint(child, bible)
 
@@ -102,6 +108,36 @@ func _material_for(slot_name: String, bible: Resource) -> StandardMaterial3D:
 	material.normal_enabled = false
 	_cache[slot_name] = material
 	return material
+
+
+## A source map is deliberately preserved only for the approved Synty runtime
+## composites.  It is an albedo detail layer, never a Unity PBR material: all
+## normal, metallic, roughness and specular inputs remain disabled. CelPainter
+## samples it through cel_flat.gdshader, then lays the same snow over it as any
+## other object in the world.
+func _native_synty_material_for(slot_name: String, existing: Material, bible: Resource) -> StandardMaterial3D:
+	if _cache.has(slot_name):
+		return _cache[slot_name]
+	var material := StandardMaterial3D.new()
+	material.resource_name = slot_name
+	material.albedo_color = _color_for(_palette_slot_from_native(slot_name), bible)
+	if existing is BaseMaterial3D:
+		material.albedo_texture = (existing as BaseMaterial3D).albedo_texture
+	material.metallic = 0.0
+	material.metallic_specular = 0.0
+	material.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	material.roughness = 1.0
+	material.normal_enabled = false
+	_cache[slot_name] = material
+	return material
+
+
+## The build script writes e.g. `SYNTY_TEX_GENERIC_PAL_STRUCT_2`. The source
+## map is retained, while this supplies the on-palette fallback colour for a
+## bad/missing texture and keeps the material gate's scalar contract intact.
+func _palette_slot_from_native(slot_name: String) -> String:
+	var index := slot_name.find("PAL_")
+	return "" if index < 0 else slot_name.substr(index)
 
 
 ## The palette slot named by the .glb, or magenta when the name means nothing.

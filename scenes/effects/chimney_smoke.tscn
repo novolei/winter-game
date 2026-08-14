@@ -16,6 +16,5 @@
 
 [ext_resource type="Script" path="res://src/rendering/chimney_smoke.gd" id="1_smoke"]
 
-[node name="ChimneySmoke" type="GPUParticles3D"]
-groups = ["wind_consumer"]
+[node name="ChimneySmoke" type="GPUParticles3D" groups=["wind_consumer"]]
 script = ExtResource("1_smoke")

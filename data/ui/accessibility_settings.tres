@@ -1,16 +1,14 @@
-[gd_resource type="Resource" script_class="AccessibilityCatalog" load_steps=5 format=3]
+[gd_resource type="Resource" script_class="AccessibilityCatalog" format=3 uid="uid://q8anc3w4dqfy"]
 
-[ext_resource type="Script" path="res://src/definitions/accessibility_setting.gd" id="1_setting"]
-[ext_resource type="Script" path="res://src/definitions/accessibility_catalog.gd" id="2_catalog"]
+[ext_resource type="Script" uid="uid://camq77b4qewpu" path="res://src/definitions/accessibility_setting.gd" id="1_setting"]
+[ext_resource type="Script" uid="uid://cv0yx54e0lljg" path="res://src/definitions/accessibility_catalog.gd" id="2_catalog"]
 
 [sub_resource type="Resource" id="Setting_prompt_hold"]
 script = ExtResource("1_setting")
 id = &"prompt_hold"
 label = "提示停留时长"
-is_toggle = false
 minimum = 0.5
 maximum = 3.0
-step = 0.25
 default_value = 1.0
 
 [sub_resource type="Resource" id="Setting_stroke_bold"]
@@ -18,18 +16,13 @@ script = ExtResource("1_setting")
 id = &"stroke_bold"
 label = "提示笔画加粗"
 is_toggle = true
-minimum = 0.0
-maximum = 1.0
 step = 1.0
-default_value = 0.0
 
 [sub_resource type="Resource" id="Setting_screen_shake"]
 script = ExtResource("1_setting")
 id = &"screen_shake"
 label = "屏 幕 震 动"
 is_toggle = true
-minimum = 0.0
-maximum = 1.0
 step = 1.0
 default_value = 1.0
 

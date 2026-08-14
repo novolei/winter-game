@@ -688,6 +688,18 @@ func test_spindrift_is_silent_below_its_onset() -> void:
 	assert_almost_eq(SpindriftScript.stream_ratio(0.27, 0.28), 0.0, 0.0001)
 	assert_true(SpindriftScript.stream_ratio(0.5, 0.28) > 0.0)
 	assert_almost_eq(SpindriftScript.stream_ratio(1.0, 0.28), 1.0, 0.0001)
+	var drift := _drift()
+	var shoulder_start := drift.stream_onset - drift.stream_onset_softness
+	assert_almost_eq(
+		SpindriftScript.stream_ratio(
+			shoulder_start, drift.stream_onset, drift.stream_onset_softness),
+		0.0, 0.0001
+	)
+	assert_true(
+		SpindriftScript.stream_ratio(
+			drift.stream_onset, drift.stream_onset, drift.stream_onset_softness) > 0.0,
+		"the soft onset does not cover the gale profile's 0.28 floor"
+	)
 
 
 func test_spindrift_streams_along_the_wind_and_stays_low() -> void:
@@ -699,6 +711,94 @@ func test_spindrift_streams_along_the_wind_and_stays_low() -> void:
 	assert_almost_eq(travel.normalized().y, 0.0, 0.02)
 	assert_almost_eq(
 		travel.normalized().x, Vector3(1.2, 0.0, 0.4).normalized().x, 0.001
+	)
+
+
+## A ground sheet is broad, translucent powder.  A thirty-centimetre uniform
+## lane produces the hard separated strips seen in the whiteout capture.
+func test_spindrift_ribbons_have_a_broad_soft_coverage_band() -> void:
+	var drift := _drift()
+	assert_true(
+		drift.diffuse_share >= 0.60 and drift.diffuse_share <= 0.80,
+		"the spindrift has no continuous powder bed, or that bed erased every wind band"
+	)
+	assert_true(
+		drift.ribbon_width_m >= 1.0,
+		"the %.2f m ribbon is still a hard strip rather than diffuse blown powder"
+			% drift.ribbon_width_m
+	)
+	var core := 0
+	var edge := 0
+	for index in 1001:
+		var sample := -1.0 + 2.0 * float(index) / 1000.0
+		var offset: float = SpindriftScript.soft_lane_offset(
+			sample, drift.ribbon_width_m, drift.ribbon_edge_falloff)
+		var normalised := absf(offset) / (drift.ribbon_width_m * 0.5)
+		if normalised <= 0.20:
+			core += 1
+		elif normalised >= 0.80:
+			edge += 1
+	assert_true(core > edge * 2,
+		"the ribbon has %d core samples and %d edge samples: its sides are still hard"
+			% [core, edge])
+
+
+## The old 0.55 m velocity-aligned quad read as a meteor.  Direction is already
+## carried by the sheet as a whole; each individual mark should remain a shard.
+func test_spindrift_marks_are_short_shards_not_meteor_trails() -> void:
+	var drift := _drift()
+	assert_true(drift.streak_length <= 0.16,
+		"the %.2f m spindrift mark still reads as a meteor trail" % drift.streak_length)
+	assert_true(drift.streak_length / drift.streak_width <= 2.5,
+		"the spindrift mark has a %.1f:1 streak silhouette"
+			% (drift.streak_length / drift.streak_width))
+	drift._build()
+	var particles := drift.process_material as ParticleProcessMaterial
+	var surface := (drift.draw_pass_1 as QuadMesh).material as StandardMaterial3D
+	assert_eq(
+		drift.transform_align,
+		GPUParticles3D.TRANSFORM_ALIGN_DISABLED,
+		"ground powder is still locked into velocity tracers"
+	)
+	assert_eq(surface.billboard_mode, BaseMaterial3D.BILLBOARD_PARTICLES)
+	assert_true(particles.particle_flag_rotate_y, "ground powder cannot roll")
+	assert_true(
+		particles.angular_velocity_min < 0.0 and particles.angular_velocity_max > 0.0,
+		"ground powder cannot tumble both ways"
+	)
+	assert_not_null(particles.angular_velocity_curve, "ground powder spin never damps")
+
+
+## `wind_gale` bottoms out at 0.28, exactly the old hard onset.  Its periodic
+## returns to that floor must retain a fine powder shoulder instead of repeatedly
+## emptying the emitter into visible packets.
+func test_the_gale_floor_remains_inside_the_spindrift_envelope() -> void:
+	var drift := _drift()
+	drift.set_wind_strength(drift.stream_onset)
+	drift._build()
+	drift._apply()
+	assert_true(drift.amount_ratio > 0.0,
+		"the gale floor lands on an empty spindrift frame")
+	assert_true(drift.emitting,
+		"the gale floor switches the emitter off and packets the next gust")
+
+
+func test_spindrift_births_and_speed_are_varied_but_dragged_inside_bounds() -> void:
+	var drift := _drift()
+	drift._build()
+	var particles := drift.process_material as ParticleProcessMaterial
+	assert_true(drift.randomness > 0.0 and drift.randomness < 1.0,
+		"spindrift birth timing is either marching or unbounded")
+	assert_true(particles.particle_flag_damping_as_friction,
+		"the fast ground shards carry constant meteor-like speed")
+	assert_true(particles.damping_min > 0.0)
+	assert_true(particles.damping_max >= particles.damping_min)
+	assert_true(drift.speed_ratio_range.x > 0.0 and drift.speed_ratio_range.y <= 1.0,
+		"birth speed randomness can stop or accelerate past the authored wind")
+	assert_true(particles.turbulence_enabled, "ground powder still flies on perfectly straight rails")
+	assert_true(
+		particles.turbulence_influence_max <= 0.01,
+		"short-lived powder turbulence is strong enough to hijack its travel"
 	)
 
 
@@ -789,9 +889,9 @@ func _drift() -> Spindrift:
 func test_the_emission_cone_cannot_erase_the_mark_it_draws() -> void:
 	var drift := _drift()
 	assert_true(
-		drift.crosswind_spread_m() <= drift.streak_length * 1.5,
+		drift.crosswind_spread_m() <= drift.ribbon_width_m * 0.25,
 		"the %.1f degree cone wanders a streak %.2f m across a %.2f m mark"
-			% [drift.spread_degrees, drift.crosswind_spread_m(), drift.streak_length]
+			% [drift.spread_degrees, drift.crosswind_spread_m(), drift.ribbon_width_m]
 	)
 
 
@@ -830,11 +930,12 @@ func _lane_relief(points: PackedVector3Array, axis: int, period: float) -> float
 	return sqrt(variance / float(bins)) / mean
 
 
-## THE SHEET IS EMITTED IN RIBBONS, and a uniform box would fail this outright.
+## THE SHEET HAS A CONTINUOUS BED AND SOFT RIBBONS. A uniform box loses every
+## gust structure; ribbons alone recreate the separated clusters this task fixes.
 ##
 ## Folded onto one lane period rather than counted raw, so the measure is of the
 ## PATTERN and not of how many lanes happen to fit the volume.
-func test_the_sheet_is_emitted_in_ribbons_rather_than_as_a_wash() -> void:
+func test_the_sheet_keeps_soft_ribbons_without_separating_into_hard_clusters() -> void:
 	var drift := _drift()
 	# Wind along +X, so the lanes run along x and the structure is in z.
 	drift.set_wind(Vector3(1.0, 0.0, 0.0))
@@ -843,10 +944,14 @@ func test_the_sheet_is_emitted_in_ribbons_rather_than_as_a_wash() -> void:
 	assert_true(points.size() > 1000, "only %d emission points" % points.size())
 	var relief := _lane_relief(points, 2, drift.ribbon_spacing_m)
 	# A uniform scatter of this many points over twenty bins comes back at about
-	# 0.07 from sampling alone. Anything near that is a wash wearing lanes.
+	# 0.07 from sampling alone. The upper bound rejects the old empty-gap ribbons.
 	assert_true(
-		relief > 1.0,
+		relief > 0.15,
 		"the emission varies by only %.2f across a lane period -- that is a box" % relief
+	)
+	assert_true(
+		relief < 0.85,
+		"the emission relief is %.2f -- the wind still arrives as separated clumps" % relief
 	)
 
 
@@ -1307,6 +1412,21 @@ func test_the_rope_length_is_measured_off_the_model() -> void:
 	# Nothing hanging at all falls back rather than dividing by zero.
 	var bare := _keep(Node3D.new()) as Node3D
 	assert_almost_eq(PendulumScript.hang_length(bare, 0.81, 1.74), 1.74, 0.0001)
+
+
+## A player bump belongs in the same state as a gust, not in a second animation
+## channel. Once the impulse is stored, the normal pendulum step carries it into
+## a visible tilt and its existing damping handles the ring-down.
+func test_an_impact_kicks_the_existing_pendulum_state() -> void:
+	var pendulum = PendulumScript.new()
+	_keep(pendulum)
+	var swing := _keep(Node3D.new()) as Node3D
+	pendulum.apply_impulse(swing, Vector3(0.9, 0.0, 0.0))
+	pendulum._drive(swing, FRAME, 0.0, deg_to_rad(24.0))
+	assert_true(
+		absf(pendulum.tilt_of(swing).x) > 0.001,
+		"a contact impulse must enter WindPendulum's state and tilt the hanging tire"
+	)
 
 
 ## A prop is classified by the ASSET it came from, not by its node name. TreeA to

@@ -49,6 +49,12 @@ extends Node3D
 
 const EVENT_LIT := &"stove.lit"
 const EVENT_WENT_OUT := &"stove.went_out"
+const EVENT_STOKED := &"stove.stoked"
+const EVENT_OFFER_ENTERED := &"interaction.offer_entered"
+const EVENT_OFFER_CHANGED := &"interaction.offer_changed"
+const EVENT_OFFER_EXITED := &"interaction.offer_exited"
+const EVENT_ACTIVATED := &"interaction.activated"
+const EVENT_REJECTED := &"interaction.rejected"
 
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
 
@@ -71,6 +77,21 @@ const TARGET_REST := &"fatigue:recovery"
 ## empty, which is what a stove found in the world should be.
 @export var starting_fuel_seconds := 0.0
 @export var start_lit := false
+
+## ---------------------------------------------------------------------------
+## World interaction
+## ---------------------------------------------------------------------------
+## One press banks one whole fuel item through FuelEconomy. The nominal cap is
+## allowed to overflow by that item's surplus: clipping a coal to the cap would
+## destroy part of the game's only currency without telling the player.
+@export var interaction_id: StringName = &""
+@export var interaction_label := "Stove"
+@export var interaction_radius_m := 2.4
+@export var interaction_offset := Vector3(0.0, 0.9, 0.45)
+@export var interaction_area_offset := Vector3(0.0, 1.0, 1.1)
+@export var interaction_area_size := Vector3(2.4, 2.2, 2.0)
+@export var interaction_refill_seconds := 600.0
+@export var interaction_capacity_seconds := 3600.0
 
 ## ---------------------------------------------------------------------------
 ## Warmth
@@ -203,6 +224,12 @@ var _economy = null
 var _survival = null
 var _bus = null
 var _registry = null
+var _occupant_node: Node = null
+var _interaction_area: Area3D = null
+var _interaction_shape: CollisionShape3D = null
+var _near := false
+var _offer_present := false
+var _last_offer: Dictionary = {}
 
 # --- wiring ----------------------------------------------------------------
 
@@ -219,7 +246,9 @@ func _ready() -> void:
 			_survival = get_node_or_null("/root/SurvivalSystem")
 		if _bus == null:
 			_bus = get_node_or_null("/root/EventBus")
+	set_event_bus(_bus)
 	_build_light()
+	_build_interaction_area()
 	if starting_fuel_seconds > 0.0:
 		add_fuel_seconds(starting_fuel_seconds)
 	if start_lit:
@@ -227,9 +256,16 @@ func _ready() -> void:
 	_drive_light()
 
 func _exit_tree() -> void:
+	_withdraw_offer()
+	_disconnect_interaction()
 	# A stove that is removed must take its warmth with it, or the body keeps
 	# recovering from a fire that is no longer anywhere.
 	clear_recovery()
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		_withdraw_offer()
+		_disconnect_interaction()
 
 func set_fuel_economy(economy) -> void:
 	_economy = economy
@@ -238,7 +274,23 @@ func set_survival_system(system) -> void:
 	_survival = system
 
 func set_event_bus(bus) -> void:
+	if bus == _bus:
+		_connect_interaction()
+		return
+	_withdraw_offer()
+	_disconnect_interaction()
 	_bus = bus
+	_connect_interaction()
+	_publish_offer()
+
+func set_occupant(node: Node) -> void:
+	_occupant_node = node
+
+func interaction_area() -> Area3D:
+	return _interaction_area
+
+func interaction_anchor_position() -> Vector3:
+	return interaction_offset
 
 # --- fuel -------------------------------------------------------------------
 
@@ -267,6 +319,8 @@ func stoke(item_id: StringName) -> bool:
 	if seconds <= 0.0:
 		return false
 	add_fuel_seconds(seconds)
+	_emit_stoked(seconds)
+	_publish_offer()
 	return true
 
 ## Banking the fire for a stretch: name the seconds, not the item, and the
@@ -276,7 +330,27 @@ func stoke(item_id: StringName) -> bool:
 func stoke_for(seconds: float) -> float:
 	if _economy == null:
 		return 0.0
-	return add_fuel_seconds(_economy.draw_burn_seconds(seconds))
+	var drawn := float(_economy.draw_burn_seconds(seconds))
+	var added := add_fuel_seconds(drawn)
+	if added > 0.0:
+		_emit_stoked(added)
+		_publish_offer()
+	return added
+
+## The gameplay action. A cold stove with banked fuel merely lights; an empty
+## one first banks one whole item. A burning stove banks one more item. Fuel
+## choice remains data-driven inside FuelEconomy.
+func interact() -> bool:
+	if _lit:
+		if not _can_accept_fuel():
+			return false
+		return stoke_for(_refill_request()) > 0.0
+	if _fuel <= 0.0:
+		if not _can_accept_fuel() or stoke_for(_refill_request()) <= 0.0:
+			return false
+	var ignited := light()
+	_publish_offer()
+	return ignited
 
 func light() -> bool:
 	if _lit or _fuel <= 0.0:
@@ -289,6 +363,7 @@ func light() -> bool:
 	Fires.join(self)
 	_drive_light()
 	_emit(EVENT_LIT)
+	_publish_offer()
 	return true
 
 ## Smothering it. The fuel stays in the firebox -- banking the fire and
@@ -302,6 +377,7 @@ func extinguish() -> void:
 	Fires.leave(self)
 	_drive_light()
 	_emit(EVENT_WENT_OUT)
+	_publish_offer()
 
 ## Public and carrying all the logic; _process only forwards to it. That lets a
 ## fire be burned down a whole night at a time in a test with no running
@@ -460,6 +536,155 @@ func _build_light() -> void:
 	_light.light_specular = 0.0
 	add_child(_light)
 
+func _build_interaction_area() -> void:
+	if _interaction_area == null:
+		_interaction_area = Area3D.new()
+		_interaction_area.name = "InteractionArea"
+		_interaction_area.collision_layer = 0
+		_interaction_area.collision_mask = 1
+		_interaction_area.monitoring = true
+		_interaction_area.monitorable = false
+		_interaction_area.position = interaction_area_offset
+		add_child(_interaction_area)
+		_interaction_area.body_entered.connect(on_body_entered)
+		_interaction_area.body_exited.connect(on_body_exited)
+	if _interaction_shape == null:
+		_interaction_shape = CollisionShape3D.new()
+		_interaction_shape.name = "InteractionRadius"
+		_interaction_area.add_child(_interaction_shape)
+	var box := BoxShape3D.new()
+	box.size = Vector3(
+		maxf(interaction_area_size.x, 0.1),
+		maxf(interaction_area_size.y, 0.1),
+		maxf(interaction_area_size.z, 0.1)
+	)
+	_interaction_shape.shape = box
+
+
+func on_body_entered(body: Node) -> void:
+	if not _accepts(body):
+		return
+	_near = true
+	_publish_offer()
+
+
+func on_body_exited(body: Node) -> void:
+	if not _accepts(body):
+		return
+	_near = false
+	_withdraw_offer()
+
+
+func _on_interaction_activated(payload) -> void:
+	if not (payload is Dictionary):
+		return
+	if StringName(payload.get("id", &"")) != _offer_id() or not _near:
+		return
+	if not interact():
+		_emit_interaction_rejected()
+
+
+func _emit_interaction_rejected() -> void:
+	if _bus == null or not is_instance_valid(_bus):
+		return
+	var offer := _interaction_offer()
+	_bus.emit_event(EVENT_REJECTED, {
+		"id": _offer_id(),
+		"kind": &"stove",
+		"verb": String(offer.get("verb", "Use")),
+		"label": interaction_label,
+		"reason": StringName(offer.get("reason", &"unavailable")),
+		"world_position": _interaction_anchor(),
+	})
+
+
+func _publish_offer() -> void:
+	if not _near:
+		return
+	if _bus == null or not is_instance_valid(_bus):
+		return
+	var offer := _interaction_offer()
+	if _offer_present and offer == _last_offer:
+		return
+	_bus.emit_event(EVENT_OFFER_CHANGED if _offer_present else EVENT_OFFER_ENTERED, offer)
+	_offer_present = true
+	_last_offer = offer.duplicate(true)
+
+
+func _withdraw_offer() -> void:
+	if not _offer_present:
+		return
+	if _bus != null and is_instance_valid(_bus):
+		_bus.emit_event(EVENT_OFFER_EXITED, {"id": _offer_id()})
+	_offer_present = false
+	_last_offer.clear()
+
+
+func _interaction_offer() -> Dictionary:
+	var can_light := not _lit and _fuel > 0.0
+	var can_add := _can_accept_fuel()
+	var enabled := can_light or can_add
+	var reason: StringName = &""
+	if not enabled:
+		reason = &"full" if _at_nominal_capacity() else &"no_fuel"
+	return {
+		"id": _offer_id(),
+		"kind": &"stove",
+		"verb": "Add fuel" if _lit else "Light",
+		"label": interaction_label,
+		"world_position": _interaction_anchor(),
+		"enabled": enabled,
+		"reason": reason,
+	}
+
+
+func _can_accept_fuel() -> bool:
+	if _at_nominal_capacity() or interaction_refill_seconds <= 0.0:
+		return false
+	return _inventory_fuel_seconds() > 0.0
+
+
+func _at_nominal_capacity() -> bool:
+	return interaction_capacity_seconds > 0.0 and _fuel >= interaction_capacity_seconds
+
+
+func _refill_request() -> float:
+	if interaction_capacity_seconds <= 0.0:
+		return interaction_refill_seconds
+	return minf(interaction_refill_seconds, maxf(interaction_capacity_seconds - _fuel, 0.0))
+
+
+func _inventory_fuel_seconds() -> float:
+	if _economy != null and _economy.has_method("fuel_seconds"):
+		return float(_economy.fuel_seconds())
+	return 0.0
+
+
+func _interaction_anchor() -> Vector3:
+	return (global_transform * interaction_offset) if is_inside_tree() else position + interaction_offset
+
+
+func _offer_id() -> StringName:
+	var stable := interaction_id
+	if stable == &"":
+		stable = StringName(String(get_path()) if is_inside_tree() else String(name))
+	return StringName("stove:%s" % String(stable))
+
+
+func _accepts(body: Node) -> bool:
+	var who := _occupant()
+	return who != null and body == who
+
+
+func _connect_interaction() -> void:
+	if _bus != null and is_instance_valid(_bus):
+		_bus.subscribe(EVENT_ACTIVATED, _on_interaction_activated)
+
+
+func _disconnect_interaction() -> void:
+	if _bus != null and is_instance_valid(_bus):
+		_bus.unsubscribe(EVENT_ACTIVATED, _on_interaction_activated)
+
 func _drive_light() -> void:
 	if _light == null:
 		return
@@ -506,8 +731,26 @@ func _emit(event: StringName) -> void:
 	if _bus != null:
 		_bus.emit_event(event, {"fire": self, "position": fire_position()})
 
+func _emit_stoked(seconds: float) -> void:
+	if _bus == null or not is_instance_valid(_bus):
+		return
+	_bus.emit_event(EVENT_STOKED, {
+		"id": interaction_id,
+		"kind": &"stove",
+		"label": interaction_label,
+		"icon_id": &"stoke_fire",
+		"added_seconds": seconds,
+		"fuel_seconds": _fuel,
+		"lit": _lit,
+		"world_position": fire_position(),
+	})
+
 func _process(delta: float) -> void:
 	advance(delta)
+	# The inventory can change while the player stays inside this Area. The
+	# payload omits the continuously burning timer, so this emits only on a real
+	# availability/state change rather than once per frame.
+	_publish_offer()
 	if _survival == null:
 		return
 	var occupant := _occupant()
@@ -523,10 +766,13 @@ func _process(delta: float) -> void:
 ## ServiceRegistry autoload on _ready(); when threats or a second character want
 ## warmth this is the one place that has to learn about them.
 func _occupant() -> Node3D:
+	if _occupant_node != null and is_instance_valid(_occupant_node):
+		return _occupant_node as Node3D
 	if not is_inside_tree():
 		return null
 	if _registry == null:
 		_registry = get_node_or_null("/root/ServiceRegistry")
 		if _registry == null:
 			return null
-	return _registry.get_service(&"player") as Node3D
+	_occupant_node = _registry.get_service(&"player") as Node3D
+	return _occupant_node as Node3D

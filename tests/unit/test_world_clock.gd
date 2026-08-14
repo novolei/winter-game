@@ -291,10 +291,10 @@ func test_shipped_schedule_matches_the_gdd() -> void:
 	## from what the table says still turns this red.
 	var expected := {
 		1: [600.0, 300.0, &"clear_break", &"farmhouse_chimney"],
-		2: [600.0, 300.0, &"", &"fuel_station"],
+		2: [600.0, 300.0, &"", &"gas_station"],
 		3: [480.0, 420.0, &"", &"church_tower"],
 		4: [480.0, 420.0, &"", &"logging_camp"],
-		5: [420.0, 480.0, &"", &"power_pylon"],
+		5: [420.0, 480.0, &"", &"transmission_tower"],
 		6: [300.0, 600.0, &"", &""],
 		7: [240.0, 660.0, &"blizzard", &""],
 	}

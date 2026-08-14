@@ -25,6 +25,7 @@ const SPECIES := preload("res://data/wildlife/pigeon.tres")
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
 
 const PIGEON := "res://assets/models/characters/pigeon/pigeon.fbx"
+const PIGEON_ALBEDO := "res://assets/models/characters/pigeon/Dove-rock_COL_2k.png"
 
 ## Art Bible rule 6's creature tier. Not waived by the character exception box,
 ## which waives rules 8 and 9 and says in as many words that the budget stands.
@@ -206,20 +207,47 @@ func test_the_import_is_set_to_the_rate_the_pack_authored() -> void:
 	)
 
 
-## The 2k colour map is thrown away at import rather than repainted.
-##
-## The bird is one flat palette value at this framing, so the map buys nothing --
-## and left on, Godot extracts it beside the FBX as a 71 KB PNG that then has to
-## be committed, reviewed and kept in step with a texture nothing samples.
-func test_the_packs_texture_is_discarded_rather_than_extracted() -> void:
+## The source FBX asks for `Dove-rock`, while the Unity package ships
+## `Dove_rock`. The correctly named sibling is therefore part of the delivery,
+## not an optional extracted file: without it Godot imports the geometry but the
+## runtime painter can only turn the whole bird into one flat silhouette.
+func test_the_original_two_k_plumage_map_ships_beside_the_fbx() -> void:
 	assert_true(
-		_import_text().contains("fbx/embedded_image_handling=0"),
-		"the embedded 2k colour map is being extracted; the bird is painted from the palette and never samples it"
+		ResourceLoader.exists(PIGEON_ALBEDO, "Texture2D"),
+		"the source DoveRock colour map is missing, so beak, breast, wing and feet detail cannot render"
 	)
-	assert_false(
-		FileAccess.file_exists("res://assets/models/characters/pigeon/pigeon_0.png"),
-		"the extracted texture is on disk, so the discard is not taking effect"
+	var texture := load(PIGEON_ALBEDO) as Texture2D
+	assert_not_null(texture, "the source DoveRock colour map did not import as Texture2D")
+	if texture == null:
+		return
+	assert_eq(texture.get_width(), 2048, "the source DoveRock map is no longer the authored 2k texture")
+	assert_eq(texture.get_height(), 2048, "the source DoveRock map is no longer the authored 2k texture")
+
+
+## The winter cel material may shade and tint the map, but it must continue to
+## sample it. A plain lit_color here is the exact regression the owner saw: all
+## authored part colours collapse into one pigeon-shaped blob.
+func test_the_runtime_pigeon_material_preserves_source_texture_detail() -> void:
+	var pigeon: Pigeon = PigeonScript.new()
+	pigeon.set_plumage_variant(Pigeon.Plumage.GREY_BROWN)
+	var worn := pigeon.material()
+	assert_not_null(worn, "the pigeon resolved no runtime material")
+	if worn == null:
+		pigeon.free()
+		return
+	assert_true(
+		bool(worn.get_shader_parameter("use_source_albedo")),
+		"the runtime material ignores the original DoveRock map and collapses the bird to one colour"
 	)
+	assert_not_null(
+		worn.get_shader_parameter("source_albedo_texture") as Texture2D,
+		"use_source_albedo is enabled without the original DoveRock texture"
+	)
+	assert_true(
+		float(worn.get_shader_parameter("source_albedo_tint_strength")) > 0.0,
+		"the selected plumage variant does not colour-grade the restored source map"
+	)
+	pigeon.free()
 
 
 # --- the colour ---------------------------------------------------------------

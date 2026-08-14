@@ -125,7 +125,7 @@ func _at_start() -> void:
 	var rig := get_node_or_null("Main/CameraRig")
 	if rig != null and rig.has_method("snap_to_target"):
 		rig.snap_to_target()
-	var wire := get_node_or_null("Main/Farmstead/Wires/WireDrop") as Node3D
+	var wire := get_node_or_null("Main/Farmstead/Wires/WireToTruckPole") as Node3D
 	if wire != null:
 		_wire_rest = wire.global_position
 
@@ -161,7 +161,7 @@ func _capture() -> void:
 		if tyre != null:
 			var swung := Vector2(tyre.rotation.z, tyre.rotation.x).length()
 			line += "  tyre=%5.2fdeg" % rad_to_deg(swung)
-		var wire := get_node_or_null("Main/Farmstead/Wires/WireDrop") as Node3D
+		var wire := get_node_or_null("Main/Farmstead/Wires/WireToTruckPole") as Node3D
 		if wire != null and _wire_rest != Vector3.INF:
 			line += "  wire=%+.3f,%+.3f,%+.3f" % [
 				wire.global_position.x - _wire_rest.x,

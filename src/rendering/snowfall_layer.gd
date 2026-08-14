@@ -286,6 +286,12 @@ const FADE_OUT_OCTAVE := 0.5
 ## a flake ever has. Both are bloom controls as much as colour ones -- see the
 ## header, and tests/unit/test_snowfall.gd, which pins the product of the two
 ## under the environment's glow threshold.
+##
+## The near layer is the snowfall the player chiefly reads, so its whiteness is
+## also the shared source for small settled-snow accents that need to match the
+## flakes rather than the darker ground/roof pair. The layer scene pins the same
+## value; a wire-snow integration test compares the built materials directly.
+const PRIMARY_FLAKE_WHITENESS := 0.66
 @export var flake_whiteness := 0.62
 @export var flake_alpha := 0.78
 
@@ -685,12 +691,7 @@ func _reach() -> Vector3:
 func _flake_material(bible) -> StandardMaterial3D:
 	var surface := StandardMaterial3D.new()
 	var snow: Color = bible.snow_tones[0]
-	surface.albedo_color = Color(
-		lerpf(snow.r, 1.0, flake_whiteness),
-		lerpf(snow.g, 1.0, flake_whiteness),
-		lerpf(snow.b, 1.0, flake_whiteness),
-		flake_alpha
-	)
+	surface.albedo_color = flake_colour(snow, flake_whiteness, flake_alpha)
 	surface.albedo_texture = _flake_texture()
 	surface.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	surface.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -702,6 +703,22 @@ func _flake_material(bible) -> StandardMaterial3D:
 	surface.disable_receive_shadows = true
 	surface.vertex_color_use_as_albedo = true
 	return surface
+
+
+## The one colour derivation used by every flake and by small surfaces authored
+## to match the primary snowfall. Callers supply the palette snow rather than a
+## literal, so changing the ColorBible still moves the whole family together.
+static func flake_colour(snow: Color, whiteness: float, alpha := 1.0) -> Color:
+	return Color(
+		lerpf(snow.r, 1.0, whiteness),
+		lerpf(snow.g, 1.0, whiteness),
+		lerpf(snow.b, 1.0, whiteness),
+		alpha
+	)
+
+
+static func primary_flake_colour(snow: Color, alpha := 1.0) -> Color:
+	return flake_colour(snow, PRIMARY_FLAKE_WHITENESS, alpha)
 
 
 ## A dot with a crisp core and a short falloff, NOT a soft blob. At five pixels

@@ -189,7 +189,10 @@ def material(slot):
     rgb = [srgb_to_linear(int(hexcode[i:i + 2], 16) / 255.0) for i in (0, 2, 4)]
     mat = bpy.data.materials.new(name=slot)
     mat.use_nodes = True
-    bsdf = mat.node_tree.nodes["Principled BSDF"]
+    bsdf = next(
+        node for node in mat.node_tree.nodes
+        if node.type == "BSDF_PRINCIPLED"
+    )
     bsdf.inputs["Base Color"].default_value = (rgb[0], rgb[1], rgb[2], 1.0)
     bsdf.inputs["Metallic"].default_value = 0.0
     bsdf.inputs["Roughness"].default_value = 1.0
@@ -362,9 +365,11 @@ def spike(name, slot, x, y, z_top, length, width):
 # the way the settled one's do, so the half-blended state is not half nonsense.
 SNOW_MASS_KEY = "snow_mass"
 
-## The roll, in four rings. `(inset, drop)` are fractions of the rim radius:
+## The roll, in six rings. `(inset, drop)` are fractions of the rim radius:
 ## inset from the cap's outer extent, drop below the top face. The arc is swept
-## to 0, 55 and 110 degrees, then the base tucks back under.
+## from 0 through 110 degrees, then the base tucks back under. Five curved
+## Four curved facets are enough for a smooth game-camera silhouette while preserving the
+## project's deliberately faceted low-poly lighting.
 ##
 ## **PAST 90 DEGREES ON PURPOSE, and this is the difference between reading and
 ## not reading.** A quarter-round stopping at 90 gives the lip three facets that
@@ -380,12 +385,15 @@ SNOW_MASS_KEY = "snow_mass"
 ## bulge just below the roof plane, which is where surface tension puts it: a
 ## settled mass is fattest near its base and rolls under at the very edge.
 ##
-## Three segments and no more, because of the same lighting: a fourth buys a step
-## that lands in a band the eye has already seen, and costs 4 * (2 * spans + 2)
-## triangles on a building spending 1,420 of 1,500.
+## Five segments and no more. The added shoulder facets are silhouette geometry,
+## not extra colour bands: together they make the edge read as cohesive surface
+## tension rather than a stack of planar shelves. More would land inside the
+## same cel bands and spend triangles without changing the edge the player sees.
 _CAP_RINGS = (
     (1.00000, 0.00000),
-    (0.18085, 0.42642),   # 55 degrees
+    (0.65798, 0.06031),   # 20 degrees
+    (0.29289, 0.29289),   # 45 degrees
+    (0.03407, 0.74118),   # 75 degrees -- widest shoulder
     (0.06031, 1.34202),   # 110 -- horizontal and past it, the undercut
     (1.00000, None),      # the base: `base` height rather than a drop
 )
@@ -819,7 +827,10 @@ def save_blend(path):
 def setup_world(sun_energy=4.6):
     world = bpy.data.worlds.new("Winter")
     world.use_nodes = True
-    bg = world.node_tree.nodes["Background"]
+    bg = next(
+        node for node in world.node_tree.nodes
+        if node.type == "BACKGROUND"
+    )
     # A blue sky filling the shadows, so the dark band stays blue rather than
     # going grey -- Art Bible section 4.1, in spirit, for a still.
     bg.inputs[0].default_value = (0.28, 0.45, 0.72, 1.0)

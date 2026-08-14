@@ -51,6 +51,38 @@ const REQUIRED_MODELS: Array[String] = [
 	"res://assets/models/vegetation/tree_bare_c.glb",
 	"res://assets/models/vegetation/tree_bare_d.glb",
 	"res://assets/models/vegetation/tree_bare_e.glb",
+	"res://assets/models/props/woodpile.glb",
+	"res://assets/models/props/supply_cache.glb",
+	"res://assets/models/props/field_marker.glb",
+	"res://assets/models/props/fallen_limb.glb",
+	"res://assets/models/props/emergency_sled.glb",
+	"res://assets/models/props/departure_pack.glb",
+	"res://assets/models/props/chopping_block.glb",
+	"res://assets/models/props/evacuation_cart.glb",
+	"res://assets/models/props/synty_supply_sacks.glb",
+	"res://assets/models/props/synty_wooden_barrel.glb",
+	"res://assets/models/props/synty_field_crate.glb",
+	"res://assets/models/props/synty_work_log.glb",
+	"res://assets/models/props/synty_field_stump.glb",
+	"res://assets/models/props/synty_pickaxe.glb",
+	"res://assets/models/props/synty_evacuation_cache.glb",
+	"res://assets/models/props/synty_woodwork_station.glb",
+	"res://assets/models/props/synty_larder_chest.glb",
+	"res://assets/models/props/synty_provision_stack.glb",
+	"res://assets/models/props/synty_yard_table.glb",
+	"res://assets/models/props/synty_tarped_cache.glb",
+	"res://assets/models/props/synty_broken_gateway.glb",
+	"res://assets/models/props/synty_firepit.glb",
+	"res://assets/models/props/synty_generator_cache.glb",
+	"res://assets/models/props/synty_field_clinic.glb",
+	"res://assets/models/props/synty_fish_camp.glb",
+	"res://assets/models/props/synty_fuel_depot.glb",
+	"res://assets/models/props/synty_road_blockade.glb",
+	"res://assets/models/props/synty_radio_relay.glb",
+	"res://assets/models/props/synty_refuge_bedroll.glb",
+	"res://assets/models/props/synty_rock_cluster_north.glb",
+	"res://assets/models/props/synty_rock_cluster_south.glb",
+	"res://assets/models/props/synty_rock_cluster_east.glb",
 ]
 
 const FENCE_MODEL := "res://assets/models/props/fence_segment.glb"
@@ -97,14 +129,18 @@ func test_the_main_scene_runs_the_farmstead() -> void:
 	)
 
 
-## Every asset the wave built is actually in the shot. A model that exists on
-## disk and is in no scene is a model nobody will notice is missing.
+## Every asset the wave built is actually in the shot.  Farmstead owns its
+## procedural runs (fence, survival props and wheat) at runtime, so this checks
+## both the authored scene and the model list the runtime builder owns.
 func test_every_model_the_reference_calls_for_is_in_the_scene() -> void:
 	var placed := _placed()
 	var instanced := PackedStringArray()
 	for name in placed:
 		var path: String = placed[name]["instance"]
 		if path != "" and not instanced.has(path):
+			instanced.append(path)
+	for path in FarmsteadScript.survival_prop_model_paths():
+		if not instanced.has(path):
 			instanced.append(path)
 	var missing := PackedStringArray()
 	for model in REQUIRED_MODELS:
@@ -114,6 +150,64 @@ func test_every_model_the_reference_calls_for_is_in_the_scene() -> void:
 		missing.size(), 0,
 		"%s does not place %s; it places %s" % [MAIN_SCENE, ", ".join(missing), ", ".join(instanced)]
 	)
+
+
+## Static scene state cannot inspect a prop Farmstead deliberately instantiates
+## from its own composition table.  Put a minimal real farm under Main, which is
+## the one context permitted to build the field, then verify every survival
+## model exists exactly once at the authored XZ position before snow settling.
+func test_the_runtime_survival_props_are_all_built_from_the_composition_table() -> void:
+	var world := Node3D.new()
+	world.name = "Main"
+	var farmstead: Farmstead = FarmsteadScript.new()
+	world.add_child(farmstead)
+	Engine.get_main_loop().root.add_child(world)
+	for entry in farmstead._survival_prop_layout():
+		var prop_name: StringName = entry[&"name"]
+		var prop := farmstead.get_node_or_null(NodePath(prop_name)) as Node3D
+		assert_not_null(prop, "Farmstead did not build %s" % prop_name)
+		if prop == null:
+			continue
+		var expected: Transform3D = entry[&"transform"]
+		assert_almost_eq(prop.position.x, expected.origin.x, 0.0001, "%s moved off its authored X" % prop_name)
+		assert_almost_eq(prop.position.z, expected.origin.z, 0.0001, "%s moved off its authored Z" % prop_name)
+	world.free()
+
+
+## The failed evacuation reads only when its three vehicles are separate
+## events: flatbed at the yard, horse cart farther along the road, then the
+## panel van at the cold edge of the map. They must never merge into one shape.
+func test_the_evacuation_vehicles_are_three_separate_silhouettes() -> void:
+	var placed := _placed()
+	var flatbed: Dictionary = placed.get("FlatbedTruck", {})
+	assert_true(not flatbed.is_empty(), "the scene needs the yard flatbed for the failed-departure story")
+	if flatbed.is_empty():
+		return
+	var cart := {}
+	var van := {}
+	var farmstead: Farmstead = FarmsteadScript.new()
+	for entry in farmstead._survival_prop_layout():
+		if entry[&"name"] == &"EvacuationCart":
+			cart = entry
+		elif entry[&"name"] == &"PanelVan":
+			van = entry
+	farmstead.free()
+	assert_true(not cart.is_empty(), "Farmstead needs the horse cart beyond the yard")
+	assert_true(not van.is_empty(), "Farmstead needs the panel van at the road's far end")
+	if cart.is_empty() or van.is_empty():
+		return
+	var flatbed_at: Vector3 = (flatbed["transform"] as Transform3D).origin
+	var cart_at: Vector3 = (cart[&"transform"] as Transform3D).origin
+	var van_at: Vector3 = (van[&"transform"] as Transform3D).origin
+	var separation := Vector2(flatbed_at.x - cart_at.x, flatbed_at.z - cart_at.z).length()
+	var van_from_cart := Vector2(van_at.x - cart_at.x, van_at.z - cart_at.z).length()
+	var van_from_flatbed := Vector2(van_at.x - flatbed_at.x, van_at.z - flatbed_at.z).length()
+	assert_true(
+		separation >= 15.0,
+		"the cart is only %.1f m from the flatbed; it must be at least 15 m up-road so both silhouettes remain readable" % separation
+	)
+	assert_true(van_from_cart >= 15.0, "the van is only %.1f m from the cart" % van_from_cart)
+	assert_true(van_from_flatbed >= 30.0, "the van is only %.1f m from the yard flatbed" % van_from_flatbed)
 
 
 ## The props report's one documented inconsistency: the tire swing's origin is
@@ -137,18 +231,50 @@ func test_the_tire_swing_hangs_from_a_tree_rather_than_standing_on_the_ground() 
 		"the tire swing hangs off a branch, so its parent must be a tree; it is under %s" % parent_name
 	)
 	var offset: Vector3 = (swing["transform"] as Transform3D).origin
+	# Measured on Tree_Bare_A's imported branch surface. The earlier coordinate
+	# was copied through Blender's axis conversion but did not actually land on
+	# the limb, leaving a conspicuous gap over the rope.
+	var branch_anchor := Vector3(-1.4382, 3.483, 0.1743)
 	assert_true(
 		offset.y > 1.5,
 		"the swing's origin is its hang point, so it must be lifted onto a branch; it sits at y = %.2f" % offset.y
 	)
+	assert_true(
+		offset.distance_to(branch_anchor) < 0.001,
+		"the swing must begin at TreeA's authored branch anchor %s, not stop partway to it at %s" % [branch_anchor, offset]
+	)
+
+
+func test_the_east_rock_cluster_leaves_the_tire_swing_as_a_separate_silhouette() -> void:
+	var placed := _placed()
+	var tree: Dictionary = placed.get("TreeA", {})
+	assert_true(not tree.is_empty(), "TreeA is missing, so the swing has no world anchor")
+	var farmstead: Farmstead = FarmsteadScript.new()
+	var rock := {}
+	for entry in farmstead._survival_prop_layout():
+		if entry[&"name"] == &"SyntyRockClusterEast":
+			rock = entry
+			break
+	farmstead.free()
+	assert_true(not rock.is_empty(), "the east rock cluster is missing from the composition")
+	if tree.is_empty() or rock.is_empty():
+		return
+	var tree_at: Vector3 = (tree["transform"] as Transform3D).origin
+	var rock_at: Vector3 = (rock[&"transform"] as Transform3D).origin
+	var gap := Vector2(tree_at.x - rock_at.x, tree_at.z - rock_at.z).length()
+	assert_true(gap >= 15.0, "the east rocks remain only %.1f m from the tire-swing tree" % gap)
 
 
 ## The wires are the one thing in the scene the script positions rather than the
-## file, so all three have to be reachable where the script looks for them.
-func test_three_wires_are_placed_where_the_script_strings_them() -> void:
+## file. The one surviving span must be reachable where the script looks for
+## it, and the truck-side pole is the real endpoint that prevents an aerial
+## stub. The old house service-drop was removed because its original endpoint
+## was an unresolved line in the sky.
+func test_wires_connect_two_real_poles_where_the_script_strings_them() -> void:
 	var placed := _placed()
 	var farmstead: Farmstead = FarmsteadScript.new()
 	var root := str(farmstead.wire_root)
+	var truck_pole_name := str(farmstead.truck_power_pole_path).get_file()
 	# Node is not reference counted (briefing section 2.2).
 	farmstead.free()
 	var under := PackedStringArray()
@@ -156,12 +282,23 @@ func test_three_wires_are_placed_where_the_script_strings_them() -> void:
 		if placed[name]["instance"] != WIRE_MODEL:
 			continue
 		under.append(str(placed[name]["path"]).get_base_dir().get_file())
-	assert_eq(under.size(), 3, "the reference has three spans; the scene has %d" % under.size())
+	assert_eq(under.size(), 1, "the two real poles need one physical span; the scene has %d" % under.size())
 	for parent in under:
 		assert_eq(
 			parent, root.get_file(),
 			"a wire is under %s, but Farmstead.wire_root looks under %s and will never string it" % [parent, root]
 		)
+	assert_false(placed.has("WireDrop"), "the obsolete house service-drop must not remain as a broken aerial line")
+	assert_true(placed.has("WireToTruckPole"), "the remaining wire must run to the truck-side pole")
+	var truck_pole: Dictionary = placed.get(truck_pole_name, {})
+	assert_true(not truck_pole.is_empty(), "the wire must terminate at a truck-side power pole, not in open sky")
+	if truck_pole.is_empty():
+		return
+	assert_eq(
+		truck_pole["instance"],
+		"res://assets/models/props/power_pole.glb",
+		"%s must be an actual power pole so the outward wire has a physical endpoint" % truck_pole_name
+	)
 
 
 ## Y is left to _settle(), which reads the procedural terrain at runtime. A
@@ -174,7 +311,7 @@ func test_three_wires_are_placed_where_the_script_strings_them() -> void:
 ## underneath them, which is itself settled at runtime -- so they ride along and
 ## nothing about them goes stale when the noise seed changes.
 ##
-##   TireSwing   hangs off a branch, 3.56 m up a tree
+##   TireSwing   hangs off TreeA's measured branch surface, 3.48 m up the tree
 ##   Stove       stands on the farmhouse floor, 0.45 m above the building's own
 ##               origin. Added by the interior-reveal task: the reveal is only
 ##               worth having if there is something in the room, and the thing

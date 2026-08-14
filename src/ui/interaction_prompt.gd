@@ -18,6 +18,9 @@ const COPY_DESIGN_PX := 22.0
 const COPY_LINE_HEIGHT := 1.25
 const ARC_POINTS := 48
 const GUIDE_LENGTH_DESIGN_PX := 112.0
+const GUIDE_GAP_DESIGN_PX := 8.0
+const GUIDE_STROKE_DESIGN_PX := 1.0
+const RING_ACCENT_HALO_DESIGN_PX := 5.0
 
 ## The full hairline remains under a nearly complete action stroke.  Its small
 ## lower opening keeps the mark an authored arc rather than a button outline.
@@ -39,6 +42,10 @@ var _has_screen_anchor := false
 var _hold_progress := 1.0
 var _guide_line := false
 var _stroke_scale := 1.0
+var _accent_color := Color.TRANSPARENT
+var _has_accent_color := false
+var _guide_color := Color.TRANSPARENT
+var _has_guide_color := false
 
 
 ## Builds the immutable content of one focused offer.  Rebuilding is supported:
@@ -143,6 +150,65 @@ func set_guide_line(enabled: bool) -> void:
 
 func guide_line_enabled() -> bool:
 	return _guide_line
+
+
+## A local interaction accent may colour the charge and leader without changing
+## E, the action copy, or any ordinary prompt. Pigeon feeding supplies this from
+## its presentation Resource; transparent means the usual adaptive UI ink.
+func set_accent_color(value: Color) -> void:
+	if not is_finite(value.r) or not is_finite(value.g) \
+			or not is_finite(value.b) or not is_finite(value.a):
+		return
+	_accent_color = value
+	_has_accent_color = value.a > 0.0
+	queue_redraw()
+
+
+func has_accent_color() -> bool:
+	return _has_accent_color
+
+
+func accent_color() -> Color:
+	return _accent_color
+
+
+## The leader is deliberately separate from the charge accent: feeding uses a
+## quiet grey-black line under a bright green ring.
+func set_guide_color(value: Color) -> void:
+	for channel in [value.r, value.g, value.b, value.a]:
+		if not is_finite(float(channel)):
+			return
+	_guide_color = value
+	_has_guide_color = value.a > 0.0
+	queue_redraw()
+
+
+func has_guide_color() -> bool:
+	return _has_guide_color
+
+
+func guide_color() -> Color:
+	return _guide_color
+
+
+## Exposed as geometry evidence: the straight guide must still leave the visible
+## air gap the owner requested below the ring.
+func guide_gap_pixels() -> float:
+	return _px(GUIDE_GAP_DESIGN_PX)
+
+
+func guide_line_points() -> PackedVector2Array:
+	if not is_ready() or not _guide_line:
+		return PackedVector2Array()
+	var diameter := _px(RING_RADIUS_DESIGN_PX * 2.0)
+	var guide_height := _px(GUIDE_LENGTH_DESIGN_PX)
+	var row_height := size.y - guide_height
+	var centre := Vector2(diameter * 0.5, row_height * 0.5)
+	var radius := maxf(
+		_px(RING_RADIUS_DESIGN_PX) - _px(RING_STROKE_DESIGN_PX) * 0.5,
+		1.0
+	)
+	return _guide_geometry(centre, radius)
 
 
 ## Sizes the horizontal key-ring + action composition for the current canvas.
@@ -263,7 +329,7 @@ func _draw() -> void:
 		_px(RING_RADIUS_DESIGN_PX) - _px(RING_STROKE_DESIGN_PX) * 0.5,
 		1.0
 	)
-	var groove := _tokens.line_hairline
+	var groove := _accent_color if _has_accent_color else _tokens.line_hairline
 	if _tokens.opacity_steps.size() > 3:
 		groove.a = _tokens.opacity_steps[3]
 	draw_arc(
@@ -274,24 +340,33 @@ func _draw() -> void:
 	if _hold_progress > 0.0:
 		var arc_start := -PI * 0.5 + ARC_GAP_RADIANS
 		var arc_sweep := TAU - ARC_GAP_RADIANS * 2.0
+		var action_colour := _accent_color if _has_accent_color else ink
+		if _has_accent_color and _tokens.opacity_steps.size() > 4:
+			var halo := action_colour
+			halo.a *= _tokens.opacity_steps[4]
+			draw_arc(
+				centre,
+				radius,
+				arc_start,
+				arc_start + arc_sweep * _hold_progress,
+				maxi(int(ceilf(float(ARC_POINTS) * _hold_progress)), 2),
+				halo,
+				maxf(_px(RING_ACCENT_HALO_DESIGN_PX) * _stroke_scale, 1.0),
+				true
+			)
 		draw_arc(
 			centre,
 			radius,
 			arc_start,
 			arc_start + arc_sweep * _hold_progress,
 			maxi(int(ceilf(float(ARC_POINTS) * _hold_progress)), 2),
-			ink,
+			action_colour,
 			maxf(_px(RING_STROKE_DESIGN_PX) * _stroke_scale, 1.0),
 			true
 		)
 	if _guide_line:
-		draw_line(
-			Vector2(centre.x, centre.y + radius),
-			Vector2(centre.x, size.y),
-			ink,
-			maxf(_px(RING_GROOVE_DESIGN_PX), 1.0),
-			true
-		)
+		var guide := _guide_color if _has_guide_color else ink
+		_draw_guide(_guide_geometry(centre, radius), guide)
 
 	var key_px := _key_px()
 	var key_baseline := centre.y \
@@ -333,6 +408,32 @@ func _key_px() -> int:
 
 func _copy_px() -> int:
 	return maxi(int(roundf(_px(COPY_DESIGN_PX))), 1)
+
+
+func _guide_geometry(centre: Vector2, radius: float) -> PackedVector2Array:
+	var start := Vector2(
+		centre.x,
+		centre.y + radius + _px(GUIDE_GAP_DESIGN_PX)
+	)
+	var finish := Vector2(centre.x, size.y)
+	return PackedVector2Array([start, finish])
+
+
+func _draw_guide(
+	points: PackedVector2Array,
+	colour: Color
+) -> void:
+	if points.size() < 2:
+		return
+	# One crisp, opaque stroke. Its grey-black authored colour already keeps the
+	# leader subordinate to the green ring; no transparency or halo is applied.
+	draw_line(
+		points[0],
+		points[1],
+		colour,
+		maxf(_px(GUIDE_STROKE_DESIGN_PX) * _stroke_scale, 0.75),
+		true
+	)
 
 
 func _place_at_screen_anchor() -> void:

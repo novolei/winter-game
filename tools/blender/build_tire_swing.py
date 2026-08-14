@@ -55,6 +55,11 @@ BUDGET = 100
 RUBBER = "PAL_STRUCT_4"
 ROPE = "PAL_STRUCT_3"
 
+# The first 18 cm enters the supporting limb.  A rope cannot visually begin on
+# a hard-edged low-poly branch without a pinhole of sky at some camera angles;
+# a short overlap makes the attachment read as tied into the wood, not merely
+# placed against it.
+ROPE_BRANCH_OVERLAP_Z = 0.18
 ROPE_END_Z = -1.42
 TIRE_R = 0.265             # to the middle of the tread
 TIRE_THICK = 0.105
@@ -64,7 +69,7 @@ HUB_Z = ROPE_END_Z - TIRE_R - TIRE_THICK * 0.5
 def build():
     # Two segments so the rope has a kink in it. One straight segment reads as
     # a rod, and a rod does not swing.
-    kit.tube("Rope_Upper", ROPE, (0.0, 0.0, 0.0), (0.035, 0.02, -0.74),
+    kit.tube("Rope_Upper", ROPE, (0.0, 0.0, ROPE_BRANCH_OVERLAP_Z), (0.035, 0.02, -0.74),
              0.022, 0.022, sides=3)
     kit.tube("Rope_Lower", ROPE, (0.035, 0.02, -0.74), (0.0, 0.0, ROPE_END_Z),
              0.022, 0.022, sides=3)

@@ -1,6 +1,6 @@
-[gd_resource type="Resource" script_class="UITokens" format=3]
+[gd_resource type="Resource" script_class="UITokens" format=3 uid="uid://bv6tk82w3qw03"]
 
-[ext_resource type="Script" path="res://src/definitions/ui_tokens.gd" id="1_he6so"]
+[ext_resource type="Script" uid="uid://crogwbykbiuty" path="res://src/definitions/ui_tokens.gd" id="1_he6so"]
 
 [resource]
 script = ExtResource("1_he6so")
@@ -20,4 +20,9 @@ interface_latin_path = "res://assets/fonts/Inter-VF.ttf"
 interface_cjk_path = "res://assets/fonts/NotoSansSC-VF.otf"
 breath_cjk_weight = 600
 breath_latin_weight = 500
+pause_ink_bright = Color(0.9647059, 0.94509804, 0.9019608, 1)
+pause_ink_dim = Color(0.76862746, 0.8039216, 0.8392157, 1)
+pause_hairline = Color(0.49411765, 0.54509807, 0.6, 1)
+pause_ember = Color(0.8509804, 0.627451, 0.35686275, 1)
+pause_scrim = Color(0.039215688, 0.05490196, 0.078431375, 1)
 instrument_path = "res://assets/fonts/IBMPlexMono-Light.ttf"

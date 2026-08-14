@@ -62,6 +62,8 @@ const RIPPLE_STREAM := "res://assets/audio/ui/ripple.wav"
 const HEARTBEAT_STREAM := "res://assets/audio/ui/heartbeat.mp3"
 const NIGHTFALL_STREAM := "res://assets/audio/ui/nightfall_thump.mp3"
 const TINNITUS_STREAM := "res://assets/audio/ui/tinnitus.wav"
+const PAUSE_OPEN_STREAM := "res://assets/audio/ui/pause_open.wav"
+const PAUSE_CLOSE_STREAM := "res://assets/audio/ui/pause_close.wav"
 
 ## Three semitones down, as a ratio. Section 8 gives the interval; this is what
 ## it is worth.
@@ -164,13 +166,35 @@ func _initialize() -> void:
 	nightfall.pitch_spread = 0.0
 	nightfall.notes = "入夜。GDD section 3 makes NIGHTFALL = GO HOME a literal deadline; this is the loudest cue in the map on purpose."
 
+	var pause_open = CueScript.new()
+	pause_open.cue_id = &"ui.pause_open"
+	pause_open.stream_path = PAUSE_OPEN_STREAM
+	# The camera's own voice: a low synthesized swell (sub bed + dropping whoomp
+	# + cold air), built by tools/build_pause_sfx.py in the spirit of Battlefield
+	# 1's redeploy sting. The files RMS-normalize to -20 dBFS; the push deserves
+	# to be felt, so +16 over the raw file.
+	pause_open.gain_db = -4.0
+	pause_open.pitch_scale = 1.0
+	pause_open.pitch_spread = 0.0
+	pause_open.notes = "ESC 推镜。Sub swell + whoomp + cold air, 1.5 s, synthesized -- no recording of DICE's was ever an option."
+
+	var pause_close = CueScript.new()
+	pause_close.cue_id = &"ui.pause_close"
+	pause_close.stream_path = PAUSE_CLOSE_STREAM
+	# The mirror gesture: rising, shorter, quieter. Returning to the world costs
+	# less than leaving it.
+	pause_close.gain_db = -10.0
+	pause_close.pitch_scale = 1.0
+	pause_close.pitch_spread = 0.0
+	pause_close.notes = "推镜回归。The open gesture reversed in spirit: a 0.65 s lift."
+
 	var map = MapScript.new()
 	# Typed-array property, so the local MUST be annotated: `var x = [...]` is a
 	# Variant holding an untyped Array, the typed setter rejects it, and the VM
 	# breaks out of this function without a word (briefing trap 4). The generator
 	# would then save an EMPTY map and print success.
 	var cues: Array[UISoundCue] = [move, confirm, back, bloom, ripple,
-		threshold, critical, tinnitus, nightfall]
+		threshold, critical, tinnitus, nightfall, pause_open, pause_close]
 	map.cues = cues
 
 	var missing: Array[String] = []

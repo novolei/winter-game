@@ -27,6 +27,7 @@ extends TestCase
 
 const DirectorScript := preload("res://src/audio/ambience_director.gd")
 const WindSystemScript := preload("res://src/systems/wind_system.gd")
+const BeaconScript := preload("res://src/entities/beacon/beacon.gd")
 
 const MAP_PATH := "res://data/audio/ambience.tres"
 const WEATHER_DIR := "res://data/weather"
@@ -207,6 +208,59 @@ func test_an_ordinary_valley_day_has_real_gaps_in_it() -> void:
 		"only %.1f%% of a valley day is silent -- the gaps are where the footsteps live" % (silent * 100.0))
 	assert_true(silent < 0.45,
 		"%.1f%% of a valley day is silent -- past this the world reads as dead rather than as quiet" % (silent * 100.0))
+
+
+## The deterministic opening used to reveal wind_low for about 3.9 seconds,
+## hard-stop it, reveal a sub-second fragment, then stop it again. Even a good
+## wind recording reads as one human breath when the program frames it that way.
+## The low layer's slow release must bridge those short troughs; the model still
+## has longer silences elsewhere, and the still-night test below guards them.
+func test_the_opening_low_wind_is_one_breath_of_air_not_short_audio_fragments() -> void:
+	assert_not_null(_map)
+	if _map == null:
+		return
+	var layer := _layer(&"wind_low")
+	var wind := _fake_wind("wind_valley")
+	assert_not_null(layer)
+	if layer == null or wind.profile == null:
+		return
+	assert_almost_eq(layer.release_seconds, 1.25, 0.001,
+		"the authored release is the fix for the opening's repeated hard stops")
+	var director := _director(_map, false)
+	director.set_wind_system(wind)
+	var step := 0.05
+	var quietest := 1.0
+	for i in range(600):
+		wind.at = float(i) * step
+		director.advance(step)
+		quietest = minf(quietest, director.bed_gain(0))
+	assert_true(quietest > AmbienceDirector.MIN_AUDIBLE,
+		"wind_low fell to %.6f in the opening 30 s and would be hard-stopped again" % quietest)
+
+
+## A release tail may join brief valleys inside ordinary wind, but it must not
+## turn the cold snap's authored silence into a permanent background loop.
+func test_the_slow_low_wind_release_preserves_the_still_nights_silence() -> void:
+	assert_not_null(_map)
+	if _map == null:
+		return
+	var wind := _fake_wind("wind_still")
+	if wind.profile == null:
+		assert_not_null(wind.profile)
+		return
+	var director := _director(_map, false)
+	director.set_wind_system(wind)
+	var step := 0.02
+	var silent := 0
+	var steps := int(1200.0 / step)
+	for i in range(steps):
+		wind.at = float(i) * step
+		director.advance(step)
+		if director.bed_gain(0) <= AmbienceDirector.MIN_AUDIBLE:
+			silent += 1
+	var fraction := float(silent) / float(steps)
+	assert_true(fraction > 0.90,
+		"the release leaves the low bed silent only %.1f%% of a still night" % (fraction * 100.0))
 
 
 func test_a_gale_never_goes_quiet() -> void:
@@ -664,6 +718,32 @@ func test_the_fire_sounds_from_where_the_fire_is() -> void:
 	assert_almost_eq(voice.global_position.distance_to(Vector3(6.0, 0.0, -4.0)), 0.0, 0.001,
 		"the fire is a PLACE, not a level")
 	fire.lit = false
+
+
+func test_a_real_lit_beacon_becomes_a_positional_fire_voice() -> void:
+	var definition := BeaconDefinition.new()
+	definition.id = &"audio_probe"
+	definition.world_position = Vector3(-7.0, 0.0, 11.0)
+	var lamp := BeaconScript.new() as Beacon
+	lamp.definition = definition
+	_made.append(lamp)
+	_root().add_child(lamp)
+	lamp.set_unlocked(true)
+	lamp.add_fuel_seconds(100.0)
+	assert_true(lamp.light())
+	var director := _director(_playable_map())
+	director.refresh_fires()
+	assert_eq(director.fire_voice_count(), 1,
+		"the beacon lights visually but remains silent in the whiteout")
+	var voice: AudioStreamPlayer3D = null
+	for child in director.get_children():
+		if child.name.begins_with("Fire"):
+			voice = child
+	assert_not_null(voice)
+	if voice != null:
+		assert_almost_eq(voice.global_position.distance_to(lamp.fire_position()), 0.0, 0.001,
+			"the beacon's fire sound does not come from its warm point")
+	lamp.extinguish(&"test")
 
 
 # --- the weather's audible half ----------------------------------------------

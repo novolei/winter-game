@@ -1,7 +1,7 @@
 extends TestCase
 
 ## The farmhouse is the hero building -- the player's home, the closest thing
-## to the camera, the one warm window, and the only model the interior-reveal
+## to the camera, the paired warm windows, and the only model the interior-reveal
 ## system takes apart. Two things about it are contracts rather than art
 ## choices, and neither is checked anywhere else.
 ##
@@ -27,7 +27,9 @@ const MODEL_PATH := "res://assets/models/buildings/farmhouse/farmhouse.glb"
 
 ## Art Bible section 2 rule 6: the hero building gets 1,500 where every other
 ## building gets 500, because the reference house cannot be built with a porch
-## for less.
+## for less. The dynamic snow lip spends its detail across the rounded cross-
+## section and compensates with one fewer near-invisible span along the ridge,
+## so improving the silhouette does not relax this budget.
 const HERO_BUDGET := 1500
 
 ## Faded when the player steps inside. Keep in step with DEFAULT_REVEAL in

@@ -33,6 +33,7 @@ extends Node
 ## take(), and whoever builds the world owns them.
 
 const DEFAULT_ITEMS_DIRECTORY := "res://data/items"
+const SERVICE := &"fuel_economy"
 
 ## Which stat an item's nutrition and hydration put back. Named here rather than
 ## carried per item because ItemDefinition's own field names already decide it:
@@ -56,6 +57,18 @@ var _survival = null
 func _ready() -> void:
 	if _order.is_empty():
 		load_from_directory()
+	if is_inside_tree():
+		var registry := get_node_or_null("/root/ServiceRegistry")
+		if registry != null:
+			registry.register(SERVICE, self)
+
+
+func _exit_tree() -> void:
+	if not is_inside_tree():
+		return
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.get_service(SERVICE) == self:
+		registry.unregister(SERVICE)
 
 func set_survival_system(system) -> void:
 	_survival = system

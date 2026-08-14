@@ -90,6 +90,14 @@ enum Source { WIND, SNOWFALL }
 @export var pitch_scale := 1.0
 @export var pitch_at_full := 1.0
 
+## Optional release time for this voice. Zero keeps the map-wide response.
+##
+## A low air bed needs to survive the brief troughs inside one gust; otherwise
+## the deterministic wind model reveals it for a few seconds, cuts it, and then
+## reveals another short fragment. The attack stays fast so a gust still warns
+## the player in time. Only the way OUT is allowed to be slower.
+@export_range(0.0, 5.0, 0.05) var release_seconds := 0.0
+
 @export_group("Absence")
 
 ## GDD section 9, 反直觉设计：用消失吓人 -- "危险靠近时，BGM 抽走高频层，只剩低频".

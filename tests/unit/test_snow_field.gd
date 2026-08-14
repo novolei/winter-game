@@ -954,6 +954,71 @@ func test_wade_factor_is_bounded() -> void:
 		assert_true(factor >= 0.0 and factor <= 1.0, "wade factor %f is outside 0..1" % factor)
 
 
+## Wading and very-deep gait are deliberately two levels. wade_factor() has
+## already saturated at the first line, so the second must read physical depth.
+## The final pair are a Schmitt trigger, not the ends of a continuous blend.
+func test_very_deep_snow_has_separate_enter_and_exit_lines() -> void:
+	assert_true(
+		_field.deep_depth_m < _field.very_deep_exit_depth_m,
+		"the very-deep exit line overlaps the ordinary deep-snow boundary"
+	)
+	assert_true(
+		_field.very_deep_exit_depth_m < _field.very_deep_depth_m,
+		"the very-deep gait has no hysteresis band"
+	)
+	assert_true(
+		_field.very_deep_depth_m < _field.max_depth_m,
+		"the very-deep enter line cannot be reached inside a structural drift"
+	)
+	assert_almost_eq(_field.very_deep_exit_depth_m, 0.52, 0.0001)
+	assert_almost_eq(_field.very_deep_depth_m, 0.58, 0.0001)
+	assert_almost_eq(_field.very_deep_sample_radius_m, 0.40, 0.0001)
+
+
+## A centre sample measures the last boot print, not the drift. The five-point
+## disc is deliberately one print radius wide, so the untouched snow around a
+## single stamp outvotes that self-feedback without hiding a truly packed path.
+func test_very_deep_sampling_outvotes_one_player_footprint() -> void:
+	var drift := Vector3.ZERO
+	var found := false
+	for iz in range(-60, 61):
+		for ix in range(-60, 61):
+			var here := Vector3(float(ix) * 0.5, 0.0, float(iz) * 0.5)
+			if _field.structural_depth_at(here) >= _field.max_depth_m - 0.0001 \
+					and _field.very_deep_sample_depth(here) >= _field.max_depth_m - 0.0001:
+				drift = here
+				found = true
+				break
+		if found:
+			break
+	assert_true(found, "the field produced no full drift core for the footprint test")
+	if not found:
+		return
+
+	var radius := _field.very_deep_sample_radius_m
+	var explicit_mean := (
+		_field.structural_depth_at(drift)
+		+ _field.structural_depth_at(drift + Vector3(radius, 0.0, 0.0))
+		+ _field.structural_depth_at(drift - Vector3(radius, 0.0, 0.0))
+		+ _field.structural_depth_at(drift + Vector3(0.0, 0.0, radius))
+		+ _field.structural_depth_at(drift - Vector3(0.0, 0.0, radius))
+	) / 5.0
+	assert_almost_eq(_field.very_deep_sample_depth(drift), explicit_mean, 0.0001)
+
+	# PlayerController places each boot 0.19 m to one side of the body centre.
+	# The classifier remains at the body, so reproduce that real self-feedback.
+	_field.pack_at(drift + Vector3(0.19, 0.0, 0.0), 0.336, 0.09)
+	assert_true(
+		_field.structural_depth_at(drift) < _field.very_deep_depth_m,
+		"one player print did not cross the centre-only enter line; the regression case is invalid"
+	)
+	assert_true(
+		_field.very_deep_sample_depth(drift) >= _field.very_deep_depth_m,
+		"one player print cancelled the footprint-sized very-deep sample: %.4f m"
+			% _field.very_deep_sample_depth(drift)
+	)
+
+
 ## ---------------------------------------------------------------------------
 ## The drift profile
 ## ---------------------------------------------------------------------------

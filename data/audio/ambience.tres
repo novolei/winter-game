@@ -44,10 +44,11 @@ notes = "Weather tell, named by data/weather/. No .gd file anywhere knows this i
 script = ExtResource("2_ffwpp")
 layer_id = &"wind_low"
 enters_at = 0.09
-gain_db = -14.0
+gain_db = -16.5
 pitch_scale = 0.97
 pitch_at_full = 1.02
-notes = "The body of the air. Silent below 0.09, which is 97.6% of a still night and 22.3% of a valley day."
+release_seconds = 1.25
+notes = "The body of the air. A 1.25 s release bridges brief gust troughs; trimmed 2.5 dB so it stays behind footsteps and breath."
 
 [sub_resource type="Resource" id="Resource_wrkrd"]
 script = ExtResource("2_ffwpp")

@@ -46,6 +46,13 @@ func _initialize() -> void:
 		_route(_points(FarmsteadScript.TRAIL_TO_THE_EAST), 0.75, 1.25),
 		_route(_points(FarmsteadScript.TRAIL_TO_THE_WELL), 0.75, 1.25),
 	]
+	# The outer survival circuit is authored in data/routes. Reading it here
+	# keeps the traversal corridor and the visible tyre trace on one source of
+	# truth while preserving this generated profile's typed Resource boundary.
+	for route in _survival_routes():
+		profile.protected_routes.append(_route(
+			route.points, route.protected_half_width_m, route.protected_feather_m
+		))
 	# These are fixed, large wind breaks authored as location facts rather than
 	# discovered by an every-tick scene query.  The corridor itself stays safe;
 	# the nearby lee pockets merely give optional open snow a readable drift.
@@ -91,3 +98,22 @@ func _points(world_points: Array) -> PackedVector2Array:
 			var point := world as Vector3
 			points.append(Vector2(point.x, point.z))
 	return points
+
+
+func _survival_routes() -> Array[SurvivalRouteDefinition]:
+	var result: Array[SurvivalRouteDefinition] = []
+	var directory := DirAccess.open("res://data/routes")
+	if directory == null:
+		return result
+	var files := directory.get_files()
+	files.sort()
+	for raw in files:
+		var file_name: String = raw
+		if file_name.ends_with(".remap"):
+			file_name = file_name.trim_suffix(".remap")
+		if not file_name.ends_with(".tres"):
+			continue
+		var resource := ResourceLoader.load("res://data/routes".path_join(file_name))
+		if resource is SurvivalRouteDefinition and resource.is_valid():
+			result.append(resource)
+	return result

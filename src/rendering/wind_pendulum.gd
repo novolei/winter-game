@@ -146,6 +146,32 @@ func wind_strength() -> float:
 	return _strength
 
 
+## Add a short, physical shove to a hanging member already owned by this
+## integrator.  Wind and contact therefore share the same restoring force,
+## damping and derived rope period; an impact rings down instead of resetting
+## the wind motion or starting a separate animation.
+func apply_impulse(member: Node3D, world_impulse: Vector3) -> void:
+	if member == null or not is_instance_valid(member):
+		return
+	_ensure_member(member)
+	var push := world_impulse
+	var parent := member.get_parent() as Node3D
+	if parent != null:
+		# Unit subjects are deliberately not inserted into a SceneTree. Reading a
+		# global basis there produces an engine error, while the local basis is the
+		# same frame needed for this conversion in that isolated case.
+		var parent_basis := parent.global_basis if parent.is_inside_tree() else parent.basis
+		push = parent_basis.inverse() * push
+	push.y = 0.0
+	if push.length_squared() < 0.000001:
+		return
+	var state: Array = _state[member.get_instance_id()]
+	# Rates are radians per second. The ceiling is generous enough for a firm
+	# body bump but keeps an accidental repeated overlap from looping the tire.
+	state[1] = clampf(state[1] + push.x, -1.8, 1.8)
+	state[3] = clampf(state[3] + push.z, -1.8, 1.8)
+
+
 # --- the physics, all of it pure --------------------------------------------
 
 ## One step of the driven damped pendulum. Takes and returns `[angle, rate]` so
@@ -233,10 +259,8 @@ func _process(delta: float) -> void:
 
 
 func _drive(member: Node3D, delta: float, lean: float, ceiling: float) -> void:
+	_ensure_member(member)
 	var id := member.get_instance_id()
-	if not _rest.has(id):
-		_rest[id] = member.transform.basis
-		_state[id] = [0.0, 0.0, 0.0, 0.0]
 	var state: Array = _state[id]
 	var rest: Basis = _rest[id]
 
@@ -265,6 +289,14 @@ func _drive(member: Node3D, delta: float, lean: float, ceiling: float) -> void:
 	state[3] = next_z[1]
 
 	member.transform.basis = tilt_basis(state[0], state[2], hangs) * rest
+
+
+func _ensure_member(member: Node3D) -> void:
+	var id := member.get_instance_id()
+	if _rest.has(id):
+		return
+	_rest[id] = member.transform.basis
+	_state[id] = [0.0, 0.0, 0.0, 0.0]
 
 
 ## The tilt, as a basis, in the node's parent frame.

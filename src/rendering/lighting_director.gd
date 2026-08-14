@@ -69,6 +69,10 @@ const SKY_SHADER_PATH := "res://assets/shaders/aurora_sky.gdshader"
 ## spells them out: systems never hold references to one another.
 const EVENT_DAY_STARTED := &"clock.day_started"
 const EVENT_NIGHT_STARTED := &"clock.night_started"
+## Local FogVolumes announce only their zero/non-zero crossing. Their density
+## stays in their own shader; Lighting merely opens the Environment's froxel
+## buffer without accidentally reviving a preset's dormant global haze.
+const EVENT_LOCAL_VOLUMETRIC_FOG_CHANGED := &"rendering.local_volumetric_fog_changed"
 
 ## Shadow length on flat ground is height / tan(elevation), and the derivative
 ## of that is savage down here: at 11 degrees a shadow ran 5.1x its caster and
@@ -199,6 +203,7 @@ var _days: Dictionary = {}
 
 var _bus = null
 var _subscribed := false
+var _local_volumetric_fog_active := false
 
 ## WHERE IN THE PHASE THE SUN IS, 0 at the arc's morning end and 1 at its evening
 ## end. Read off the clock every frame; see _travel_the_arc().
@@ -941,8 +946,12 @@ func _write(look: LightingPreset) -> void:
 		env.fog_sky_affect = look.fog_sky_affect
 		env.glow_enabled = look.glow_enabled
 		env.glow_intensity = look.glow_strength
-		env.volumetric_fog_enabled = look.volumetric_fog_enabled
-		env.volumetric_fog_density = look.volumetric_fog_density
+		env.volumetric_fog_enabled = look.volumetric_fog_enabled or _local_volumetric_fog_active
+		# A disabled preset still carries the density it was art-tested at. When a
+		# local snow FogVolume asks for the froxel buffer, that dormant value must
+		# stay dormant or the whole 90 m camera ray becomes uniform global haze.
+		env.volumetric_fog_density = look.volumetric_fog_density \
+			if look.volumetric_fog_enabled else 0.0
 		env.volumetric_fog_albedo = look.volumetric_fog_albedo
 		env.volumetric_fog_anisotropy = look.volumetric_fog_anisotropy
 		env.volumetric_fog_ambient_inject = look.volumetric_fog_ambient_inject
@@ -1009,6 +1018,7 @@ func _attach_bus() -> void:
 		return
 	_bus.subscribe(EVENT_DAY_STARTED, _on_day_started)
 	_bus.subscribe(EVENT_NIGHT_STARTED, _on_night_started)
+	_bus.subscribe(EVENT_LOCAL_VOLUMETRIC_FOG_CHANGED, _on_local_volumetric_fog_changed)
 	_subscribed = true
 
 
@@ -1017,6 +1027,7 @@ func _detach_bus() -> void:
 		return
 	_bus.unsubscribe(EVENT_DAY_STARTED, _on_day_started)
 	_bus.unsubscribe(EVENT_NIGHT_STARTED, _on_night_started)
+	_bus.unsubscribe(EVENT_LOCAL_VOLUMETRIC_FOG_CHANGED, _on_local_volumetric_fog_changed)
 	_subscribed = false
 
 
@@ -1028,6 +1039,17 @@ func _on_day_started(payload) -> void:
 
 func _on_night_started(payload) -> void:
 	_change_to(int(payload), true)
+
+
+func _on_local_volumetric_fog_changed(payload) -> void:
+	if not payload is Dictionary:
+		return
+	_local_volumetric_fog_active = bool((payload as Dictionary).get("active", false))
+	if environment == null:
+		return
+	var global_air := _active != null and _active.volumetric_fog_enabled
+	environment.volumetric_fog_enabled = global_air or _local_volumetric_fog_active
+	environment.volumetric_fog_density = _active.volumetric_fog_density if global_air else 0.0
 
 
 ## A day the schedule does not have leaves the frame exactly where it is. Silent

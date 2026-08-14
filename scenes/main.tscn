@@ -32,16 +32,31 @@
 [ext_resource type="PackedScene" path="res://scenes/effects/wind.tscn" id="31_wind"]
 [ext_resource type="Script" uid="uid://dqokdd6upmusr" path="res://src/entities/wildlife/perch_points.gd" id="33_perches"]
 [ext_resource type="Script" uid="uid://2stu1e05yb0u" path="res://src/entities/wildlife/crow_flock.gd" id="34_crows"]
+[ext_resource type="PackedScene" uid="uid://cnx4pwqkikivj" path="res://assets/models/props/water_well.glb" id="35_dnhof"]
 [ext_resource type="PackedScene" path="res://scenes/effects/chimney_smoke.tscn" id="35_smoke"]
+[ext_resource type="PackedScene" uid="uid://dbng41mynim51" path="res://assets/models/props/burning_barrel.glb" id="36_1v6qk"]
 [ext_resource type="Script" uid="uid://cs5tij4qxepum" path="res://src/systems/weather_system.gd" id="36_weather"]
+[ext_resource type="Script" uid="uid://bkixassxc3ppp" path="res://src/entities/fire_glow.gd" id="37_augu2"]
 [ext_resource type="Script" uid="uid://d1vmbuqklpctn" path="res://src/systems/aurora_system.gd" id="37_aurora"]
+[ext_resource type="PackedScene" uid="uid://3nbxil1b8ta5" path="res://assets/models/props/campfire.glb" id="38_1v6qk"]
 [ext_resource type="Script" uid="uid://dcdc2rqc0rvtc" path="res://src/entities/wildlife/crow_calls.gd" id="38_crow_calls"]
 [ext_resource type="Script" uid="uid://c5scer44c3ey6" path="res://src/rendering/startle_shot.gd" id="39_startle"]
 [ext_resource type="Script" uid="uid://ccogu2llarnyn" path="res://src/entities/wildlife/pigeon_flock.gd" id="40_pigeons"]
 [ext_resource type="Script" uid="uid://c0dg85kpxornc" path="res://src/ui/ui_layer.gd" id="40_uilayer"]
 [ext_resource type="Script" uid="uid://b0cejs7lnkrex" path="res://src/ui/time_prompt.gd" id="41_timeprompt"]
 [ext_resource type="Script" uid="uid://bfwoqnee82ac" path="res://src/ui/threshold_surfacing.gd" id="42_surfacing"]
+[ext_resource type="Script" uid="uid://ni7qox8q7r0t" path="res://src/entities/tire_swing.gd" id="43_tire_swing_interaction"]
 [ext_resource type="Script" uid="uid://ddm2hpmerteki" path="res://src/audio/ambience_director.gd" id="44_ambience"]
+[ext_resource type="Script" uid="uid://bmoi3seoa8slo" path="res://src/entities/wire_snow.gd" id="45_wire_snow"]
+[ext_resource type="PackedScene" path="res://scenes/effects/weather_vfx.tscn" id="46_weather_vfx"]
+[ext_resource type="Script" uid="uid://ci4xintnylorc" path="res://src/systems/beacon_network.gd" id="47_beacon_network"]
+[ext_resource type="Script" uid="uid://bvww7l7dtbls5" path="res://src/systems/survival_route_layer.gd" id="48_survival_routes"]
+[ext_resource type="Script" uid="uid://c5nmhgmgsh4vq" path="res://src/ui/exit_menu.gd" id="49_exit_menu"]
+[ext_resource type="Script" uid="uid://capvjogytg5na" path="res://src/ui/interaction_director.gd" id="50_interaction"]
+[ext_resource type="Script" uid="uid://wngtr2eaka2s" path="res://src/ui/interaction_result_surfacing.gd" id="51_interaction_results"]
+[ext_resource type="PackedScene" path="res://scenes/effects/weather_snow_fog.tscn" id="52_weather_snow_fog"]
+[ext_resource type="PackedScene" path="res://scenes/effects/farmhouse_window_light.tscn" id="53_window_light"]
+[ext_resource type="Script" uid="uid://clsslsjuupe0p" path="res://src/entities/perch_snow_shed.gd" id="54_perch_snow"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_room_main"]
 size = Vector3(6.88, 3.2, 5.68)
@@ -49,8 +64,11 @@ size = Vector3(6.88, 3.2, 5.68)
 [sub_resource type="BoxShape3D" id="BoxShape3D_room_wing"]
 size = Vector3(3.28, 3.2, 4.04)
 
+[sub_resource type="BoxShape3D" id="BoxShape3D_entry_corridor"]
+size = Vector3(2, 3.2, 2)
+
 [sub_resource type="BoxShape3D" id="BoxShape3D_doorstep"]
-size = Vector3(2.4, 3.2, 2.6)
+size = Vector3(4.4, 3.2, 5)
 
 [node name="Main" type="Node3D" unique_id=1508188971]
 
@@ -58,11 +76,9 @@ size = Vector3(2.4, 3.2, 2.6)
 script = ExtResource("1_snowfield")
 
 [node name="TrackMask" type="Node" parent="." unique_id=967854499]
-groups = ["wind_consumer"]
 script = ExtResource("2_trackmask")
 
 [node name="SnowAccumulation" type="Node" parent="." unique_id=967854500]
-groups = ["wind_consumer"]
 script = ExtResource("29_accumulation")
 
 [node name="Player" type="CharacterBody3D" parent="." unique_id=1145769148]
@@ -91,9 +107,12 @@ script = ExtResource("8_farmhouse")
 
 [node name="Model" parent="Farmhouse" unique_id=1902244518 instance=ExtResource("9_farmhouse_model")]
 
+[node name="WindowLight" parent="Farmhouse" unique_id=246297131 instance=ExtResource("53_window_light")]
+
 [node name="InteriorReveal" type="Area3D" parent="Farmhouse" unique_id=1902244519]
 script = ExtResource("23_reveal")
 fade_parts = Array[StringName]([&"FH_Fade_Roof", &"FH_Fade_Front", &"FH_Fade_Porch", &"FH_Fade_SideLeft", &"FH_Fade_Divider", &"FH_Door"])
+fade_paths = Array[NodePath]([NodePath("../../Farmstead/Wires/WireToTruckPole")])
 entry_gate_path = NodePath("../Door")
 floor_height = nan
 
@@ -105,12 +124,23 @@ shape = SubResource("BoxShape3D_room_main")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.8, 1.1, 1.42)
 shape = SubResource("BoxShape3D_room_wing")
 
+[node name="EntryCorridor" type="CollisionShape3D" parent="Farmhouse/InteriorReveal" unique_id=1792765836]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.8, 1.1, -0.45)
+shape = SubResource("BoxShape3D_entry_corridor")
+
 [node name="Door" type="Area3D" parent="Farmhouse" unique_id=1902244523]
 script = ExtResource("25_door")
 leaf_part = &"FH_Door"
+interaction_id = &"farmhouse_front"
+guides_entry = true
+entry_target_offset = Vector3(1.8, 0, -1.35)
+interaction_anchor_path = NodePath("PromptAnchor")
+
+[node name="PromptAnchor" type="Marker3D" parent="Farmhouse/Door" unique_id=145064370]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.8, 1.3, 0)
 
 [node name="Doorstep" type="CollisionShape3D" parent="Farmhouse/Door" unique_id=1902244524]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.8, 1.1, 1.2)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.8, 1.1, 1.5)
 shape = SubResource("BoxShape3D_doorstep")
 
 [node name="InteriorWarmth" type="Node3D" parent="Farmhouse" unique_id=1902244525]
@@ -123,6 +153,8 @@ fire_path = NodePath("../Stove")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.45, -5.35)
 starting_fuel_seconds = 600.0
 start_lit = true
+interaction_id = &"farmhouse_hearth"
+interaction_offset = Vector3(0, 0.9, 0.5)
 light_offset = Vector3(0, 1.05, 0.5)
 light_attenuation = 0.45
 light_shadows = true
@@ -130,7 +162,11 @@ light_cull_mask = 6
 
 [node name="ChimneySmoke" parent="Farmhouse" unique_id=1385991504 instance=ExtResource("35_smoke")]
 
-[node name="Perches" type="Node3D" parent="Farmhouse" unique_id=1796401971]
+[node name="EaveSnowShed" type="Node3D" parent="Farmhouse" unique_id=1822058832]
+script = ExtResource("54_perch_snow")
+snow_response = 1
+
+[node name="Perches" type="Node3D" parent="Farmhouse/EaveSnowShed" unique_id=1796401971]
 script = ExtResource("33_perches")
 kind = 2
 run_from = Vector3(-3.8, 3.03, 3.85)
@@ -154,15 +190,22 @@ transform = Transform3D(0.88294756, 0, -0.46947157, 0, 1, 0, 0.46947157, 0, 0.88
 [node name="PowerPole" parent="Farmstead" unique_id=1902244604 instance=ExtResource("14_power_pole")]
 transform = Transform3D(0.92718387, 0, 0.37460658, 0, 1, 0, -0.37460658, 0, 0.92718387, 6.8, 0, 13.055)
 
-[node name="Perches" type="Node3D" parent="Farmstead/PowerPole" unique_id=279883156]
+[node name="CrossarmSnowShed" type="Node3D" parent="Farmstead/PowerPole" unique_id=220321687]
+script = ExtResource("54_perch_snow")
+
+[node name="Perches" type="Node3D" parent="Farmstead/PowerPole/CrossarmSnowShed" unique_id=279883156]
 script = ExtResource("33_perches")
 points = Array[Vector3]([Vector3(-0.62, 7.95, 0), Vector3(-0.28, 7.95, 0), Vector3(0.28, 7.95, 0), Vector3(0.62, 7.95, 0), Vector3(0, 8.5, 0)])
+
+[node name="TruckPowerPole" parent="Farmstead" unique_id=1902244631 instance=ExtResource("14_power_pole")]
+transform = Transform3D(0.92718387, 0, 0.37460658, 0, 1, 0, -0.37460658, 0, 0.92718387, 11, 0, -25)
 
 [node name="TreeA" parent="Farmstead" unique_id=1902244605 instance=ExtResource("17_tree_a")]
 transform = Transform3D(0.9659258, 0, 0.25881904, 0, 1, 0, -0.25881904, 0, 0.9659258, 28.35, 0, -16.725)
 
 [node name="TireSwing" parent="Farmstead/TreeA" unique_id=1902244606 instance=ExtResource("16_tire_swing")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.07, 3.56, -0.12)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.4382, 3.483, 0.1743)
+script = ExtResource("43_tire_swing_interaction")
 
 [node name="Perches" type="Node3D" parent="Farmstead/TreeA" unique_id=1714863442]
 script = ExtResource("33_perches")
@@ -206,39 +249,34 @@ transform = Transform3D(0.656059, 0, 0.7547096, 0, 1, 0, -0.7547096, 0, 0.656059
 
 [node name="Wires" type="Node3D" parent="Farmstead" unique_id=1902244610]
 
-[node name="WireArriving" parent="Farmstead/Wires" unique_id=1902244611 instance=ExtResource("15_power_wire")]
+[node name="WireToTruckPole" parent="Farmstead/Wires" unique_id=1902244613 instance=ExtResource("15_power_wire")]
+script = ExtResource("45_wire_snow")
 
-[node name="Perches" type="Node3D" parent="Farmstead/Wires/WireArriving" unique_id=1068449806]
+[node name="Perches" type="Node3D" parent="Farmstead/Wires/WireToTruckPole" unique_id=1434841431]
 script = ExtResource("33_perches")
 kind = 1
 spacing_m = 3.0
-from_fraction = 0.74
-to_fraction = 0.97
 
-[node name="WireDrop" parent="Farmstead/Wires" unique_id=1902244612 instance=ExtResource("15_power_wire")]
+[node name="WaterWell" parent="Farmstead" unique_id=2016165207 instance=ExtResource("35_dnhof")]
+transform = Transform3D(0.93971515, 0, 0.34195828, 0, 1, 0, -0.34195828, 0, 0.93971515, -3.5, 0, -11.5)
 
-[node name="Perches" type="Node3D" parent="Farmstead/Wires/WireDrop" unique_id=1944836332]
-script = ExtResource("33_perches")
-kind = 1
-spacing_m = 2.2
+[node name="BurningBarrel" parent="Farmstead" unique_id=2008889925 instance=ExtResource("36_1v6qk")]
+transform = Transform3D(0.81907475, 0, 0.57368684, 0, 1, 0, -0.57368684, 0, 0.81907475, -9.5, 0, -25.5)
 
-[node name="WireLeaving" parent="Farmstead/Wires" unique_id=1902244613 instance=ExtResource("15_power_wire")]
+[node name="Firelight" type="OmniLight3D" parent="Farmstead/BurningBarrel" unique_id=1473053032]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.4, 0)
+script = ExtResource("37_augu2")
 
-[node name="Perches" type="Node3D" parent="Farmstead/Wires/WireLeaving" unique_id=1434841431]
-script = ExtResource("33_perches")
-kind = 1
-from_fraction = 0.03
-to_fraction = 0.32
+[node name="Campfire" parent="Farmstead" unique_id=1209395125 instance=ExtResource("38_1v6qk")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 16.5, 0, -31)
 
 [node name="Crows" type="Node3D" parent="." unique_id=637519530]
-groups = ["wind_consumer"]
 script = ExtResource("34_crows")
 
 [node name="Calls" type="Node3D" parent="Crows" unique_id=751981406]
 script = ExtResource("38_crow_calls")
 
 [node name="Pigeons" type="Node3D" parent="." unique_id=775386192]
-groups = ["wind_consumer"]
 script = ExtResource("40_pigeons")
 
 [node name="StartleShot" type="Node" parent="." unique_id=1321744002]
@@ -251,6 +289,16 @@ script = ExtResource("39_startle")
 [node name="Weather" type="Node" parent="." unique_id=17957697]
 script = ExtResource("36_weather")
 
+[node name="WeatherVfx" parent="." unique_id=126558748 instance=ExtResource("46_weather_vfx")]
+
+[node name="WeatherSnowFog" parent="." unique_id=1495715901 instance=ExtResource("52_weather_snow_fog")]
+
+[node name="BeaconNetwork" type="Node" parent="." unique_id=1345566028]
+script = ExtResource("47_beacon_network")
+
+[node name="SurvivalRoutes" type="Node3D" parent="." unique_id=1793488991]
+script = ExtResource("48_survival_routes")
+
 [node name="Aurora" type="Node" parent="." unique_id=199252502]
 script = ExtResource("37_aurora")
 
@@ -260,8 +308,17 @@ script = ExtResource("44_ambience")
 [node name="UI" type="CanvasLayer" parent="." unique_id=1002779750]
 script = ExtResource("40_uilayer")
 
+[node name="Interaction" type="Node" parent="UI" unique_id=1282831427]
+script = ExtResource("50_interaction")
+
+[node name="ResultSurfacing" type="Node" parent="UI" unique_id=737602993]
+script = ExtResource("51_interaction_results")
+
 [node name="ThresholdSurfacing" type="Node" parent="UI" unique_id=1405859764]
 script = ExtResource("42_surfacing")
 
 [node name="TimePrompt" type="Node" parent="UI" unique_id=562402480]
 script = ExtResource("41_timeprompt")
+
+[node name="ExitMenu" type="CanvasLayer" parent="." unique_id=889797961]
+script = ExtResource("49_exit_menu")

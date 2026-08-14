@@ -23,22 +23,17 @@ extends TestCase
 ##
 ## The second half of the file is the shader's arithmetic, mirrored in GDScript
 ## and asserted against CelPainter's constants -- because the place a pop would
-## actually appear is not in the scalar at all. It is on a ROOF PLANE, which has
-## one world normal across the whole of it and would therefore flip from bare to
-## white in a single frame under a bare normal.y threshold, however smoothly the
-## scalar moved. See test_a_flat_plane_whitens_across_minutes_rather_than_at_once.
+## actually appear is not in the scalar at all. It is on any sloped prop plane,
+## which has one world normal across the whole of it and would therefore flip
+## from bare to white in a single frame under a bare normal.y threshold, however
+## smoothly the scalar moved. Modelled roofs use `_BARE + snow_mass` and are
+## judged separately. See test_a_flat_plane_whitens_across_minutes_rather_than_at_once.
 
 const AccumulationScript := preload("res://src/systems/snow_accumulation.gd")
 const CelPainterScript := preload("res://src/rendering/cel_painter.gd")
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
 
 const FRAME := 1.0 / 60.0
-
-## The farmhouse's main roof is a 33.7 degree pitch -- tools/blender/
-## build_farmhouse.py, MAIN_RISE 2.40 over a 3.60 half-span -- so its world
-## normal's Y is cos(33.7) = 0.832. The wings are the same pitch. This is the
-## surface the owner looks at, so it is the one the opening state is judged on.
-const FARMHOUSE_PITCH_Y := 0.832
 
 ## A full day and a night at day 1's lengths (data/schedule/day_01.tres).
 const A_WHOLE_DAY := 900.0
@@ -168,7 +163,8 @@ func test_a_storm_ending_is_as_gradual_as_a_storm_arriving() -> void:
 		"the largest single frame moved the cover by %.5f" % _largest_jump(trace["cover"])
 	)
 	assert_true(
-		_snow.cover() < before, "thirty seconds of clear sky took nothing off at all"
+		_snow.cover() <= before,
+		"thirty seconds after the storm increased established surface snow"
 	)
 
 
@@ -361,6 +357,41 @@ func test_wind_takes_settled_snow_off_again() -> void:
 			_snow.equilibrium(), still
 		]
 	)
+	var before := _snow.cover()
+	_elapse(180.0)
+	assert_true(
+		_snow.cover() < before,
+		"three minutes of full gale changed the destination but removed no actual cover"
+	)
+
+
+func test_ordinary_valley_wind_cannot_reverse_the_opening_surface_snow() -> void:
+	_sky.snowfall = 0.02
+	_sky.wind = 0.38
+	_snow.settle()
+	var opened := _snow.cover()
+	_elapse(180.0)
+	assert_true(
+		_snow.cover() >= opened,
+		"day one's clear-break breeze reversed shared roof/prop/wire snow %.4f -> %.4f"
+			% [opened, _snow.cover()]
+	)
+	assert_almost_eq(
+		AccumulationScript.wind_scour_exposure(0.38), 0.0, 0.000001,
+		"ordinary opening air entered the storm-scour band"
+	)
+	assert_true(
+		AccumulationScript.wind_scour_exposure(1.0) > 0.99,
+		"the valley-wind guard also disabled a real gale"
+	)
+	_snow.settle()
+	_sky.snowfall = 0.12
+	_sky.wind = 0.55
+	_elapse(20.0)
+	assert_true(
+		_snow.cover() >= opened,
+		"one shipped-scale valley squall reversed the opening blanket"
+	)
 
 
 ## The run opens on a world that has already had a winter in it, and the depth
@@ -391,26 +422,26 @@ func test_the_first_frame_opens_on_the_world_that_was_authored() -> void:
 ## harness showed accumulation working perfectly -- because the harness set its
 ## own weather and had never once photographed day 1.
 ##
-## So this asserts the PICTURE at the opening state, through the same shader
-## arithmetic the rest of this file mirrors, on the surface the owner named.
+## The farmhouse roof now uses a modelled `snow_mass` shape and marks its slate
+## plane bare, so the roof is judged through CelPainter's mass curve. Flat props
+## still use the shader arithmetic below. Keeping the two assertions separate
+## prevents a green test for a shader path the roof no longer renders.
 func test_the_world_opens_with_snow_already_lying_on_the_roofs() -> void:
 	# PALE DAY, 0.12: what day 1 actually opens on, from Snowfall.storm_by_preset.
 	_sky.snowfall = 0.12
 	_snow.settle()
 	var cover := _snow.cover()
+	var roof_mass := CelPainterScript.snow_mass(cover)
 	assert_true(
-		_lying(FARMHOUSE_PITCH_Y, 1.0, cover) > 0.99,
-		"at the cover the run opens on (%.3f) the snowiest point of the farmhouse roof is only "
-			% cover
-			+ "%.2f covered -- the player arrives at a bare roof in the middle of winter"
-				% _lying(FARMHOUSE_PITCH_Y, 1.0, cover)
+		roof_mass >= 0.14,
+		"at opening cover %.3f the farmhouse roof mass is only %.2f -- it reads as bare"
+			% [cover, roof_mass]
 	)
-	# ...and it must NOT be finished, or there is nowhere for the week to go and
-	# Art Bible rule 10's ridge line is buried on the first frame.
 	assert_true(
-		_lying(FARMHOUSE_PITCH_Y, -1.0, cover) < 0.01,
-		"the roof opens completely white, so the week has nothing left to bury and the ridge "
-		+ "line is already gone"
+		roof_mass <= 0.18,
+		"at opening cover %.3f the farmhouse roof mass is already %.2f -- the week has no "
+			% [cover, roof_mass]
+			+ "visible accumulation left to grow"
 	)
 	# A flat top: the crossarm on the power pole, a window sill, the truck's
 	# bonnet, a fence rail. These are the surfaces snow lies on most readily and
@@ -440,7 +471,7 @@ func test_cold_still_air_leaves_the_snow_where_it_is() -> void:
 	_elapse(A_WHOLE_DAY)
 	var left := _snow.cover() / opened
 	assert_true(
-		left > 0.75,
+		left > 0.99,
 		"a whole game day of cold, still, snow-free weather left %.0f%% of the snow on the roof. "
 			% (left * 100.0)
 			+ "Below freezing it does not leave because it stopped snowing"
@@ -491,8 +522,9 @@ func test_a_weather_system_taking_over_stops_the_sky_being_read() -> void:
 # Where a pop would actually appear: the shader
 # ---------------------------------------------------------------------------
 # assets/shaders/cel_flat.gdshader, mirrored. The scalar being smooth is worth
-# nothing if the surface reading it flips, and a roof plane is exactly the shape
-# that would: one world normal across the whole of it.
+# nothing if the surface reading it flips, and a generic sloped prop plane is
+# exactly the shape that would: one world normal across the whole of it. The
+# farmhouse itself is `_BARE + snow_mass` and is judged separately above.
 
 
 ## How much snow lies on a surface, given its world normal's Y, the value the
@@ -528,7 +560,7 @@ func _whitening_range(normal_y: float) -> Vector2:
 	return Vector2(first, full)
 
 
-## THE POP THAT WOULD SURVIVE EVERY TEST ABOVE. A roof plane has one normal, so
+## THE POP THAT WOULD SURVIVE EVERY TEST ABOVE. A sloped prop plane has one normal, so
 ## a bare normal.y threshold covers the whole of it on the frame the line
 ## crosses that one value -- a perfectly smooth scalar producing a perfectly
 ## discontinuous picture. The noise is what stops it: every point on the plane
@@ -547,9 +579,10 @@ func test_a_flat_plane_whitens_across_minutes_rather_than_at_once() -> void:
 			% span
 			+ "fastest weather in the game is seconds -- it will pop"
 	)
-	# A flat top -- a branch, a crossarm, a sill, the truck's bonnet -- and the
-	# farmhouse's main roof, which is a 33.7 degree pitch, so cos(33.7) = 0.832.
-	# Both must complete inside the range the weather can actually reach.
+	# A flat top -- a branch, a crossarm, a sill, the truck's bonnet -- and a
+	# generic exposed panel at the farmhouse roof's 33.7 degree pitch. The actual
+	# farmhouse plane is bare and uses modelled mass; this only locks the shared
+	# shader behaviour for any other prop at the same angle.
 	for normal_y in [1.0, 0.832]:
 		var range := _whitening_range(normal_y)
 		assert_true(
@@ -702,3 +735,33 @@ func test_the_cover_reaches_a_standing_surface_and_a_new_one() -> void:
 		"a surface built into a snowed-on world arrived bare"
 	)
 	CelPainterScript.set_snow_cover(0.0)
+
+
+## Runtime survival props are deliberately more exposed than the permanent
+## walls and trunks. They must still be fed by the same global cover and must
+## preserve the shader's bare/vertical safety margins; otherwise this would be
+## a second, popping snow system disguised as an art adjustment.
+func test_exposed_runtime_props_receive_a_denser_but_still_safe_snow_profile() -> void:
+	var bible: ColorBible = load(PALETTE_PATH)
+	var painter: CelPainter = CelPainterScript.new()
+	var regular: ShaderMaterial = painter.material_for(bible.structure_tones[0])
+	var exposed: ShaderMaterial = painter.material_for(
+		bible.structure_tones[0], false, null,
+		CelPainterScript.EXPOSED_PROP_SNOW_RECEPTIVITY,
+		CelPainterScript.EXPOSED_PROP_SNOW_THRESHOLD_BIAS
+	)
+	assert_true(
+		float(exposed.get_shader_parameter("snow_receptivity"))
+			> float(regular.get_shader_parameter("snow_receptivity")),
+		"the exposed-prop profile did not increase its shared-cover response"
+	)
+	assert_true(
+		float(exposed.get_shader_parameter("snow_bare_threshold")) - CelPainterScript.SNOW_EDGE_SOFTNESS
+			> 1.0 + CelPainterScript.SNOW_NOISE_STRENGTH,
+		"the exposed profile can show snow before accumulation begins"
+	)
+	assert_true(
+		float(exposed.get_shader_parameter("snow_full_threshold")) - CelPainterScript.SNOW_EDGE_SOFTNESS
+			> CelPainterScript.SNOW_NOISE_STRENGTH,
+		"the exposed profile can put snow down a vertical wall"
+	)

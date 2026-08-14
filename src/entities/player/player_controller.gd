@@ -36,8 +36,10 @@ const STEP_SOUND_PATHS := [
 const FOOTPRINT_EVENT := &"track.footprint"
 const PLAYER_SUBJECT := &"player"
 const FURROW_EVENT := &"player.furrow"
+const PIGEON_FEED_STARTED_EVENT := &"wildlife.pigeon_feed_started"
+const DOOR_ENTRY_REQUESTED_EVENT := &"door.entry_requested"
 
-## The four takes this slice uses, out of the twenty-one in the merged library.
+## The seven takes this slice uses, out of the twenty-two in the merged library.
 ## Shooting, aiming, sneaking, the limp, the knockdown and the two deaths are
 ## all built and addressable -- see WandererAnimations -- and belong to later
 ## waves.
@@ -45,8 +47,10 @@ const IDLE_CLIP := WandererAnimations.IDLE
 const IDLE_COLD_CLIP := WandererAnimations.IDLE_COLD
 const WALK_CLIP := WandererAnimations.WALK
 const RUN_CLIP := WandererAnimations.RUN
+const WALK_DEEP_CLIP := WandererAnimations.WALK_DEEP
 const WALK_GUARDED_CLIP := WandererAnimations.WALK_GUARDED
 const IDLE_HUNCHED_CLIP := WandererAnimations.IDLE_HUNCHED
+const FEED_CLIP := WandererAnimations.FEED
 
 ## The visual layer the character's own surfaces are put on, so a light can be
 ## aimed at him and at nothing else. Bit 0 stays set: the sun still lights him
@@ -719,6 +723,23 @@ const AUTO_RUN_SETTING := "winter_time/controls/auto_run_delay_seconds"
 @export var anim_walk_speed := 1.35
 @export var anim_run_speed := 4.6
 
+## Measured stance-foot speed of the accepted deep-snow take.
+## Kept with the take definition so replacing the source cannot silently keep
+## an old stride measurement.
+@export var anim_deep_speed := WandererAnimations.WALK_DEEP_SPEED
+
+## Very-deep snow is a latched terrain state, not a raw animation blend. A tiny
+## island has to remain under the footprint-sized probe for this long before the
+## Orc gait is allowed in; leaving takes longer so an edge or a newly stamped
+## print cannot chatter it back out.
+@export var deep_stride_enter_hold := 0.25
+@export var deep_stride_exit_hold := 0.45
+
+## Once either state is confirmed, cross the incompatible full-body poses once
+## and get out of the mixed pose quickly. This same eased value drives both the
+## Blend2 and the stride/pace arithmetic.
+@export var deep_stride_fade_seconds := 0.15
+
 ## A ceiling on the playback rate, so a sprint down a scoured slope cannot spin
 ## the legs into a blur.
 @export var anim_max_pace := 1.5
@@ -852,7 +873,27 @@ var _run_period := 0.6667
 var _cycle_period := 0.6667
 ## One cycle of the guarded walk, not the whole take. See _build_animation().
 var _guarded_period := 1.1889
+## One of the two cycles in the 5.5 s deep-snow take.
+var _deep_period := 2.7667
 var _footing := 0.0
+## The very-deep gait's Schmitt-trigger state and its one-shot pose transition.
+## See advance_deep_stride(); all animation and pace consumers read _deep_stride.
+var _deep_stride_active := false
+var _deep_stride_candidate_time := 0.0
+var _deep_stride := 0.0
+var _deep_stride_transition_from := 0.0
+var _deep_stride_transition_elapsed := 0.0
+## A short interaction owns the body for its authored duration, but not the
+## locomotion state beneath it. The AnimationNodeOneShot returns to that graph
+## automatically while this timer only gates movement and preserves facing.
+var _feed_left := 0.0
+var _feed_target := Vector3.ZERO
+## A short, authored walk through a fixed-camera doorway. Input is ignored only
+## until the body reaches this point (or the safety timeout expires), then the
+## ordinary movement path resumes on the same physics tick.
+var _guided_entry_target := Vector3.ZERO
+var _guided_entry_left := 0.0
+var _guided_entry_stop_m := 0.32
 ## How much of the hunger stand is in the body right now. See advance_hunch().
 var _hunch := 0.0
 ## The auto-run: how long he has kept going, which way he has been going, and how
@@ -884,6 +925,8 @@ func _ready() -> void:
 	# leaving prints gets footstep audio for free.
 	if _bus != null:
 		_bus.subscribe(FOOTPRINT_EVENT, _on_footprint)
+		_bus.subscribe(PIGEON_FEED_STARTED_EVENT, _on_pigeon_feed_started)
+		_bus.subscribe(DOOR_ENTRY_REQUESTED_EVENT, _on_door_entry_requested)
 
 
 func _exit_tree() -> void:
@@ -892,6 +935,8 @@ func _exit_tree() -> void:
 		registry.unregister(&"player")
 	if _bus != null:
 		_bus.unsubscribe(FOOTPRINT_EVENT, _on_footprint)
+		_bus.unsubscribe(PIGEON_FEED_STARTED_EVENT, _on_pigeon_feed_started)
+		_bus.unsubscribe(DOOR_ENTRY_REQUESTED_EVENT, _on_door_entry_requested)
 	# Quitting mid-stride otherwise leaves the AudioServer holding a playback,
 	# and with it both WAVs: "ERROR: 2 resources still in use at exit", which is
 	# a dirty console and a failed run by this project's standard. Verified with
@@ -1255,7 +1300,7 @@ static func _hunch_blend() -> AnimationNodeBlend2:
 ## which loads a model, four textures and a skeleton and leaks RIDs on the way
 ## out. Now the thing that broke is the thing under test, and nothing else runs.
 ##
-## The two rate nodes carry constants set by _lock_gait_cycles() once the tree is
+## The four rate nodes carry constants set by _lock_gait_cycles() once the tree is
 ## live; everything else here is fixed wiring.
 ## ---------------------------------------------------------------------------
 ## WHERE THE GUARDED WALK SITS, AND WHY IT IS INSIDE `pace`
@@ -1264,11 +1309,12 @@ static func _hunch_blend() -> AnimationNodeBlend2:
 ##
 ##     walk ---------.
 ##                    >-- gait --.
-##     run ----------'            >-- footing --> pace -----------.
-##     walk_guarded -------------'                                 >-- motion --> output
-##     idle -----.                                                /
-##                >-- chill --.                                  /
-##     idle_cold '             >-- hunch --------------------- -'
+##     run ----------'            >-- footing --.
+##     walk_guarded -------------'              >-- snow_stride --> pace --.
+##     walk_deep --------------------------------'                         >-- motion --> output
+##     idle -----.                                                        /
+##                >-- chill --.                                          /
+##     idle_cold '             >-- hunch -------------------------------'
 ##     idle_hunched -----------'
 ##
 ## ---------------------------------------------------------------------------
@@ -1315,6 +1361,10 @@ static func build_blend_tree() -> AnimationNodeBlendTree:
 	run.animation = RUN_CLIP
 	var guarded := AnimationNodeAnimation.new()
 	guarded.animation = WALK_GUARDED_CLIP
+	var deep := AnimationNodeAnimation.new()
+	deep.animation = WALK_DEEP_CLIP
+	var feed_clip := AnimationNodeAnimation.new()
+	feed_clip.animation = FEED_CLIP
 	var hunched := AnimationNodeAnimation.new()
 	hunched.animation = IDLE_HUNCHED_CLIP
 
@@ -1327,14 +1377,22 @@ static func build_blend_tree() -> AnimationNodeBlendTree:
 	graph.add_node("walk", walk)
 	graph.add_node("run", run)
 	graph.add_node("walk_guarded", guarded)
+	graph.add_node("walk_deep", deep)
+	graph.add_node("feed_clip", feed_clip)
 	# One per clip, holding a constant that puts every cycle on the run's length.
 	graph.add_node("walk_rate", AnimationNodeTimeScale.new())
 	graph.add_node("run_rate", AnimationNodeTimeScale.new())
 	graph.add_node("guarded_rate", AnimationNodeTimeScale.new())
+	graph.add_node("deep_rate", AnimationNodeTimeScale.new())
 	graph.add_node("gait", _synced_blend())
 	graph.add_node("footing", _synced_blend())
+	graph.add_node("snow_stride", _synced_blend())
 	graph.add_node("pace", AnimationNodeTimeScale.new())
 	graph.add_node("motion", _synced_blend())
+	var feed_action := AnimationNodeOneShot.new()
+	feed_action.fadein_time = 0.14
+	feed_action.fadeout_time = 0.14
+	graph.add_node("feed_action", feed_action)
 	graph.connect_node("chill", 0, "idle")
 	graph.connect_node("chill", 1, "idle_cold")
 	graph.connect_node("hunch", 0, "chill")
@@ -1342,14 +1400,19 @@ static func build_blend_tree() -> AnimationNodeBlendTree:
 	graph.connect_node("walk_rate", 0, "walk")
 	graph.connect_node("run_rate", 0, "run")
 	graph.connect_node("guarded_rate", 0, "walk_guarded")
+	graph.connect_node("deep_rate", 0, "walk_deep")
 	graph.connect_node("gait", 0, "walk_rate")
 	graph.connect_node("gait", 1, "run_rate")
 	graph.connect_node("footing", 0, "gait")
 	graph.connect_node("footing", 1, "guarded_rate")
-	graph.connect_node("pace", 0, "footing")
+	graph.connect_node("snow_stride", 0, "footing")
+	graph.connect_node("snow_stride", 1, "deep_rate")
+	graph.connect_node("pace", 0, "snow_stride")
 	graph.connect_node("motion", 0, "hunch")
 	graph.connect_node("motion", 1, "pace")
-	graph.connect_node("output", 0, "motion")
+	graph.connect_node("feed_action", 0, "motion")
+	graph.connect_node("feed_action", 1, "feed_clip")
+	graph.connect_node("output", 0, "feed_action")
 	return graph
 
 
@@ -1452,8 +1515,11 @@ func _lock_gait_cycles() -> void:
 	var rates := cycle_rates(_walk_period, _run_period)
 	_animation.set(&"parameters/walk_rate/scale", rates.x)
 	_animation.set(&"parameters/run_rate/scale", rates.y)
-	# The third cycle, on the same shared length by the same arithmetic.
+	# The guarded cycle, on the same shared length by the same arithmetic.
 	_animation.set(&"parameters/guarded_rate/scale", _guarded_period / maxf(_cycle_period, 0.0001))
+	# The deep take contains two very long cycles; align one of them to the same
+	# timeline before snow_stride mixes poses.
+	_animation.set(&"parameters/deep_rate/scale", _deep_period / maxf(_cycle_period, 0.0001))
 
 
 func _build_animation() -> void:
@@ -1468,7 +1534,8 @@ func _build_animation() -> void:
 		player.remove_animation_library(&"")
 	player.add_animation_library(&"", WandererAnimations.build())
 	for clip in [
-		IDLE_CLIP, IDLE_COLD_CLIP, WALK_CLIP, RUN_CLIP, WALK_GUARDED_CLIP, IDLE_HUNCHED_CLIP,
+		IDLE_CLIP, IDLE_COLD_CLIP, WALK_CLIP, RUN_CLIP, WALK_DEEP_CLIP,
+		WALK_GUARDED_CLIP, IDLE_HUNCHED_CLIP, FEED_CLIP,
 	]:
 		if not player.has_animation(clip):
 			push_warning("player_controller: the merged library is missing %s" % clip)
@@ -1485,6 +1552,11 @@ func _build_animation() -> void:
 	_guarded_period = maxf(
 		player.get_animation(WALK_GUARDED_CLIP).length
 			/ maxf(float(WandererAnimations.WALK_GUARDED_CYCLES), 1.0),
+		0.0001
+	)
+	_deep_period = maxf(
+		player.get_animation(WALK_DEEP_CLIP).length
+			/ maxf(float(WandererAnimations.WALK_DEEP_CYCLES), 1.0),
 		0.0001
 	)
 
@@ -1541,6 +1613,59 @@ func motion_blend(speed: float, wade: float, grade: float) -> float:
 	)
 
 
+## The Orc take is a terrain readout, not a frostbite readout. SnowField owns the
+## physical enter/exit lines because wade_factor() saturates before the deepest
+## drift core. The controller owns time: it confirms a new state, then performs
+## one short smoothstep instead of feeding raw terrain noise to a full-body mix.
+func advance_deep_stride(
+	delta: float, sampled_depth_m: float, enter_depth_m: float, exit_depth_m: float
+) -> float:
+	var step := maxf(delta, 0.0)
+	var enter := maxf(enter_depth_m, 0.0)
+	var exit := clampf(exit_depth_m, 0.0, enter)
+	var fade_step := step
+	var beyond_switch := sampled_depth_m <= exit if _deep_stride_active \
+		else sampled_depth_m >= enter
+	if beyond_switch:
+		_deep_stride_candidate_time += step
+		var hold := deep_stride_exit_hold if _deep_stride_active else deep_stride_enter_hold
+		if _deep_stride_candidate_time + 0.000001 >= maxf(hold, 0.0):
+			# Only the portion of this physics tick after confirmation belongs to
+			# the new fade. This keeps hold + fade timing identical at 30/60/120 Hz.
+			fade_step = maxf(_deep_stride_candidate_time - maxf(hold, 0.0), 0.0)
+			_deep_stride_active = not _deep_stride_active
+			_deep_stride_candidate_time = 0.0
+			_deep_stride_transition_from = _deep_stride
+			_deep_stride_transition_elapsed = 0.0
+	else:
+		_deep_stride_candidate_time = 0.0
+
+	var target := 1.0 if _deep_stride_active else 0.0
+	var duration := maxf(deep_stride_fade_seconds, 0.0)
+	if is_equal_approx(_deep_stride, target):
+		_deep_stride = target
+	elif duration <= 0.0001:
+		_deep_stride = target
+	else:
+		_deep_stride_transition_elapsed = minf(
+			_deep_stride_transition_elapsed + fade_step, duration
+		)
+		var amount := clampf(_deep_stride_transition_elapsed / duration, 0.0, 1.0)
+		var eased := amount * amount * (3.0 - 2.0 * amount)
+		_deep_stride = lerpf(_deep_stride_transition_from, target, eased)
+		if amount >= 1.0:
+			_deep_stride = target
+	return _deep_stride
+
+
+func deep_stride_blend() -> float:
+	return _deep_stride
+
+
+func deep_stride_active() -> bool:
+	return _deep_stride_active
+
+
 ## Blend by speed, and play at the rate that actually covers the ground, so the
 ## feet plant instead of skating.
 ##
@@ -1578,16 +1703,21 @@ func _drive_animation(wade: float, grade: float) -> void:
 		return
 	var speed := Vector2(velocity.x, velocity.z).length()
 	var gait := clampf(inverse_lerp(anim_walk_speed, anim_run_speed, speed), 0.0, 1.0)
+	var deep := deep_stride_blend()
 	_animation.set(&"parameters/motion/blend_amount", motion_blend(speed, wade, grade))
 	_animation.set(&"parameters/gait/blend_amount", gait)
 	_animation.set(&"parameters/footing/blend_amount", _footing)
-	_animation.set(&"parameters/pace/scale", clampf(pace_for(speed, gait, _footing), 0.0, anim_max_pace))
+	_animation.set(&"parameters/snow_stride/blend_amount", deep)
+	_animation.set(
+		&"parameters/pace/scale",
+		clampf(pace_for(speed, gait, _footing, deep), 0.0, pace_ceiling_for(deep))
+	)
 	_animation.set(&"parameters/chill/blend_amount", clampf(chill, 0.0, 1.0))
 	_animation.set(&"parameters/hunch/blend_amount", clampf(_hunch, 0.0, 1.0))
 
 
 ## The playback rate that makes the feet plant at this ground speed, for this
-## mixture of the three locomotion takes.
+## mixture of the four locomotion takes.
 ##
 ## THE STRIDE HAS TO BE BLENDED TOO, and forgetting it is the whole failure mode
 ## of adding a fourth clip to this branch. The guarded walk covers 1.10 m per
@@ -1600,10 +1730,24 @@ func _drive_animation(wade: float, grade: float) -> void:
 ## Pure and public so tests can check it without a scene tree, in the same spirit
 ## as top_speed_at(). See the comment above _drive_animation() for why this is
 ## computed in STRIDES rather than in speeds at all.
-func pace_for(speed: float, gait: float, footing: float) -> float:
+func pace_for(speed: float, gait: float, footing: float, deep_stride := 0.0) -> float:
 	var stride := lerpf(anim_walk_speed * _walk_period, anim_run_speed * _run_period, gait)
 	stride = lerpf(stride, anim_guarded_speed * _guarded_period, clampf(footing, 0.0, 1.0))
+	stride = lerpf(stride, anim_deep_speed * _deep_period, clampf(deep_stride, 0.0, 1.0))
 	return speed * _cycle_period / maxf(stride, 0.0001)
+
+
+## `pace` sits after every clip's cycle-remapping TimeScale. As soon as the deep
+## take has visible weight, lower the common pace toward the ceiling that keeps
+## deep_rate * pace at anim_max_pace. A quartic ease reaches that ceiling early:
+## holding the ordinary 1.5 pace until weight 1 would briefly spin the Orc take
+## above 2x during the one full-body crossfade -- exactly where a short visual
+## pull is easiest to see. The character's physical velocity stays untouched.
+func pace_ceiling_for(deep_stride: float) -> float:
+	var deep_ceiling := anim_max_pace * _cycle_period / maxf(_deep_period, 0.0001)
+	var deep := clampf(deep_stride, 0.0, 1.0)
+	var early_guard := 1.0 - pow(1.0 - deep, 4.0)
+	return lerpf(anim_max_pace, deep_ceiling, early_guard)
 
 
 ## How cold he looks standing still. 0 is the warm relaxed stand, 1 the shiver.
@@ -2391,6 +2535,109 @@ func _resolve() -> void:
 	_snow = registry.get_service(&"snow_field") as Node
 
 
+## The root CharacterBody never rotates; the visible model turns underneath it.
+## World interaction code therefore asks for this preserved heading instead of
+## reading `global_basis` (which remains identity whenever the player stands).
+func interaction_forward() -> Vector3:
+	var flat := Vector3(_facing.x, 0.0, _facing.z)
+	return flat.normalized() if flat.length_squared() > 0.0001 else Vector3.FORWARD
+
+
+## Starts the temporary full-body gesture after the interaction hold completes.
+## Its animation is a OneShot layered after locomotion; this method only turns
+## the body toward the animal and owns movement for the same authored duration.
+func begin_feed_interaction(target: Vector3, duration_seconds := 1.0333) -> bool:
+	if not target.is_finite() or not is_finite(duration_seconds) or duration_seconds <= 0.0:
+		return false
+	var origin := global_position if is_inside_tree() else position
+	var toward := Vector3(target.x - origin.x, 0.0, target.z - origin.z)
+	if toward.length_squared() <= 0.0001:
+		return false
+	_facing = toward.normalized()
+	_feed_target = target
+	_feed_left = duration_seconds
+	# The crumbs' origin and landing patch are fixed by the same activation
+	# event. Carrying run momentum into the one-shot would slide the body away
+	# from its own hand and can push it into the pigeon's fear radius.
+	velocity.x = 0.0
+	velocity.z = 0.0
+	if _animation != null:
+		_animation.set(
+			&"parameters/feed_action/request",
+			AnimationNodeOneShot.ONE_SHOT_REQUEST_FIRE
+		)
+	return true
+
+
+func advance_feed_interaction(delta: float) -> bool:
+	if _feed_left <= 0.0:
+		return false
+	if is_finite(delta) and delta > 0.0:
+		_feed_left = maxf(_feed_left - delta, 0.0)
+	return _feed_left > 0.0
+
+
+func is_feeding() -> bool:
+	return _feed_left > 0.0
+
+
+func begin_guided_entry(destination: Vector3, timeout_seconds := 4.0, stop_m := 0.32) -> bool:
+	if not destination.is_finite() or not is_finite(timeout_seconds) or timeout_seconds <= 0.0:
+		return false
+	_guided_entry_target = destination
+	_guided_entry_left = timeout_seconds
+	_guided_entry_stop_m = maxf(stop_m, 0.05)
+	_feed_left = 0.0
+	velocity.x = 0.0
+	velocity.z = 0.0
+	return true
+
+
+func advance_guided_entry(delta: float) -> Vector3:
+	if _guided_entry_left <= 0.0:
+		return Vector3.ZERO
+	var origin := global_position if is_inside_tree() else position
+	var toward := Vector3(
+		_guided_entry_target.x - origin.x,
+		0.0,
+		_guided_entry_target.z - origin.z
+	)
+	if toward.length() <= _guided_entry_stop_m:
+		_guided_entry_left = 0.0
+		velocity.x = 0.0
+		velocity.z = 0.0
+		return Vector3.ZERO
+	if is_finite(delta) and delta > 0.0:
+		_guided_entry_left = maxf(_guided_entry_left - delta, 0.0)
+	if _guided_entry_left <= 0.0:
+		return Vector3.ZERO
+	return toward.normalized()
+
+
+func is_guided_entry_active() -> bool:
+	return _guided_entry_left > 0.0
+
+
+func _on_door_entry_requested(payload) -> void:
+	if not (payload is Dictionary):
+		return
+	var destination: Variant = payload.get("destination", null)
+	if destination is Vector3:
+		begin_guided_entry(destination as Vector3)
+
+
+func _on_pigeon_feed_started(payload) -> void:
+	if not (payload is Dictionary):
+		return
+	var target: Variant = payload.get("pigeon_position", payload.get("world_position", null))
+	if not (target is Vector3):
+		return
+	begin_feed_interaction(
+		target as Vector3,
+		float(payload.get("duration_seconds", 1.0333))
+	)
+
+
 func _physics_process(delta: float) -> void:
 	_resolve()
 
@@ -2404,6 +2651,14 @@ func _physics_process(delta: float) -> void:
 	var direction := Vector3(input.x, 0.0, input.y).rotated(Vector3.UP, yaw)
 	if direction.length_squared() > 1.0:
 		direction = direction.normalized()
+	var guided := is_guided_entry_active()
+	if guided:
+		direction = advance_guided_entry(delta)
+	var feeding := advance_feed_interaction(delta)
+	if feeding:
+		direction = Vector3.ZERO
+		velocity.x = 0.0
+		velocity.z = 0.0
 
 	# The two things the owner's ruling says decide his speed, read off the ground
 	# he is standing on: how deep the snow is, and how steeply it runs along the
@@ -2416,7 +2671,7 @@ func _physics_process(delta: float) -> void:
 		grade = grade_along(_snow.surface_gradient_at(global_position), direction)
 
 	# Whether he is walking or running, eased, and gated on the snow he is in.
-	var forced := InputMap.has_action(&"move_run") and Input.is_action_pressed(&"move_run")
+	var forced := not guided and InputMap.has_action(&"move_run") and Input.is_action_pressed(&"move_run")
 	var gait := advance_gait(delta, direction, wade, forced)
 	# ...and how far into his stride he is on ground this hard. Advanced beside the
 	# gait rather than inside it: they answer to the same input and the same turn
@@ -2439,7 +2694,12 @@ func _physics_process(delta: float) -> void:
 	velocity.y = 0.0
 
 	var before := global_position
+	# Jolt removes the velocity component pointing into a collider while solving
+	# move_and_slide(). Keep the attempted momentum: a head-on push into a tire
+	# otherwise arrives here as zero and cannot start the pendulum.
+	var attempted_impact := impact_velocity_before_slide(velocity)
 	move_and_slide()
+	_notify_impact_colliders(attempted_impact)
 
 	# No gravity and no floor collider: the ground is a displaced mesh with no
 	# physics body, so the field is read directly. Feet land between the bare
@@ -2447,10 +2707,17 @@ func _physics_process(delta: float) -> void:
 	# place, in a hollow they are a metre apart and the body sinks into it.
 	var snow_depth := 0.0
 	var snow_max := 1.0
+	var deep_sample_depth := -INF
+	var deep_enter_depth := INF
+	var deep_exit_depth := 0.0
 	if _snow != null:
 		snow_depth = _snow.structural_depth_at(global_position) \
 			if _snow.has_method(&"structural_depth_at") else _snow.depth_at(global_position)
 		snow_max = maxf(_snow.max_depth_m, 0.0001)
+		if _snow.has_method(&"very_deep_sample_depth"):
+			deep_sample_depth = float(_snow.very_deep_sample_depth(global_position))
+			deep_enter_depth = float(_snow.get(&"very_deep_depth_m"))
+			deep_exit_depth = float(_snow.get(&"very_deep_exit_depth_m"))
 		var surface: float = _snow.surface_height_at(global_position)
 		var wanted_y := surface - snow_depth * sink_fraction
 		if _grounded:
@@ -2461,6 +2728,7 @@ func _physics_process(delta: float) -> void:
 			# from wherever the scene happened to place the body.
 			global_position.y = wanted_y
 			_grounded = true
+	advance_deep_stride(delta, deep_sample_depth, deep_enter_depth, deep_exit_depth)
 
 	# The furrow, from where the body ACTUALLY is on this tick -- not from where
 	# the last foot landed. See advance_furrow(): that distinction is the whole
@@ -2473,12 +2741,33 @@ func _physics_process(delta: float) -> void:
 
 	var travelled := Vector2(global_position.x - before.x, global_position.z - before.z).length()
 	if travelled > 0.0001:
-		_facing = Vector3(velocity.x, 0.0, velocity.z).normalized()
+		if not feeding:
+			_facing = Vector3(velocity.x, 0.0, velocity.z).normalized()
 		_advance_stride(travelled)
 
 	_face_travel(delta)
 	_drive_animation(wade, grade)
 	drive_readouts(Vector2(velocity.x, velocity.z).length())
+
+
+## Collision is a generic message rather than a tire-swing special case. A
+## prop that wants a moving player's momentum opts in with
+## `receive_player_impact`; the controller remains unaware of which prop it is.
+static func impact_velocity_before_slide(attempted_velocity: Vector3) -> Vector3:
+	return Vector3(attempted_velocity.x, 0.0, attempted_velocity.z)
+
+
+func _notify_impact_colliders(impact: Vector3) -> void:
+	if impact.length_squared() < 0.0001:
+		return
+	for index in get_slide_collision_count():
+		var collision := get_slide_collision(index)
+		var receiver := collision.get_collider() as Node
+		while receiver != null:
+			if receiver.has_method(&"receive_player_impact"):
+				receiver.call(&"receive_player_impact", impact)
+				break
+			receiver = receiver.get_parent()
 
 
 ## The model is authored facing +Z -- its `headfront` bone sits a few

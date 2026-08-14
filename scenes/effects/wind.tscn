@@ -32,20 +32,17 @@
 [node name="Wind" type="Node"]
 script = ExtResource("1_wind")
 
-[node name="Spindrift" type="GPUParticles3D" parent="."]
-groups = ["wind_consumer"]
+[node name="Spindrift" type="GPUParticles3D" parent="." groups=["wind_consumer"]]
 script = ExtResource("2_spindrift")
 
-[node name="WireSway" type="Node" parent="."]
-groups = ["wind_consumer"]
+[node name="WireSway" type="Node" parent="." groups=["wind_consumer"]]
 script = ExtResource("3_sway")
 
 ; The tyre swing. Period DERIVED from the rope -- 1.74 m to the middle of the
 ; tyre gives 2.65 s -- and lightly damped, so it is still swinging well after the
 ; gust that started it has passed. That is the cue: not that it moves, but that
 ; it is late and then keeps going.
-[node name="TireSwing" type="Node" parent="."]
-groups = ["wind_consumer"]
+[node name="TireSwing" type="Node" parent="." groups=["wind_consumer", "wind_swing_driver"]]
 script = ExtResource("4_pendulum")
 group = &"wind_swing"
 hangs = true
@@ -58,8 +55,7 @@ max_degrees = 24.0
 ; gust crossing snaps them instead of easing them over. Amplitude deliberately
 ; tiny -- 1.6 degrees holds the crown of a 7 m tree inside 0.2 m and leaves the
 ; trunk visually still, which is what frozen wood does.
-[node name="Branches" type="Node" parent="."]
-groups = ["wind_consumer"]
+[node name="Branches" type="Node" parent="." groups=["wind_consumer"]]
 script = ExtResource("4_pendulum")
 group = &"wind_branches"
 hangs = false

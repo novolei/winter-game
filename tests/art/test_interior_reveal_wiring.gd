@@ -456,6 +456,79 @@ func test_the_doorstep_has_a_shape_to_stand_in() -> void:
 	assert_true(shapes > 0, "nothing can reach the door: it has no CollisionShape3D")
 
 
+func test_the_farmhouse_door_offers_a_guided_entry_from_a_forgiving_zone() -> void:
+	var found := _running(DOOR_SCRIPT)
+	assert_false(found.is_empty(), "%s holds no door" % MAIN_SCENE)
+	if found.is_empty():
+		return
+	assert_false(bool(found["node"]["properties"].get("opens_on_approach", false)),
+		"merely seeing the farmhouse door should not take control away from the player")
+	assert_true(bool(found["node"]["properties"].get("guides_entry", false)),
+		"pressing E at the farmhouse door does not carry the player through the fixed-camera threshold")
+	var target: Vector3 = found["node"]["properties"].get("entry_target_offset", Vector3.ZERO)
+	assert_true(target.z <= -1.2,
+		"the guided walk stops before the main-room threshold: %s" % target)
+	assert_false(NodePath(found["node"]["properties"].get("interaction_anchor_path", NodePath())).is_empty(),
+		"the generous approach zone has no separate prompt point on the visible door")
+	var boxes: Array[BoxShape3D] = []
+	for path in _scene():
+		if not path.begins_with(String(found["path"]) + "/"):
+			continue
+		var shape = _scene()[path]["properties"].get("shape", null)
+		if shape is BoxShape3D:
+			boxes.append(shape)
+	assert_eq(boxes.size(), 1, "the farmhouse door should carry one readable approach zone")
+	if boxes.size() != 1:
+		return
+	assert_true(boxes[0].size.x >= 4.0 and boxes[0].size.z >= 4.6,
+		"the door approach is still a precision funnel: %s" % boxes[0].size)
+
+
+func test_the_doorway_and_main_room_are_one_continuous_interior_volume() -> void:
+	var scene := _scene()
+	var main: Dictionary = scene.get("./Farmhouse/InteriorReveal/MainRoom", {})
+	var corridor: Dictionary = scene.get("./Farmhouse/InteriorReveal/EntryCorridor", {})
+	assert_false(main.is_empty(), "the farmhouse has no main-room interior volume")
+	assert_false(corridor.is_empty(),
+		"the doorway still has an unclassified layer before the main room")
+	if main.is_empty() or corridor.is_empty():
+		return
+	var main_shape := main["properties"].get("shape", null) as BoxShape3D
+	var corridor_shape := corridor["properties"].get("shape", null) as BoxShape3D
+	assert_not_null(main_shape, "the main-room trigger is not a box")
+	assert_not_null(corridor_shape, "the entry corridor trigger is not a box")
+	if main_shape == null or corridor_shape == null:
+		return
+	var main_transform: Transform3D = main["properties"].get("transform", Transform3D.IDENTITY)
+	# Godot normalises a manually authored `position` back into `transform` when
+	# the scene is re-saved. Read either representation so this checks the actual
+	# geometry rather than the text spelling the editor happened to choose.
+	var corridor_transform: Transform3D = corridor["properties"].get(
+		"transform", Transform3D.IDENTITY)
+	var corridor_position: Vector3 = corridor["properties"].get(
+		"position", corridor_transform.origin)
+	var main_front := main_transform.origin.z + main_shape.size.z * 0.5
+	var corridor_inside := corridor_position.z - corridor_shape.size.z * 0.5
+	var corridor_outside := corridor_position.z + corridor_shape.size.z * 0.5
+	assert_true(corridor_outside >= 0.0,
+		"the continuous interior does not reach the physical door plane")
+	assert_true(corridor_inside < main_front,
+		"a %.3f m unclassified layer remains between doorway and room"
+		% (corridor_inside - main_front))
+	assert_true(absf(corridor_position.x - 1.8) <= corridor_shape.size.x * 0.5,
+		"the continuous volume misses the authored doorway")
+
+
+func test_the_room_reveal_names_the_power_line_that_bisects_the_fixed_view() -> void:
+	var reveal := _reveal()
+	assert_false(reveal.is_empty(), "%s holds no reveal" % MAIN_SCENE)
+	if reveal.is_empty():
+		return
+	var paths: Array = reveal["node"]["properties"].get("fade_paths", [])
+	assert_true(paths.has(NodePath("../../Farmstead/Wires/WireToTruckPole")),
+		"the foreground wire still crosses the revealed room from corner to corner")
+
+
 ## Without this the reveal fires wherever the player crosses the wall, and the
 ## door is decoration. Nothing else in the scene enforces entry at the door --
 ## the walls are not solid yet.

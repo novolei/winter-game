@@ -27,7 +27,7 @@ extends RefCounted
 ## out of it -- are not among the ones a suffix can ask for.
 ##
 ## ---------------------------------------------------------------------------
-## FOUR KINDS, AND WHY EACH IS THE ONE IT IS
+## FIVE KINDS, AND WHY EACH IS THE ONE IT IS
 ## ---------------------------------------------------------------------------
 ## **TRUNK** -- trees and the power pole. A convex hull of a bare tree is an
 ## eight-metre invisible blob: `tree_bare_a.glb` is 7.96 m across and almost all
@@ -41,6 +41,10 @@ extends RefCounted
 ## between a mirror and the door. For the fence it is exactly right -- a thin,
 ## tall, 2.78 m box is what a fence panel is -- and because it rides the model,
 ## the collision repeats every time `Farmstead._build_fences()` instances one.
+##
+## **SWING** -- the tire only. A full AABB would make the hanging rope into a
+## two-metre invisible wall, so the player meets the round tire but can pass
+## beneath the branch and either side of the rope.
 ##
 ## **WALLS** -- the buildings. A trimesh of the geometry, taken from the band
 ## between the knee and a little over head height, with declared openings cut
@@ -62,8 +66,8 @@ extends RefCounted
 ##     dropped, because that wall is two triangles wide and dropping either
 ##     would take out half the facade.
 ##
-## **NONE** -- the wires, the tire swing, the roof, the porch, the floor, the
-## furniture and the door leaf. Declared rather than defaulted: see RULES.
+## **NONE** -- the wires, roof, porch, floor, furniture and door leaf. Declared
+## rather than defaulted: see RULES.
 ##
 ## ---------------------------------------------------------------------------
 ## WHAT IT DOES NOT DO
@@ -77,6 +81,7 @@ const NONE := &"none"
 const BOX := &"box"
 const TRUNK := &"trunk"
 const WALLS := &"walls"
+const SWING := &"swing"
 
 ## How far up the model the trunk is measured. One ring of the tapered tube, and
 ## nothing else in any of these models is that close to the ground.
@@ -125,13 +130,57 @@ const RULES := [
 	# measured from the lowest vertex.
 	{"name": "Power_Pole", "kind": TRUNK, "height": 4.0},
 	{"name": "Power_Wire", "kind": NONE},
-	# It hangs from a branch and swings. Its own tree is already solid.
-	{"name": "Tire_Swing", "kind": NONE},
+	{"name": "Tire_Swing", "kind": SWING},
 	{"name": "Fence_Segment", "kind": BOX},
 	{"name": "Pickup_Truck", "kind": BOX},
 	{"name": "Flatbed_Truck", "kind": BOX},
+	{"name": "Panel_Van", "kind": BOX},
+	{"name": "Woodpile", "kind": BOX},
+	{"name": "Supply_Cache", "kind": BOX},
+	{"name": "Field_Marker", "kind": BOX},
+	{"name": "Fallen_Limb", "kind": BOX},
+	{"name": "Emergency_Sled", "kind": BOX},
+	{"name": "Departure_Pack", "kind": BOX},
+	{"name": "Chopping_Block", "kind": BOX},
+	{"name": "Evacuation_Cart", "kind": BOX},
+	{"name": "Gas_Station", "kind": WALLS},
+	{"name": "Church", "kind": WALLS},
+	{"name": "Logging_Camp", "kind": WALLS},
+	{"name": "Transmission_Tower", "kind": WALLS},
+	{"name": "Synty_Supply_Sacks", "kind": BOX},
+	{"name": "Synty_Wooden_Barrel", "kind": BOX},
+	{"name": "Synty_Field_Crate", "kind": BOX},
+	{"name": "Synty_Work_Log", "kind": BOX},
+	{"name": "Synty_Field_Stump", "kind": BOX},
+	{"name": "Synty_Pickaxe", "kind": NONE},
+	{"name": "Synty_Yard_Cache", "kind": BOX},
+	{"name": "Synty_Evacuation_Cache", "kind": BOX},
+	{"name": "Synty_Woodwork_Station", "kind": BOX},
+	{"name": "Synty_Larder_Chest", "kind": BOX},
+	{"name": "Synty_Provision_Stack", "kind": BOX},
+	{"name": "Synty_Yard_Table", "kind": BOX},
+	{"name": "Synty_Tarped_Cache", "kind": BOX},
+	{"name": "Synty_Broken_Gateway", "kind": BOX},
+	{"name": "Synty_Firepit", "kind": BOX},
+	{"name": "Synty_Generator_Cache", "kind": BOX},
+	{"name": "Synty_Field_Clinic", "kind": BOX},
+	{"name": "Synty_Fish_Camp", "kind": BOX},
+	{"name": "Synty_Fuel_Depot", "kind": BOX},
+	{"name": "Synty_Road_Blockade", "kind": BOX},
+	{"name": "Synty_Radio_Relay", "kind": BOX},
+	{"name": "Synty_Refuge_Bedroll", "kind": BOX},
+	{"name": "Synty_Rock_Cluster_North", "kind": BOX},
+	{"name": "Synty_Rock_Cluster_South", "kind": BOX},
+	{"name": "Synty_Rock_Cluster_East", "kind": BOX},
 	{"name": "Tool_Shed", "kind": WALLS},
 	{"name": "Well_House", "kind": WALLS},
+	# A stone ring with posts and a little roof: wall-shaped, and the trimesh
+	# band drops the rim and the water while keeping what a walker meets.
+	{"name": "Water_Well", "kind": WALLS},
+	# Drum, fire and all: nobody needs to walk through the flame to the rim.
+	{"name": "Burning_Barrel", "kind": BOX},
+	# A knee-high stone ring: a walk-around thing, not a step-onto thing.
+	{"name": "Campfire", "kind": BOX},
 	# The farmhouse, part by part. Only the four wall groups are solid.
 	{"name": "FH_Shell", "kind": WALLS, "openings": [FARMHOUSE_DOOR]},
 	{"name": "FH_Fade_Front", "kind": WALLS, "openings": [FARMHOUSE_DOOR]},
@@ -220,6 +269,8 @@ static func shapes_for(mesh_name: String, mesh: Mesh) -> Array:
 			return _box_shape(mesh)
 		TRUNK:
 			return _trunk_shape(mesh, float(rule.get("height", 3.0)))
+		SWING:
+			return _swing_shape(mesh)
 		WALLS:
 			return _wall_shape(mesh, rule.get("openings", []) as Array,
 				float(rule.get("knee", KNEE)), float(rule.get("reach", REACH)))
@@ -255,6 +306,23 @@ static func _trunk_shape(mesh: Mesh, height: float) -> Array:
 		"transform": Transform3D(
 			Basis.IDENTITY,
 			Vector3(centre.x, float(trunk["base"]) + height * 0.5, centre.y)),
+	}]
+
+
+## The swing is authored with its rope from the AABB top to a tire in the
+## lowest fifth. Collide with the visible, kickable tire only; the player can
+## still pass by the narrow rope without an exaggerated box collider.
+static func _swing_shape(mesh: Mesh) -> Array:
+	var box := mesh.get_aabb()
+	if box.size.x <= 0.0 or box.size.y <= 0.0 or box.size.z <= 0.0:
+		return []
+	var shape := SphereShape3D.new()
+	shape.radius = maxf(box.size.x, box.size.z) * 0.5
+	var centre := box.get_center()
+	centre.y = box.position.y + box.size.y * 0.19
+	return [{
+		"shape": shape,
+		"transform": Transform3D(Basis.IDENTITY, centre),
 	}]
 
 

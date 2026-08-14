@@ -125,6 +125,39 @@ extends Resource
 @export var breath_cjk_weight: int = 300
 @export var breath_latin_weight: int = 300
 
+# --- pause surface (owner ruling 2026-08-13) --------------------------------
+#
+# THE PAUSE SURFACE IS FREED FROM THE TWELVE. The owner released the ESC menu
+# from the colour bible outright ("忽略 GDD 中定义的12圣经颜色"), so these
+# tokens are authored in the generator rather than indexed out of the palette.
+# They deliberately stay OUT of colour_token_names(): that list is section
+# 2.1's palette mapping and its warmth gate, and the pause scheme answers to a
+# different document now. The discipline that survives the ruling: one cold
+# field (ice bright / cold dim / cold hairline / cold scrim) and exactly one
+# warm point -- the ember that marks focus, the same fire the game is about.
+
+@export var pause_ink_bright: Color = Color.WHITE
+@export var pause_ink_dim: Color = Color.WHITE
+@export var pause_hairline: Color = Color.WHITE
+@export var pause_ember: Color = Color.WHITE
+@export var pause_scrim: Color = Color.BLACK
+
+## The camera's non-linear push, decoupled from the type cascade: content
+## settles first, the lens keeps gliding -- the film convention, not the UI one.
+@export var pause_push_seconds: float = 1.6
+@export var pause_return_seconds: float = 0.55
+
+## The living frame while the menu holds: a slow multiplicative dolly and a
+## slower yaw, at periods that share no divisor with a breath or a heartbeat.
+@export var pause_drift_frame_amplitude: float = 0.012
+@export var pause_drift_frame_seconds: float = 40.0
+@export var pause_drift_yaw_degrees: float = 0.15
+@export var pause_drift_yaw_seconds: float = 57.0
+
+## The transition voice: how far the world's sound is muffled (low-pass, Hz at
+## full push) as the camera leaves -- the world is heard through a closing door.
+@export var pause_muffle_cutoff_hz: float = 900.0
+
 ## Static, single weight, so it carries no weight field. It only ever sets
 ## numbers, and it must do so with tabular figures -- see UIFonts.
 @export_file("*.ttf", "*.otf") var instrument_path: String = ""
