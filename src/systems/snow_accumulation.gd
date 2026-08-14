@@ -405,7 +405,7 @@ func advance(delta: float) -> void:
 ## later siblings' do -- settling in _ready() would read a sky that has not
 ## resolved its own rate yet. The weather read here no longer decides the depth,
 ## but it does decide the rate on the first frame, so the ordering still matters.
-## RunBoot arms itself the same way and for the same reason.
+## GameState arms itself the same way and for the same reason.
 func settle() -> void:
 	_settled = true
 	_read_weather()

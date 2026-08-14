@@ -41,9 +41,9 @@ func _ready() -> void:
 
 
 func _capture() -> void:
-	var run_boot := get_node_or_null("/root/RunBoot")
-	if run_boot != null:
-		run_boot.set("run_seed", QUALITY_RUN_SEED)
+	var game_state := get_node_or_null("/root/GameState")
+	if game_state != null:
+		game_state.set("run_seed", QUALITY_RUN_SEED)
 	var main := MAIN_SCENE.instantiate()
 	add_child(main)
 	for _frame in range(4):

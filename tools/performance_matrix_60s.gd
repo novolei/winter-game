@@ -113,9 +113,9 @@ func _ready() -> void:
 
 
 func _begin() -> void:
-	var run_boot := get_node_or_null("/root/RunBoot")
-	if run_boot != null:
-		run_boot.set("run_seed", PERFORMANCE_RUN_SEED)
+	var game_state := get_node_or_null("/root/GameState")
+	if game_state != null:
+		game_state.set("run_seed", PERFORMANCE_RUN_SEED)
 	_main = MAIN_SCENE.instantiate()
 	add_child(_main)
 	_player = _main.get_node_or_null("Player") as CharacterBody3D

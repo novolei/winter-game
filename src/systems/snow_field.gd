@@ -907,8 +907,8 @@ func current_run_seed() -> int:
 	return run_seed
 
 
-## RunBoot is today's temporary run owner; GameState will later replace that
-## service.  SnowField knows only the registry contract -- an owner publishing
+## GameState owns the attempt and publishes the generic run-seed service.
+## SnowField knows only the registry contract -- an owner publishing
 ## `current_run_seed()` -- not either implementation.
 func _resolve_run_seed() -> void:
 	var registry := get_node_or_null("/root/ServiceRegistry")

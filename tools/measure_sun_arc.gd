@@ -162,7 +162,7 @@ func _at_start() -> void:
 	_next_at = _settle
 
 
-## RunBoot starts the clock on the first frame, which announces day 1 and sets
+## GameState starts the clock on the first frame, which announces day 1 and sets
 ## the director crossfading to the schedule's own preset -- and, now, walking the
 ## arc. Both have to be re-forced every frame or a case drifts while it waits.
 ## THE MAN IS RE-PLANTED EVERY FRAME, NOT ONCE.

@@ -357,7 +357,7 @@ func test_the_arc_never_leaves_the_band_it_was_solved_in() -> void:
 
 
 ## A phase of no length must not divide by it. The clock reports zero duration
-## before the schedules are loaded, and RunBoot loads them on the first frame --
+## before the schedules are loaded, and GameState loads them on the first frame --
 ## so this is the state the director is genuinely in for one tick of every run.
 func test_a_phase_with_no_length_leaves_the_sun_where_it_was() -> void:
 	var built := _build_with_sun()

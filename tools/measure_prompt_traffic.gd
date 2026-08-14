@@ -153,7 +153,7 @@ func _run() -> void:
 	# clock and returns false, and a clock that never started has a zero period,
 	# a zero run length and no phase -- which is what this tool printed on its
 	# first run: `every 0.0 s -> duty 9920000%`. SurvivalSystem loads its own
-	# stats in _ready(); the clock does not, because run_boot.gd is what loads
+	# stats in _ready(); the clock does not, because game_state.gd is what loads
 	# them in the game.
 	if int(_clock.schedule_count()) == 0:
 		_clock.load_schedules_from_directory()

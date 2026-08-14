@@ -94,6 +94,12 @@ func start() -> bool:
 func is_running() -> bool:
 	return _running
 
+## Stops time without declaring the seventh night complete. GameState uses this
+## on death; a dead player must not keep advancing weather and day events while
+## the ending presentation is running. start() remains the one reset boundary.
+func stop() -> void:
+	_running = false
+
 func schedule_count() -> int:
 	return _schedules.size()
 

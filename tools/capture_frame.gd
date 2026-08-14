@@ -16,7 +16,7 @@ extends Node
 ## farmstead the player is standing in the middle of needs), and `--preset <id>`
 ## (force one of Art Bible section 4.2's six looks).
 ##
-## `--preset` is applied at the shutter and NOT at startup, deliberately. RunBoot
+## `--preset` is applied at the shutter and NOT at startup, deliberately. GameState
 ## starts WorldClock on the first frame, which announces day 1 and sets the
 ## director crossfading to that day's own preset -- so a look forced in _ready()
 ## would be faded away again before the shot. Snapping it at the last moment is

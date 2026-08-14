@@ -181,6 +181,18 @@ func test_advancing_after_finish_is_inert() -> void:
 	clock.advance(100.0)
 	assert_eq(_events.size(), count_before, "a finished clock must stop emitting")
 
+func test_stopping_for_death_halts_time_without_claiming_the_run_finished() -> void:
+	var clock = _build_clock(2)
+	clock.start()
+	clock.advance(3.0)
+	var count_before: int = _events.size()
+	clock.stop()
+	clock.advance(1000.0)
+	assert_false(clock.is_running())
+	assert_false(clock.is_finished(), "death was reported as reaching eighth dawn")
+	assert_almost_eq(clock.phase_elapsed(), 3.0, 0.0001)
+	assert_eq(_events.size(), count_before, "a stopped clock kept publishing phase events")
+
 func test_a_single_large_delta_can_cross_several_phases() -> void:
 	var clock = _build_clock(2)
 	clock.start()

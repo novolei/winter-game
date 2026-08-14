@@ -8,12 +8,6 @@
 
 config_version=5
 
-[WinterTime]
-
-config/ninetailsrabbit.interaction_kit_3d/update_notification_enabled=true
-config/ninetailsrabbit.interaction_kit_3d/interactables_collision_layer=6
-config/ninetailsrabbit.interaction_kit_3d/grabbables_collision_layer=7
-
 [application]
 
 config/name="WinterTime"
@@ -30,7 +24,7 @@ WorldClock="*res://src/systems/world_clock.gd"
 MusicDirector="*res://src/audio/music_director.gd"
 SurvivalSystem="*res://src/systems/survival_system.gd"
 FuelEconomy="*res://src/systems/fuel_economy.gd"
-RunBoot="*res://src/systems/run_boot.gd"
+GameState="*res://src/systems/game_state.gd"
 NightExposure="*res://src/systems/night_exposure.gd"
 OccluderFader="*res://src/rendering/occluder_fader.gd"
 GlobalInteraction3D="*uid://bq0l4mbdwl00e"

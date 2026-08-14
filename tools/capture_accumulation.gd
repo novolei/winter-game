@@ -56,7 +56,7 @@ extends Node
 ## captures were never looking at day 1.
 ##
 ## `--live` is the mode that closes that hole. It sets NOTHING -- no snowfall, no
-## cover, no preset -- boots scenes/main.tscn, lets RunBoot start the clock and
+## cover, no preset -- boots scenes/main.tscn, lets GameState start the clock and
 ## LightingDirector pick day 1's own look, and photographs whatever the run does.
 ## If a capture and the running game ever disagree again, this is the mode that
 ## says which one is lying.

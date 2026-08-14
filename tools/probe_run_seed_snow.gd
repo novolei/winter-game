@@ -6,9 +6,9 @@ extends SceneTree
 ## not mutate a save or start weather.
 
 const SnowFieldScript := preload("res://src/systems/snow_field.gd")
-const RunBootScript := preload("res://src/systems/run_boot.gd")
+const GameStateScript := preload("res://src/systems/game_state.gd")
 const SnowFieldTests := preload("res://tests/unit/test_snow_field.gd")
-const RunBootTests := preload("res://tests/unit/test_run_boot.gd")
+const GameStateTests := preload("res://tests/unit/test_game_state.gd")
 
 const SEED_A := 1729
 const SEED_B := 8191
@@ -74,9 +74,10 @@ func _run_probe() -> void:
 	first.follow(Vector3(37.0, 0.0, 28.0))
 	var after := first.depth_at(replay_spot)
 
-	var boot = RunBootScript.new()
-	boot.run_seed = SEED_A
-	var boot_seed_stable := boot.current_run_seed() == SEED_A and boot.current_run_seed() == SEED_A
+	var game_state = GameStateScript.new()
+	game_state.run_seed = SEED_A
+	var game_seed_stable := game_state.current_run_seed() == SEED_A \
+		and game_state.current_run_seed() == SEED_A
 	var shader: Shader = ResourceLoader.load(SNOW_SHADER_PATH, "Shader", ResourceLoader.CACHE_MODE_IGNORE)
 	var shader_has_mature_layer := shader != null and _shader_has_uniform(shader, &"mature_snow") \
 		and _shader_has_uniform(shader, &"mature_variation_m")
@@ -89,14 +90,14 @@ func _run_probe() -> void:
 		replay_spot.x, replay_spot.z, before, after,
 	])
 	print("  same-seed rebuilt window max delta: %.4f m" % rebuild_delta)
-	print("  explicit RunBoot seed stable: %s" % boot_seed_stable)
+	print("  explicit GameState seed stable: %s" % game_seed_stable)
 	print("  rendering mature-layer uniforms present: %s" % shader_has_mature_layer)
 	print("  focused unit contracts passed: %s" % unit_contracts_pass)
 	var passed := open_delta >= MINIMUM_OPEN_DELTA_M \
 		and route_delta <= PROTECTED_ROUTE_TOLERANCE_M \
 		and absf(after - before) <= REPLAY_TOLERANCE_M \
 		and rebuild_delta <= REPLAY_TOLERANCE_M \
-		and boot_seed_stable \
+		and game_seed_stable \
 		and shader_has_mature_layer \
 		and unit_contracts_pass
 	if not passed:
@@ -104,7 +105,7 @@ func _run_probe() -> void:
 	first.free()
 	second.free()
 	replay.free()
-	boot.free()
+	game_state.free()
 	quit(0 if passed else 1)
 
 
@@ -125,8 +126,8 @@ func _run_unit_contracts() -> bool:
 		{"script": SnowFieldTests, "method": &"test_the_same_run_seed_rebuilds_the_same_open_snow_field"},
 		{"script": SnowFieldTests, "method": &"test_different_run_seeds_change_only_open_snow"},
 		{"script": SnowFieldTests, "method": &"test_run_seed_does_not_change_the_authored_first_day_safe_routes"},
-		{"script": RunBootTests, "method": &"test_an_explicit_run_seed_is_stable_for_the_whole_boot"},
-		{"script": RunBootTests, "method": &"test_an_unset_run_seed_is_minted_once"},
+		{"script": GameStateTests, "method": &"test_an_explicit_seed_is_stable_for_the_whole_attempt"},
+		{"script": GameStateTests, "method": &"test_an_unset_seed_is_minted_once"},
 	]
 	var passed := true
 	for check in checks:

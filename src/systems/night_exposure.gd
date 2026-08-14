@@ -28,8 +28,8 @@ extends Node
 ## a clock with two jobs, and its 11 tests build it bare. It is not in
 ## SurvivalSystem because that file owns no rules -- every rate and every
 ## interlock is a .tres, and a hardcoded 2.0 in there would be the first
-## exception. It is not in RunBoot because RunBoot's one job is the moment the
-## run BEGINS, and this is a thing that happens throughout it.
+## exception. It is not in GameState because GameState owns the attempt
+## boundary, and this is a thing that happens throughout the attempt.
 ##
 ## ---------------------------------------------------------------------------
 ## "OUTDOORS", WHEN THERE IS NO INDOORS -- THE SEAM

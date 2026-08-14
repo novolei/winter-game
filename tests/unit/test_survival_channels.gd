@@ -50,12 +50,10 @@ extends TestCase
 const PlayerControllerScript := preload("res://src/entities/player/player_controller.gd")
 const BreathFogScript := preload("res://src/entities/player/breath_fog.gd")
 const SurvivalSystemScript := preload("res://src/systems/survival_system.gd")
-const RunBootScript := preload("res://src/systems/run_boot.gd")
 
 var _player: PlayerController = null
 var _breath: BreathFog = null
 var _survival = null
-var _boot = null
 
 func after_each() -> void:
 	# All four extend Node, which is not reference counted (briefing
@@ -70,9 +68,6 @@ func after_each() -> void:
 	if _survival != null:
 		_survival.free()
 		_survival = null
-	if _boot != null:
-		_boot.free()
-		_boot = null
 
 # --- helpers ---------------------------------------------------------------
 
@@ -479,119 +474,4 @@ func test_an_unwired_fog_breathes_at_the_authored_rate() -> void:
 		_breath.puff_rate_rest * lerpf(0.7, 1.0, _breath.density_warm),
 		0.0001,
 		"the default rate scale is not 1"
-	)
-
-# --- starting the clock ------------------------------------------------------
-
-## Nothing in the running game called SurvivalSystem.start(), so the model never
-## ticked: the whole system was inert in play and green in the suite. RunBoot is
-## the smallest honest fix until GameState exists.
-func test_the_boot_starts_the_survival_clock() -> void:
-	var body = _build_body()
-	body.stop()
-	assert_false(body.is_running(), "the model is running before anything started it")
-
-	_boot = RunBootScript.new()
-	_boot.set_survival_system(body)
-	assert_true(_boot.begin_run(), "begin_run() reported that it did nothing")
-	assert_true(body.is_running(), "the survival model is still not ticking")
-
-## Idempotent, because GameState is going to arrive and call the same thing.
-## Starting again would silently reset every stat to full -- a full heal, in a
-## survival game, from a line nobody would look at twice.
-func test_the_boot_does_not_restart_a_run_that_is_already_going() -> void:
-	var body = _build_body()
-	body.advance(600.0)
-	var half_a_day: float = body.value_of(&"core_temperature")
-	assert_true(half_a_day < 1.0, "the model did not advance at all")
-
-	_boot = RunBootScript.new()
-	_boot.set_survival_system(body)
-	assert_false(_boot.begin_run(), "it started a run that was already running")
-	assert_almost_eq(
-		body.value_of(&"core_temperature"),
-		half_a_day,
-		0.0001,
-		"begin_run() healed a man who was halfway through his first day"
-	)
-
-## Armed in _ready(), fired on the first frame, and then disarmed.
-##
-## Not done in _ready() because autoloads are added to /root in project.godot's
-## own order and an entry declared below this one would not exist yet -- a line
-## in the wrong place would leave the model inert with nothing to say so, which
-## is the failure this file exists to fix. And it must stop trying afterwards, or
-## it would restart the run every frame after a death.
-func test_the_boot_fires_on_the_first_frame_and_then_stops_trying() -> void:
-	var body = _build_body()
-	body.stop()
-	_boot = RunBootScript.new()
-	_boot.set_survival_system(body)
-	# _ready() has not run: nothing has been added to the tree (briefing trap 1).
-	_boot._ready()
-	assert_true(_boot.is_processing(), "the boot did not arm itself")
-	_boot._process(0.0)
-	assert_true(body.is_running(), "the first frame did not start the run")
-	assert_false(_boot.is_processing(), "the boot goes on polling after its one job is done")
-
-func test_a_boot_told_not_to_start_never_arms_itself() -> void:
-	var body = _build_body()
-	body.stop()
-	_boot = RunBootScript.new()
-	_boot.set_survival_system(body)
-	_boot.auto_start = false
-	_boot._ready()
-	assert_false(_boot.is_processing(), "auto_start is off and it armed anyway")
-	assert_false(body.is_running(), "the run started with auto_start off")
-
-func test_a_boot_with_nothing_to_start_is_inert_rather_than_broken() -> void:
-	_boot = RunBootScript.new()
-	assert_false(_boot.begin_run(), "it claimed to start a survival model it does not have")
-
-## Briefing trap 3: a project [autoload] is a node under /root and never an
-## engine singleton, so the resolution has to be get_node_or_null("/root/...").
-## Written the plausible-looking way -- Engine.get_singleton -- this file would
-## start nothing, for ever, with no diagnostic.
-func test_the_boot_resolves_the_autoloaded_system_from_root() -> void:
-	var tree := Engine.get_main_loop() as SceneTree
-	assert_not_null(tree, "the runner is a SceneTree, so a real /root must be reachable")
-	if tree == null:
-		# Return rather than fall through: dereferencing a null tree aborts the
-		# method, and with one assertion already counted the runner's
-		# zero-assertion guard would let it print PASS.
-		return
-	var live = tree.root.get_node_or_null("SurvivalSystem")
-	assert_not_null(live, "the SurvivalSystem autoload must be present at /root/SurvivalSystem")
-	if live == null:
-		return
-	var was_running: bool = live.is_running()
-
-	var boot = RunBootScript.new()
-	# Off before it enters the tree: _ready() is the code path under test, and
-	# an auto-start would prove nothing about the resolution.
-	boot.auto_start = false
-	tree.root.add_child(boot)
-	var started: bool = boot.begin_run()
-	var running_after: bool = live.is_running()
-
-	# Unwind before asserting, not after. The live autoload is global state
-	# shared with every later test, and a Node left under /root leaks at exit
-	# (briefing constraint 2). Assertions record rather than halt, so this is
-	# safe to do first.
-	if not was_running:
-		live.stop()
-	tree.root.remove_child(boot)
-	boot.free()
-
-	# Asserted on the model rather than on the return value, so this cannot pass
-	# vacuously: whether the run was already going (the autoload line is in
-	# project.godot and RunBoot did this at boot) or begin_run() started it here,
-	# the live model must be ticking afterwards.
-	assert_true(
-		running_after,
-		"_ready() did not find /root/SurvivalSystem, so begin_run() had nothing to start"
-	)
-	assert_true(
-		started or was_running,
-		"begin_run() declined a model that was not running"
 	)
