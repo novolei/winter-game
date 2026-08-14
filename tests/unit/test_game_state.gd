@@ -9,6 +9,7 @@ const EventBusScript := preload("res://src/core/event_bus.gd")
 const EVENT_RUN_ENDED := &"game.run_ended"
 const EVENT_RUN_RESET := &"game.run_reset"
 const EVENT_RUN_STARTED := &"game.run_started"
+const EVENT_RUN_START_REQUESTED := &"game.run_start_requested"
 const EVENT_RESTART_REQUESTED := &"game.restart_requested"
 const OUTCOME_RESCUED := &"rescued"
 const OUTCOME_ABANDONED := &"abandoned"
@@ -156,7 +157,6 @@ func test_a_detached_game_state_can_ready_and_leave_without_root_lookups() -> vo
 	var game = _new_game()
 	if game == null:
 		return
-	game.auto_start = false
 	game._ready()
 	game._exit_tree()
 	assert_true(game.current_run_seed() != 0)
@@ -177,7 +177,6 @@ func test_a_live_game_state_owns_the_generic_run_services() -> void:
 	var game = _new_game()
 	if game == null:
 		return
-	game.auto_start = false
 	game.run_seed = 1729
 	tree.root.add_child(game)
 	assert_eq(registry.get_service(&"game_state"), game)
@@ -189,6 +188,25 @@ func test_a_live_game_state_owns_the_generic_run_services() -> void:
 		registry.register(&"game_state", previous_game)
 	if previous_seed != null:
 		registry.register(&"run_seed", previous_seed)
+
+
+func test_the_project_autoload_stays_idle_without_a_playable_world() -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	assert_not_null(tree)
+	if tree == null:
+		return
+	var game = tree.root.get_node_or_null("GameState")
+	var survival = tree.root.get_node_or_null("SurvivalSystem")
+	var clock = tree.root.get_node_or_null("WorldClock")
+	assert_not_null(game)
+	assert_not_null(survival)
+	assert_not_null(clock)
+	if null in [game, survival, clock]:
+		return
+	assert_eq(game.state(), game.STATE_IDLE, "the test runner itself became a hidden attempt")
+	assert_false(survival.is_running(), "the body drained in a process with no Main world")
+	assert_false(clock.is_running(), "the calendar advanced in a process with no Main world")
+	assert_almost_eq(clock.phase_elapsed(), 0.0, 0.000001)
 
 
 func test_begin_run_cannot_heal_or_rewind_an_attempt_already_under_way() -> void:
@@ -237,19 +255,29 @@ func test_a_second_begin_does_not_heal_the_real_body() -> void:
 	survival.free()
 
 
-func test_auto_start_fires_on_the_first_frame_and_disarms() -> void:
+func test_ready_stays_idle_until_the_world_requests_the_first_run() -> void:
+	_bus = EventBusScript.new()
+	_bus.subscribe(EVENT_RUN_STARTED, _record)
 	var game = _new_game()
 	if game == null:
 		return
 	var survival := FakeSurvival.new()
 	var clock := FakeClock.new()
+	game.set_event_bus(_bus)
 	game.set_survival_system(survival)
 	game.set_world_clock(clock)
 	game._ready()
-	assert_true(game.is_processing(), "auto start did not arm")
-	game._process(0.0)
-	assert_true(game.is_running(), "the first frame did not begin the attempt")
-	assert_false(game.is_processing(), "the run owner kept polling after startup")
+	assert_false(game.is_running(), "the autoload began the attempt before Main requested it")
+	assert_false(survival.running, "the body began draining behind the boot splash")
+	assert_false(clock.running, "the calendar advanced behind the boot splash")
+	_bus.emit_event(EVENT_RUN_START_REQUESTED, {"seed": 1729})
+	assert_true(game.is_running(), "an active world could not begin the attempt")
+	assert_eq(game.current_run_seed(), 1729)
+	assert_eq(_events.size(), 1, "one world request announced more than one run")
+	_bus.emit_event(EVENT_RUN_START_REQUESTED, {"seed": 9999})
+	assert_eq(survival.start_count, 1, "a duplicate world request healed the body")
+	assert_eq(clock.calls.count(&"start"), 1, "a duplicate world request rewound the calendar")
+	assert_eq(game.current_run_seed(), 1729, "a duplicate request changed the live replay seed")
 
 
 func test_missing_run_half_is_refused_without_partially_starting_the_other() -> void:
@@ -357,6 +385,33 @@ func test_a_value_only_restart_request_uses_the_same_reset_transaction() -> void
 	assert_eq(game.current_run_seed(), 202)
 	assert_eq(survival.start_count, 2)
 	assert_eq(clock.calls.count(&"start"), 2)
+
+
+func test_a_restart_request_without_an_override_replays_the_settled_seed() -> void:
+	_bus = EventBusScript.new()
+	_bus.subscribe(EVENT_RUN_RESET, _record)
+	_bus.subscribe(EVENT_RUN_STARTED, _record)
+	var game = _new_game()
+	if game == null:
+		return
+	game.set_event_bus(_bus)
+	game.set_survival_system(FakeSurvival.new())
+	game.set_world_clock(FakeClock.new())
+	assert_true(game.begin_run(1729))
+	_bus.emit_event(&"survival.died", {"stat": &"core_temperature"})
+	_bus.emit_event(EVENT_RESTART_REQUESTED, {"seed": 0})
+	assert_true(game.is_running())
+	assert_eq(game.current_run_seed(), 1729,
+		"the player-visible retry silently became a different random run")
+	assert_eq(_events.size(), 3,
+		"retry did not preserve the started -> reset -> started transaction")
+	if _events.size() == 3:
+		assert_eq((_events[0] as Dictionary).get("seed", 0), 1729,
+			"the settled attempt announced a different seed")
+		assert_eq((_events[1] as Dictionary).get("seed", 0), 1729,
+			"reset consumers replayed a seed different from GameState")
+		assert_eq((_events[2] as Dictionary).get("seed", 0), 1729,
+			"the restarted attempt announced a different seed")
 
 
 func test_the_shipped_seven_days_can_reach_the_rescue_exit_deterministically() -> void:

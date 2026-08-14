@@ -9,16 +9,21 @@ extends Node
 ## it never knows a Beacon or this network exists.
 
 const SERVICE := &"beacon_network"
+const RUN_SEED_SERVICE := &"run_seed"
 const DEFINITIONS_DIRECTORY := "res://data/beacons"
 const BEACON_SCENE := preload("res://scenes/entities/beacon/beacon.tscn")
 const EVENT_WEATHER_ARRIVED := &"weather.arrived"
 const EVENT_DAY_STARTED := &"clock.day_started"
 const EVENT_RUN_FINISHED := &"clock.run_finished"
 const EVENT_RUN_RESET := &"game.run_reset"
+const EVENT_RUN_STARTED := &"game.run_started"
 const EVENT_FINAL_STATE := &"beacons.final_state"
+const FALLBACK_RANDOM_SEED := 20260813
 
 @export var definitions_directory := DEFINITIONS_DIRECTORY
-@export var random_seed := 20260813
+## Non-zero is an explicit capture/test override. Ordinary play reads the
+## authoritative GameState seed through ServiceRegistry.
+@export var random_seed := 0
 
 var _definitions: Dictionary = {}
 var _order: Array[StringName] = []
@@ -29,6 +34,7 @@ var _wind = null
 var _economy = null
 var _registry = null
 var _rng := RandomNumberGenerator.new()
+var _run_seed := 0
 
 
 func _ready() -> void:
@@ -36,7 +42,7 @@ func _ready() -> void:
 	if _registry != null:
 		_registry.register(SERVICE, self)
 	_subscribe()
-	_rng.seed = random_seed
+	_seed_rng(_preferred_seed())
 	load_from_directory(definitions_directory)
 	spawn_missing()
 	set_day(_day)
@@ -154,6 +160,14 @@ func all_lit() -> bool:
 	return total_count() > 0 and lit_count() == total_count()
 
 
+func current_run_seed() -> int:
+	return _run_seed
+
+
+func set_run_seed(seed: int) -> void:
+	_seed_rng(seed)
+
+
 ## Returns how many were actually lost. If only two lamps burn, a request for
 ## three extinguishes two and reports two rather than pretending at a guarantee
 ## the current world state could not satisfy.
@@ -214,13 +228,48 @@ func _on_run_finished(_payload) -> void:
 
 func _on_run_reset(payload) -> void:
 	var seed := random_seed
-	if payload is Dictionary:
-		seed = int(payload.get("seed", random_seed))
-	_rng.seed = seed
+	if seed == 0 and payload is Dictionary:
+		seed = int(payload.get("seed", 0))
+	if seed == 0:
+		seed = _registered_run_seed()
+	_seed_rng(seed)
 	_day = 1
 	for lamp in beacons():
 		lamp.reset_for_run()
 	set_day(1)
+
+
+## First attempts do not emit game.run_reset.  The authoritative seed arrives
+## with game.run_started after Main's lifecycle gate opens, before this node's
+## next process tick can consume a wind draw.
+func _on_run_started(payload) -> void:
+	var seed := random_seed
+	if seed == 0 and payload is Dictionary:
+		seed = int(payload.get("seed", 0))
+	if seed == 0:
+		seed = _registered_run_seed()
+	_seed_rng(seed)
+
+
+func _seed_rng(seed: int) -> void:
+	_run_seed = seed if seed != 0 else FALLBACK_RANDOM_SEED
+	_rng.seed = _run_seed
+
+
+func _preferred_seed() -> int:
+	if random_seed != 0:
+		return random_seed
+	var registered := _registered_run_seed()
+	return registered if registered != 0 else FALLBACK_RANDOM_SEED
+
+
+func _registered_run_seed() -> int:
+	if _registry == null:
+		return 0
+	var owner: Object = _registry.get_service(RUN_SEED_SERVICE)
+	if owner == null or not owner.has_method("current_run_seed"):
+		return 0
+	return int(owner.current_run_seed())
 
 
 func _resolve() -> void:
@@ -244,6 +293,7 @@ func _subscribe() -> void:
 	_bus.subscribe(EVENT_DAY_STARTED, _on_day_started)
 	_bus.subscribe(EVENT_RUN_FINISHED, _on_run_finished)
 	_bus.subscribe(EVENT_RUN_RESET, _on_run_reset)
+	_bus.subscribe(EVENT_RUN_STARTED, _on_run_started)
 
 
 func _unsubscribe() -> void:
@@ -253,3 +303,4 @@ func _unsubscribe() -> void:
 	_bus.unsubscribe(EVENT_DAY_STARTED, _on_day_started)
 	_bus.unsubscribe(EVENT_RUN_FINISHED, _on_run_finished)
 	_bus.unsubscribe(EVENT_RUN_RESET, _on_run_reset)
+	_bus.unsubscribe(EVENT_RUN_STARTED, _on_run_started)

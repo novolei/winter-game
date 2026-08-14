@@ -15,6 +15,7 @@ const RUN_SEED_SERVICE := &"run_seed"
 const EVENT_RUN_STARTED := &"game.run_started"
 const EVENT_RUN_ENDED := &"game.run_ended"
 const EVENT_RUN_RESET := &"game.run_reset"
+const EVENT_RUN_START_REQUESTED := &"game.run_start_requested"
 const EVENT_RESTART_REQUESTED := &"game.restart_requested"
 const EVENT_SURVIVAL_DIED := &"survival.died"
 const EVENT_BEACONS_FINAL_STATE := &"beacons.final_state"
@@ -27,7 +28,6 @@ const OUTCOME_RESCUED := &"rescued"
 const OUTCOME_ABANDONED := &"abandoned"
 const OUTCOME_DEAD := &"dead"
 
-@export var auto_start := true
 @export var run_seed := 0
 
 var _state: StringName = STATE_IDLE
@@ -44,7 +44,6 @@ func _ready() -> void:
 	_ensure_run_seed()
 	_register_services()
 	_subscribe()
-	set_process(auto_start)
 
 
 func _exit_tree() -> void:
@@ -55,11 +54,6 @@ func _exit_tree() -> void:
 		_registry.unregister(SERVICE)
 	if _registry.get_service(RUN_SEED_SERVICE) == self:
 		_registry.unregister(RUN_SEED_SERVICE)
-
-
-func _process(_delta: float) -> void:
-	set_process(false)
-	begin_run()
 
 
 func set_event_bus(bus) -> void:
@@ -129,7 +123,8 @@ func begin_run(seed := 0) -> bool:
 ## Starts another attempt only after every world-state owner has synchronously
 ## consumed the shared reset boundary. EventBus dispatch is synchronous, so no
 ## new body or calendar tick can observe inventory, pickups or beacon fuel from
-## the settled attempt.
+## the settled attempt. A zero seed means Retry: replay the settled attempt's
+## seed. Only an explicit non-zero seed starts a different random world.
 func restart_run(seed := 0) -> bool:
 	if _state != STATE_ENDED:
 		return false
@@ -145,7 +140,6 @@ func restart_run(seed := 0) -> bool:
 	if seed != 0:
 		run_seed = seed
 	else:
-		run_seed = 0
 		_ensure_run_seed()
 	_emit(EVENT_RUN_RESET, {"seed": run_seed})
 	_state = STATE_IDLE
@@ -195,6 +189,16 @@ func _on_restart_requested(payload) -> void:
 	restart_run(seed)
 
 
+## The scene, not the autoload frame, owns first-run timing.  Boot keeps Main
+## disabled while render resources are prepared, so this request cannot arrive
+## until the world and all of its event consumers have become ready to play.
+func _on_run_start_requested(payload) -> void:
+	var seed := 0
+	if payload is Dictionary:
+		seed = int((payload as Dictionary).get("seed", 0))
+	begin_run(seed)
+
+
 func _ensure_run_seed() -> void:
 	if run_seed != 0:
 		return
@@ -226,6 +230,7 @@ func _subscribe() -> void:
 		return
 	_bus.subscribe(EVENT_SURVIVAL_DIED, _on_survival_died)
 	_bus.subscribe(EVENT_BEACONS_FINAL_STATE, _on_beacons_final_state)
+	_bus.subscribe(EVENT_RUN_START_REQUESTED, _on_run_start_requested)
 	_bus.subscribe(EVENT_RESTART_REQUESTED, _on_restart_requested)
 	_subscribed = true
 
@@ -235,6 +240,7 @@ func _unsubscribe() -> void:
 		return
 	_bus.unsubscribe(EVENT_SURVIVAL_DIED, _on_survival_died)
 	_bus.unsubscribe(EVENT_BEACONS_FINAL_STATE, _on_beacons_final_state)
+	_bus.unsubscribe(EVENT_RUN_START_REQUESTED, _on_run_start_requested)
 	_bus.unsubscribe(EVENT_RESTART_REQUESTED, _on_restart_requested)
 	_subscribed = false
 

@@ -58,6 +58,7 @@
 [ext_resource type="PackedScene" path="res://scenes/effects/farmhouse_window_light.tscn" id="53_window_light"]
 [ext_resource type="Script" uid="uid://clsslsjuupe0p" path="res://src/entities/perch_snow_shed.gd" id="54_perch_snow"]
 [ext_resource type="Script" uid="uid://kwuv8ib1h25o" path="res://src/ui/run_result_surfacing.gd" id="55_run_result"]
+[ext_resource type="Script" path="res://src/systems/run_lifecycle.gd" id="59_run_lifecycle"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_room_main"]
 size = Vector3(6.88, 3.2, 5.68)
@@ -72,6 +73,9 @@ size = Vector3(2, 3.2, 2)
 size = Vector3(4.4, 3.2, 5)
 
 [node name="Main" type="Node3D" unique_id=1508188971]
+
+[node name="RunLifecycle" type="Node" parent="."]
+script = ExtResource("59_run_lifecycle")
 
 [node name="SnowField" type="Node" parent="." unique_id=730166513]
 script = ExtResource("1_snowfield")

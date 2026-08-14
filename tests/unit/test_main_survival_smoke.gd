@@ -292,7 +292,6 @@ func test_real_main_surfaces_shortage_death_and_restarts_through_e() -> void:
 	_bus.subscribe(&"clock.day_started", _record_day_started)
 	_bus.subscribe(&"game.run_started", _record_run_started)
 	_game = GameStateScript.new()
-	_game.auto_start = false
 	_game.set_event_bus(_bus)
 	_game.set_survival_system(_survival)
 	_game.set_world_clock(_clock)

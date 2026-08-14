@@ -123,10 +123,17 @@ godot_status="${PIPESTATUS[0]}"
 # unit runner cannot do this without replacing itself.
 restart_smoke_status=0
 restart_smoke_sentinel='Restart scene smoke: PASS'
+boot_smoke_status=0
+boot_smoke_sentinel='Boot run-start smoke: PASS'
 if [ "${godot_status}" -eq 0 ]; then
 	"${GODOT_BIN}" --headless --path "${project_dir}" \
 		--script res://tests/framework/restart_scene_smoke.gd 2>&1 | tee -a "${raw_log}"
 	restart_smoke_status="${PIPESTATUS[0]}"
+fi
+if [ "${godot_status}" -eq 0 ] && [ "${restart_smoke_status}" -eq 0 ]; then
+	"${GODOT_BIN}" --headless --path "${project_dir}" \
+		--script res://tests/framework/boot_run_start_smoke.gd 2>&1 | tee -a "${raw_log}"
+	boot_smoke_status="${PIPESTATUS[0]}"
 fi
 
 # Godot writes CRLF here. Strip the CR so end-of-line anchors match.
@@ -146,6 +153,12 @@ if [ "${restart_smoke_status}" -ne 0 ]; then
 	problems+=("the production restart scene smoke exited with status ${restart_smoke_status}.")
 elif [ "${godot_status}" -eq 0 ] && ! grep -qxF -- "${restart_smoke_sentinel}" "${scan_log}"; then
 	problems+=("the production restart scene smoke did not report its success sentinel.")
+fi
+if [ "${boot_smoke_status}" -ne 0 ]; then
+	problems+=("the production boot run-start smoke exited with status ${boot_smoke_status}.")
+elif [ "${godot_status}" -eq 0 ] && [ "${restart_smoke_status}" -eq 0 ] \
+		&& ! grep -qxF -- "${boot_smoke_sentinel}" "${scan_log}"; then
+	problems+=("the production boot run-start smoke did not report its success sentinel.")
 fi
 
 for pattern in "${FORBIDDEN_PATTERNS[@]}"; do

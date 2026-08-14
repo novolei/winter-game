@@ -349,6 +349,35 @@ func test_run_reset_drains_every_beacon_and_returns_unlocks_to_day_one() -> void
 			"restart did not restore the authored day-one unlock boundary")
 
 
+func test_the_first_run_started_event_binds_beacon_randomness_to_the_replay_seed() -> void:
+	var network := _build_network()
+	network.set_day(5)
+	for lamp in network.beacons():
+		lamp.add_fuel_seconds(100.0)
+		lamp.light()
+	_bus.emit_event(&"game.run_started", {"seed": 1729, "day": 1})
+	assert_eq(network.current_run_seed(), 1729)
+	assert_eq(network.extinguish_minimum(1, &"probe"), 1)
+	var first_extinguished := &""
+	for id in network.beacon_ids():
+		if not network.beacon(id).is_lit():
+			first_extinguished = id
+	_bus.emit_event(&"game.run_reset", {"seed": 1729})
+	network.set_day(5)
+	for lamp in network.beacons():
+		lamp.add_fuel_seconds(100.0)
+		lamp.light()
+	_bus.emit_event(&"game.run_started", {"seed": 1729, "day": 1})
+	assert_eq(network.extinguish_minimum(1, &"probe"), 1)
+	var replay_extinguished := &""
+	for id in network.beacon_ids():
+		if not network.beacon(id).is_lit():
+			replay_extinguished = id
+	assert_true(first_extinguished != &"", "the first seeded draw extinguished no beacon")
+	assert_eq(replay_extinguished, first_extinguished,
+		"the same run seed did not replay the beacon selection")
+
+
 func test_the_run_end_publishes_the_visible_final_state() -> void:
 	var network := _build_network()
 	_bus.subscribe(&"beacons.final_state", _record)

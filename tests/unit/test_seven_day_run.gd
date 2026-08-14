@@ -193,7 +193,6 @@ func _build_run() -> void:
 	_routes.spawn_missing()
 
 	_game = GameStateScript.new()
-	_game.auto_start = false
 	_game.run_seed = RUN_SEED
 	_game.set_event_bus(_bus)
 	_game.set_survival_system(_survival)
