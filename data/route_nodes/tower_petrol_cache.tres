@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="SurvivalRouteNodeDefinition" format=3]
+
+[ext_resource type="PackedScene" path="res://assets/models/props/synty_tarped_cache.glb" id="1_6gq2n"]
+[ext_resource type="Script" path="res://src/definitions/survival_route_node_definition.gd" id="2_equt4"]
+
+[resource]
+script = ExtResource("2_equt4")
+id = &"tower_petrol_cache"
+route_id = &"eastern_pilgrim_track"
+sequence = 4
+world_position = Vector3(43, 0, -30)
+yaw_degrees = -17.0
+model_scene = ExtResource("1_6gq2n")
+item_id = &"petrol"
+item_count = 2

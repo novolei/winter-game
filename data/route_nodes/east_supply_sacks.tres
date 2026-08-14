@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="SurvivalRouteNodeDefinition" format=3]
+
+[ext_resource type="PackedScene" path="res://assets/models/props/synty_supply_sacks.glb" id="1_v1c3p"]
+[ext_resource type="Script" path="res://src/definitions/survival_route_node_definition.gd" id="2_kds2r"]
+
+[resource]
+script = ExtResource("2_kds2r")
+id = &"east_supply_sacks"
+route_id = &"eastern_pilgrim_track"
+sequence = 2
+world_position = Vector3(45, 0, -9)
+yaw_degrees = 14.0
+model_scene = ExtResource("1_v1c3p")

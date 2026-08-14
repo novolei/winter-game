@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="SurvivalRouteDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/survival_route_definition.gd" id="1_q3j68"]
+
+[resource]
+script = ExtResource("1_q3j68")
+id = &"eastern_pilgrim_track"
+display_name = "Eastern pilgrim track"
+from_beacon = &"church_tower"
+to_beacon = &"transmission_tower"
+points = PackedVector2Array(42, 22, 45, 10, 44, -3, 45, -16, 43, -28, 42, -38)

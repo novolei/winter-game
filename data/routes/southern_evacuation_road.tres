@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="SurvivalRouteDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/survival_route_definition.gd" id="1_fm0bx"]
+
+[resource]
+script = ExtResource("1_fm0bx")
+id = &"southern_evacuation_road"
+display_name = "Southern evacuation road"
+from_beacon = &"transmission_tower"
+to_beacon = &"logging_camp"
+points = PackedVector2Array(42, -38, 28, -42, 12, -41, -5, -40, -23, -38, -40, -34)

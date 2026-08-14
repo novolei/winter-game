@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="SurvivalRouteNodeDefinition" format=3]
+
+[ext_resource type="PackedScene" path="res://assets/models/props/woodpile.glb" id="1_3qqj2"]
+[ext_resource type="Script" path="res://src/definitions/survival_route_node_definition.gd" id="2_gicir"]
+
+[resource]
+script = ExtResource("2_gicir")
+id = &"gas_firewood"
+route_id = &"western_timber_track"
+sequence = 4
+world_position = Vector3(-37, 0, 1)
+yaw_degrees = 21.0
+model_scene = ExtResource("1_3qqj2")
+item_id = &"firewood"
+item_count = 2

@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="SurvivalRouteNodeDefinition" format=3]
+
+[ext_resource type="PackedScene" path="res://assets/models/props/chopping_block.glb" id="1_dpa2i"]
+[ext_resource type="Script" path="res://src/definitions/survival_route_node_definition.gd" id="2_kguvr"]
+
+[resource]
+script = ExtResource("2_kguvr")
+id = &"west_chopping_block"
+route_id = &"western_timber_track"
+sequence = 2
+world_position = Vector3(-37, 0, -17)
+yaw_degrees = 29.0
+model_scene = ExtResource("1_dpa2i")

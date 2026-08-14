@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="SurvivalRouteNodeDefinition" format=3]
+
+[ext_resource type="PackedScene" path="res://assets/models/props/synty_evacuation_cache.glb" id="1_7emgp"]
+[ext_resource type="Script" path="res://src/definitions/survival_route_node_definition.gd" id="2_bdnaf"]
+
+[resource]
+script = ExtResource("2_bdnaf")
+id = &"south_coal_cache"
+route_id = &"southern_evacuation_road"
+sequence = 2
+world_position = Vector3(4, 0, -40)
+yaw_degrees = 7.0
+model_scene = ExtResource("1_7emgp")
+item_id = &"coal"
+item_count = 2

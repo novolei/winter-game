@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="SurvivalRouteNodeDefinition" format=3]
+
+[ext_resource type="PackedScene" path="res://assets/models/props/synty_refuge_bedroll.glb" id="1_0em2g"]
+[ext_resource type="Script" path="res://src/definitions/survival_route_node_definition.gd" id="2_glktt"]
+
+[resource]
+script = ExtResource("2_glktt")
+id = &"pilgrim_bedroll"
+route_id = &"eastern_pilgrim_track"
+world_position = Vector3(43, 0, 12)
+yaw_degrees = -8.0
+model_scene = ExtResource("1_0em2g")

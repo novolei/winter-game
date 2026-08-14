@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="SurvivalRouteNodeDefinition" format=3]
+
+[ext_resource type="PackedScene" path="res://assets/models/props/synty_road_blockade.glb" id="1_773hf"]
+[ext_resource type="Script" path="res://src/definitions/survival_route_node_definition.gd" id="2_h53e3"]
+
+[resource]
+script = ExtResource("2_h53e3")
+id = &"east_road_blockade"
+route_id = &"eastern_pilgrim_track"
+sequence = 3
+world_position = Vector3(44, 0, -19)
+yaw_degrees = 89.0
+model_scene = ExtResource("1_773hf")

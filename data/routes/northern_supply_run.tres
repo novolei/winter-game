@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="SurvivalRouteDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/survival_route_definition.gd" id="1_sbhys"]
+
+[resource]
+script = ExtResource("1_sbhys")
+id = &"northern_supply_run"
+display_name = "Northern supply run"
+from_beacon = &"gas_station"
+to_beacon = &"church_tower"
+points = PackedVector2Array(-38, 7, -26, 10, -9, 15, 9, 18, 27, 20, 42, 22)

@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="SurvivalRouteNodeDefinition" format=3]
+
+[ext_resource type="PackedScene" path="res://assets/models/props/field_marker.glb" id="1_xf3rg"]
+[ext_resource type="Script" path="res://src/definitions/survival_route_node_definition.gd" id="2_dmwb0"]
+
+[resource]
+script = ExtResource("2_dmwb0")
+id = &"east_road_sign"
+route_id = &"eastern_pilgrim_track"
+sequence = 1
+world_position = Vector3(44, 0, 2)
+yaw_degrees = 91.0
+model_scene = ExtResource("1_xf3rg")

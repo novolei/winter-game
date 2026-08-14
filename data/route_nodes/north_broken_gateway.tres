@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="SurvivalRouteNodeDefinition" format=3]
+
+[ext_resource type="PackedScene" path="res://assets/models/props/synty_broken_gateway.glb" id="1_7wvm6"]
+[ext_resource type="Script" path="res://src/definitions/survival_route_node_definition.gd" id="2_um4bh"]
+
+[resource]
+script = ExtResource("2_um4bh")
+id = &"north_broken_gateway"
+route_id = &"northern_supply_run"
+sequence = 2
+world_position = Vector3(-9, 0, 14)
+yaw_degrees = 74.0
+model_scene = ExtResource("1_7wvm6")

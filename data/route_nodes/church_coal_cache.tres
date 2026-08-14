@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="SurvivalRouteNodeDefinition" format=3]
+
+[ext_resource type="PackedScene" path="res://assets/models/props/supply_cache.glb" id="1_40pvq"]
+[ext_resource type="Script" path="res://src/definitions/survival_route_node_definition.gd" id="2_iqa6v"]
+
+[resource]
+script = ExtResource("2_iqa6v")
+id = &"church_coal_cache"
+route_id = &"northern_supply_run"
+sequence = 4
+world_position = Vector3(34, 0, 20)
+yaw_degrees = 11.0
+model_scene = ExtResource("1_40pvq")
+item_id = &"coal"
+item_count = 2

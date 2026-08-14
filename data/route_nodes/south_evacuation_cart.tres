@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="SurvivalRouteNodeDefinition" format=3]
+
+[ext_resource type="PackedScene" path="res://assets/models/props/evacuation_cart.glb" id="1_0vvvj"]
+[ext_resource type="Script" path="res://src/definitions/survival_route_node_definition.gd" id="2_mffx4"]
+
+[resource]
+script = ExtResource("2_mffx4")
+id = &"south_evacuation_cart"
+route_id = &"southern_evacuation_road"
+world_position = Vector3(30, 0, -41)
+yaw_degrees = 78.0
+model_scene = ExtResource("1_0vvvj")
