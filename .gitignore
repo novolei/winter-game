@@ -24,3 +24,11 @@
 /__MACOSX/
 /RPG-Character*
 /RPG Animations GLB FREE Version Changes.txt
+
+# Local captures and distributable exports. They are reproducible outputs, not
+# project sources, and can include platform binaries too large for normal Git.
+/build/
+
+# Python generator caches are machine-local and must never become project state.
+**/__pycache__/
+*.py[cod]
