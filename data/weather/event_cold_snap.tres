@@ -1,37 +1,39 @@
 [gd_resource type="Resource" script_class="WeatherEventDefinition" format=3]
 
-[ext_resource type="Script" path="res://src/definitions/weather_event_definition.gd" id="1_qxse6"]
-[ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="2_0gen6"]
-[ext_resource type="Resource" path="res://data/snow/responses/cold_snap.tres" id="2_4lxhe"]
-[ext_resource type="Script" path="res://src/definitions/weather_tell.gd" id="3_4lxhe"]
-[ext_resource type="Resource" path="res://data/weather/wind_map_still.tres" id="4_4x4tu"]
+[ext_resource type="Script" path="res://src/definitions/weather_event_definition.gd" id="1_4lxhe"]
+[ext_resource type="Resource" path="res://data/snow/responses/cold_snap.tres" id="2_4x4tu"]
+[ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="3_l4o66"]
+[ext_resource type="Script" path="res://src/definitions/weather_tell.gd" id="4_0150r"]
+[ext_resource type="Resource" path="res://data/weather/wind_map_still.tres" id="5_ewt4y"]
+[ext_resource type="Resource" path="res://data/weather/vfx/cold_snap.tres" id="6_2wmo3"]
 
-[sub_resource type="Resource" id="Resource_l4o66"]
-script = ExtResource("2_0gen6")
+[sub_resource type="Resource" id="Resource_lqdvr"]
+script = ExtResource("3_l4o66")
 target_stat = &"core_temperature"
 source_id = &"cold_snap"
 operation = 1
 value = 2.6
 
-[sub_resource type="Resource" id="Resource_0150r"]
-script = ExtResource("3_4lxhe")
+[sub_resource type="Resource" id="Resource_1n43o"]
+script = ExtResource("4_0150r")
 sound = &"weather_tell_cold_snap"
-wind_map = ExtResource("4_4x4tu")
+wind_map = ExtResource("5_ewt4y")
 wind_speed_multiplier = 0.2
 snowfall_rate = 0.0
 flushes_wildlife = true
 
 [resource]
-script = ExtResource("1_qxse6")
+script = ExtResource("1_4lxhe")
 id = &"cold_snap"
 display_name = "Cold snap"
 tell_duration_range = Vector2(26, 40)
 active_duration_range = Vector2(150, 260)
 fade_duration = 30.0
-tell = SubResource("Resource_0150r")
-stat_modifiers = Array[ExtResource("2_0gen6")]([SubResource("Resource_l4o66")])
+tell = SubResource("Resource_1n43o")
+stat_modifiers = Array[ExtResource("3_l4o66")]([SubResource("Resource_lqdvr")])
 visibility_multiplier = 1.15
 wind_speed_multiplier = 0.25
 snowfall_rate = 0.03
-snow_response = ExtResource("2_4lxhe")
-wind_map = ExtResource("4_4x4tu")
+snow_response = ExtResource("2_4x4tu")
+vfx_profile = ExtResource("6_2wmo3")
+wind_map = ExtResource("5_ewt4y")

@@ -1,0 +1,32 @@
+[gd_resource type="Resource" script_class="WeatherVfxProfile" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/weather_vfx_profile.gd" id="1_toddr"]
+
+[resource]
+script = ExtResource("1_toddr")
+id = &"blizzard"
+tell_density = 0.12
+active_density = 0.42
+mark_size = Vector2(0.05, 0.115)
+scale_range = Vector2(0.42, 1.45)
+spread_degrees = 24.0
+speed_range = Vector2(1.6, 3.4)
+downward_bias = 0.42
+wind_influence = 1.35
+fall_acceleration = 0.28
+emission_randomness = 0.55
+turbulence_influence_range = Vector2(0.65, 1.45)
+turbulence_scale = 0.85
+turbulence_drift = 0.18
+damping_range = Vector2(0.45, 1.1)
+angular_velocity_range = Vector2(-70, 70)
+angular_velocity_end_multiplier = 0.03
+rock_amplitude_range = Vector2(15, 30)
+rock_frequency_range = Vector2(0.32, 0.78)
+rock_end_multiplier = 0.42
+flutter_amplitude_range = Vector2(4, 10)
+flutter_frequency_range = Vector2(1.25, 2.65)
+flip_probability = 0.2
+flip_duration_range = Vector2(0.22, 0.36)
+flip_edge_scale = 0.2
+opacity = 0.28

@@ -1,0 +1,32 @@
+[gd_resource type="Resource" script_class="WeatherVfxProfile" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/weather_vfx_profile.gd" id="1_80qbw"]
+
+[resource]
+script = ExtResource("1_80qbw")
+id = &"snow_fog"
+tell_density = 0.12
+active_density = 0.3
+mark_size = Vector2(0.048, 0.088)
+scale_range = Vector2(0.5, 1.5)
+spread_degrees = 30.0
+speed_range = Vector2(0.35, 0.9)
+downward_bias = 0.55
+wind_influence = 0.2
+fall_acceleration = 0.08
+emission_randomness = 0.6
+turbulence_influence_range = Vector2(0.18, 0.45)
+turbulence_scale = 1.4
+turbulence_drift = 0.06
+damping_range = Vector2(0.2, 0.5)
+angular_velocity_range = Vector2(-28, 28)
+angular_velocity_end_multiplier = 0.1
+rock_amplitude_range = Vector2(8, 18)
+rock_frequency_range = Vector2(0.18, 0.42)
+rock_end_multiplier = 0.62
+flutter_amplitude_range = Vector2(2, 5)
+flutter_frequency_range = Vector2(0.7, 1.25)
+flip_probability = 0.08
+flip_duration_range = Vector2(0.35, 0.55)
+flip_edge_scale = 0.28
+opacity = 0.2

@@ -58,6 +58,9 @@ extends SceneTree
 ## somebody retunes the valley.
 
 const OUT_DIR := "res://data/weather"
+const VFX_OUT_DIR := "res://data/weather/vfx"
+const FOG_OUT_DIR := "res://data/weather/fog"
+const SNOW_RESPONSE_DIR := "res://data/snow/responses"
 
 const VALLEY_PATH := "res://data/weather/wind_valley.tres"
 
@@ -76,6 +79,133 @@ const MAPS := {
 	"wind_map_veered": "wind_veered",
 }
 
+## One fixed-budget air signature per weather. These do not replace snowfall,
+## wind or fog; they only describe the small residual cue that makes two events
+## with similar light and snow read differently at a glance.
+const VFX_PROFILES := {
+	&"blizzard": {
+		"tell_density": 0.12, "active_density": 0.42,
+		"mark_size": Vector2(0.05, 0.115), "scale_range": Vector2(0.42, 1.45),
+		"spread_degrees": 24.0, "speed_range": Vector2(1.6, 3.4),
+		"downward_bias": 0.42, "wind_influence": 1.35,
+		"fall_acceleration": 0.28, "opacity": 0.28,
+		"velocity_aligned": false, "emission_randomness": 0.55,
+		"turbulence_influence_range": Vector2(0.65, 1.45),
+		"turbulence_scale": 0.85, "turbulence_drift": 0.18,
+		"damping_range": Vector2(0.45, 1.10),
+		"angular_velocity_range": Vector2(-70.0, 70.0),
+		"angular_velocity_end_multiplier": 0.03,
+		"rock_amplitude_range": Vector2(15.0, 30.0),
+		"rock_frequency_range": Vector2(0.32, 0.78), "rock_end_multiplier": 0.42,
+		"flutter_amplitude_range": Vector2(4.0, 10.0),
+		"flutter_frequency_range": Vector2(1.25, 2.65),
+		"flip_probability": 0.20, "flip_duration_range": Vector2(0.22, 0.36),
+		"flip_edge_scale": 0.20,
+	},
+	&"wind_shift": {
+		"tell_density": 0.0, "active_density": 0.14,
+		"mark_size": Vector2(0.045, 0.105), "scale_range": Vector2(0.48, 1.35),
+		"spread_degrees": 18.0, "speed_range": Vector2(2.2, 4.0),
+		"downward_bias": 0.28, "wind_influence": 1.65,
+		"fall_acceleration": 0.18, "opacity": 0.24,
+		"velocity_aligned": false, "emission_randomness": 0.50,
+		"turbulence_influence_range": Vector2(0.55, 1.20),
+		"turbulence_scale": 0.70, "turbulence_drift": 0.22,
+		"damping_range": Vector2(0.70, 1.40),
+		"angular_velocity_range": Vector2(-85.0, 85.0),
+		"angular_velocity_end_multiplier": 0.04,
+		"rock_amplitude_range": Vector2(12.0, 26.0),
+		"rock_frequency_range": Vector2(0.40, 0.95), "rock_end_multiplier": 0.38,
+		"flutter_amplitude_range": Vector2(4.0, 9.0),
+		"flutter_frequency_range": Vector2(1.60, 3.00),
+		"flip_probability": 0.16, "flip_duration_range": Vector2(0.18, 0.30),
+		"flip_edge_scale": 0.22,
+	},
+	&"clear_break": {
+		"tell_density": 0.0, "active_density": 0.0,
+		"mark_size": Vector2(0.025, 0.1), "scale_range": Vector2(0.8, 1.2),
+		"spread_degrees": 4.0, "speed_range": Vector2(0.5, 1.0),
+		"downward_bias": 0.8, "wind_influence": 0.2,
+		"fall_acceleration": 0.1, "opacity": 0.2, "velocity_aligned": false,
+	},
+	&"freezing_rain": {
+		"tell_density": 0.25, "active_density": 0.82,
+		"mark_size": Vector2(0.014, 0.34), "scale_range": Vector2(0.75, 1.25),
+		"spread_degrees": 3.0, "speed_range": Vector2(7.0, 10.0),
+		"downward_bias": 1.0, "wind_influence": 0.35,
+		"fall_acceleration": 1.2, "opacity": 0.5,
+		"velocity_aligned": true, "emission_randomness": 0.18,
+		"damping_range": Vector2(0.08, 0.18),
+	},
+	&"cold_snap": {
+		"tell_density": 0.04, "active_density": 0.09,
+		"mark_size": Vector2(0.03, 0.055), "scale_range": Vector2(0.45, 1.45),
+		"spread_degrees": 28.0, "speed_range": Vector2(0.12, 0.3),
+		"downward_bias": 0.18, "wind_influence": 0.08,
+		"fall_acceleration": 0.02, "opacity": 0.38,
+		"velocity_aligned": false, "emission_randomness": 0.65,
+		"turbulence_influence_range": Vector2(0.04, 0.12),
+		"turbulence_scale": 1.40, "turbulence_drift": 0.04,
+		"damping_range": Vector2(0.15, 0.35),
+		"angular_velocity_range": Vector2(-18.0, 18.0),
+		"angular_velocity_end_multiplier": 0.15,
+		"rock_amplitude_range": Vector2(5.0, 12.0),
+		"rock_frequency_range": Vector2(0.15, 0.35), "rock_end_multiplier": 0.70,
+		"flutter_amplitude_range": Vector2(1.0, 3.0),
+		"flutter_frequency_range": Vector2(0.50, 1.00),
+		"flip_probability": 0.03, "flip_duration_range": Vector2(0.45, 0.65),
+		"flip_edge_scale": 0.35,
+	},
+	&"snow_fog": {
+		"tell_density": 0.12, "active_density": 0.30,
+		"mark_size": Vector2(0.048, 0.088), "scale_range": Vector2(0.5, 1.5),
+		"spread_degrees": 30.0, "speed_range": Vector2(0.35, 0.9),
+		"downward_bias": 0.55, "wind_influence": 0.20,
+		"fall_acceleration": 0.08, "opacity": 0.20,
+		"velocity_aligned": false, "emission_randomness": 0.60,
+		"turbulence_influence_range": Vector2(0.18, 0.45),
+		"turbulence_scale": 1.40, "turbulence_drift": 0.06,
+		"damping_range": Vector2(0.20, 0.50),
+		"angular_velocity_range": Vector2(-28.0, 28.0),
+		"angular_velocity_end_multiplier": 0.10,
+		"rock_amplitude_range": Vector2(8.0, 18.0),
+		"rock_frequency_range": Vector2(0.18, 0.42), "rock_end_multiplier": 0.62,
+		"flutter_amplitude_range": Vector2(2.0, 5.0),
+		"flutter_frequency_range": Vector2(0.70, 1.25),
+		"flip_probability": 0.08, "flip_duration_range": Vector2(0.35, 0.55),
+		"flip_edge_scale": 0.28,
+	},
+}
+
+## Middle-distance world-space veils. The shared renderer never checks an event
+## id: an event either references one of these resources or leaves the field
+## null. These densities only act inside the camera-gated local window; each
+## profile's peak is also enforced by the shader as a last safety rail.
+const FOG_PROFILES := {
+	&"blizzard": {
+		"tell_density": 0.00400, "active_density": 0.02800,
+		"peak_density": 0.05200,
+		"macro_scale_m": Vector3(15.0, 6.0, 9.0),
+		"detail_scale_m": Vector3(5.0, 2.5, 3.2),
+		"detail_weight": 0.28, "noise_contrast": 0.42,
+		"wind_advection_multiplier": 0.12,
+		"max_advection_speed_mps": 0.80, "wind_response_per_second": 2.40,
+		"near_clear_depth_m": 76.0, "near_full_depth_m": 88.0,
+		"far_fade_start_m": 112.0, "far_fade_end_m": 128.0,
+	},
+	&"snow_fog": {
+		"tell_density": 0.00300, "active_density": 0.01900,
+		"peak_density": 0.03400,
+		"macro_scale_m": Vector3(17.0, 7.0, 11.0),
+		"detail_scale_m": Vector3(6.0, 3.5, 4.5),
+		"detail_weight": 0.24, "noise_contrast": 0.32,
+		"wind_advection_multiplier": 0.08,
+		"max_advection_speed_mps": 0.42, "wind_response_per_second": 1.40,
+		"near_clear_depth_m": 76.0, "near_full_depth_m": 88.0,
+		"far_fade_start_m": 112.0, "far_fade_end_m": 128.0,
+	},
+}
+
 
 # --- the six ------------------------------------------------------------------
 #
@@ -85,6 +215,8 @@ const MAPS := {
 const BLIZZARD := {
 	"id": &"blizzard",
 	"display_name": "Blizzard",
+	"vfx_profile": &"blizzard",
+	"fog_profile": &"blizzard",
 	"tell_duration_range": Vector2(24.0, 36.0),
 	"active_duration_range": Vector2(150.0, 240.0),
 	"fade_duration": 20.0,
@@ -120,6 +252,7 @@ const BLIZZARD := {
 const WIND_SHIFT := {
 	"id": &"wind_shift",
 	"display_name": "Wind shift",
+	"vfx_profile": &"wind_shift",
 	"tell_duration_range": Vector2(20.0, 30.0),
 	"active_duration_range": Vector2(90.0, 160.0),
 	"fade_duration": 12.0,
@@ -141,6 +274,7 @@ const WIND_SHIFT := {
 const CLEAR_BREAK := {
 	"id": &"clear_break",
 	"display_name": "Clear break",
+	"vfx_profile": &"clear_break",
 	"tell_duration_range": Vector2(20.0, 30.0),
 	"active_duration_range": Vector2(120.0, 200.0),
 	"fade_duration": 25.0,
@@ -171,6 +305,7 @@ const CLEAR_BREAK := {
 const FREEZING_RAIN := {
 	"id": &"freezing_rain",
 	"display_name": "Freezing rain",
+	"vfx_profile": &"freezing_rain",
 	"tell_duration_range": Vector2(22.0, 34.0),
 	"active_duration_range": Vector2(100.0, 170.0),
 	"fade_duration": 15.0,
@@ -204,6 +339,7 @@ const FREEZING_RAIN := {
 const COLD_SNAP := {
 	"id": &"cold_snap",
 	"display_name": "Cold snap",
+	"vfx_profile": &"cold_snap",
 	"tell_duration_range": Vector2(26.0, 40.0),
 	"active_duration_range": Vector2(150.0, 260.0),
 	"fade_duration": 30.0,
@@ -233,6 +369,8 @@ const COLD_SNAP := {
 const SNOW_FOG := {
 	"id": &"snow_fog",
 	"display_name": "Snow fog",
+	"vfx_profile": &"snow_fog",
+	"fog_profile": &"snow_fog",
 	"tell_duration_range": Vector2(20.0, 32.0),
 	"active_duration_range": Vector2(120.0, 210.0),
 	"fade_duration": 22.0,
@@ -261,7 +399,15 @@ const ALL := [BLIZZARD, WIND_SHIFT, CLEAR_BREAK, FREEZING_RAIN, COLD_SNAP, SNOW_
 
 func _initialize() -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT_DIR))
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(VFX_OUT_DIR))
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(FOG_OUT_DIR))
 	var failed := not _write_veered()
+	var vfx_profiles := _write_vfx_profiles()
+	if vfx_profiles.size() != VFX_PROFILES.size():
+		failed = true
+	var fog_profiles := _write_fog_profiles()
+	if fog_profiles.size() != FOG_PROFILES.size():
+		failed = true
 	var maps: Dictionary = {}
 	for map_id in MAPS:
 		var map := _write_map(map_id, MAPS[map_id])
@@ -270,7 +416,7 @@ func _initialize() -> void:
 		else:
 			maps[map_id] = map
 	for spec in ALL:
-		if not _write_event(spec, maps):
+		if not _write_event(spec, maps, vfx_profiles, fog_profiles):
 			failed = true
 	quit(1 if failed else 0)
 
@@ -324,7 +470,12 @@ func _write_map(map_id: String, profile_id: String) -> WindMap:
 	return load(path)
 
 
-func _write_event(spec: Dictionary, maps: Dictionary) -> bool:
+func _write_event(
+		spec: Dictionary,
+		maps: Dictionary,
+		vfx_profiles: Dictionary,
+		fog_profiles: Dictionary
+) -> bool:
 	var EventScript := load("res://src/definitions/weather_event_definition.gd")
 	var event: WeatherEventDefinition = EventScript.new()
 	for key in spec:
@@ -335,12 +486,55 @@ func _write_event(spec: Dictionary, maps: Dictionary) -> bool:
 				event.stat_modifiers = _build_modifiers(spec["id"], spec[key])
 			"wind_map":
 				event.wind_map = maps.get(spec[key], null)
+			"vfx_profile":
+				event.vfx_profile = vfx_profiles.get(spec[key], null)
+			"fog_profile":
+				event.fog_profile = fog_profiles.get(spec[key], null)
 			_:
 				event.set(key, spec[key])
+	# Snow responses are generated by their own data tool, but a later weather
+	# regeneration must not silently sever those authored ground contracts. The
+	# shared id convention also means a new event gains the link without another
+	# branch in this generator.
+	var response_path := "%s/%s.tres" % [SNOW_RESPONSE_DIR, spec["id"]]
+	if ResourceLoader.exists(response_path):
+		event.snow_response = load(response_path) as SnowResponseDefinition
 	var path := "%s/event_%s.tres" % [OUT_DIR, spec["id"]]
 	var error := ResourceSaver.save(event, path)
 	print("generate_weather_events: %s -> %d" % [path, error])
 	return error == OK
+
+
+func _write_vfx_profiles() -> Dictionary:
+	var VfxScript := load("res://src/definitions/weather_vfx_profile.gd")
+	var built: Dictionary = {}
+	for id in VFX_PROFILES:
+		var profile: WeatherVfxProfile = VfxScript.new()
+		profile.id = id
+		for key in VFX_PROFILES[id]:
+			profile.set(key, VFX_PROFILES[id][key])
+		var path := "%s/%s.tres" % [VFX_OUT_DIR, id]
+		var error := ResourceSaver.save(profile, path)
+		print("generate_weather_events: %s -> %d" % [path, error])
+		if error == OK:
+			built[id] = load(path)
+	return built
+
+
+func _write_fog_profiles() -> Dictionary:
+	var FogScript := load("res://src/definitions/weather_fog_profile.gd")
+	var built: Dictionary = {}
+	for id in FOG_PROFILES:
+		var profile: WeatherFogProfile = FogScript.new()
+		profile.id = id
+		for key in FOG_PROFILES[id]:
+			profile.set(key, FOG_PROFILES[id][key])
+		var path := "%s/%s.tres" % [FOG_OUT_DIR, id]
+		var error := ResourceSaver.save(profile, path)
+		print("generate_weather_events: %s -> %d" % [path, error])
+		if error == OK:
+			built[id] = load(path)
+	return built
 
 
 func _build_tell(spec: Dictionary, maps: Dictionary) -> WeatherTell:

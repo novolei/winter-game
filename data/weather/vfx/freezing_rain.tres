@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="WeatherVfxProfile" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/weather_vfx_profile.gd" id="1_aog0o"]
+
+[resource]
+script = ExtResource("1_aog0o")
+id = &"freezing_rain"
+tell_density = 0.25
+active_density = 0.82
+mark_size = Vector2(0.014, 0.34)
+spread_degrees = 3.0
+velocity_aligned = true
+speed_range = Vector2(7, 10)
+downward_bias = 1.0
+wind_influence = 0.35
+fall_acceleration = 1.2
+emission_randomness = 0.18
+damping_range = Vector2(0.08, 0.18)

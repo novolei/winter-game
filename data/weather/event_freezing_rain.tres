@@ -1,26 +1,27 @@
 [gd_resource type="Resource" script_class="WeatherEventDefinition" format=3]
 
-[ext_resource type="Script" path="res://src/definitions/weather_event_definition.gd" id="1_tre2d"]
-[ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="2_u751t"]
-[ext_resource type="Resource" path="res://data/snow/responses/freezing_rain.tres" id="2_vmu46"]
-[ext_resource type="Script" path="res://src/definitions/weather_tell.gd" id="3_vmu46"]
+[ext_resource type="Script" path="res://src/definitions/weather_event_definition.gd" id="1_vmu46"]
+[ext_resource type="Resource" path="res://data/snow/responses/freezing_rain.tres" id="2_2s8fx"]
+[ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="3_n6aus"]
+[ext_resource type="Script" path="res://src/definitions/weather_tell.gd" id="4_7y5cl"]
+[ext_resource type="Resource" path="res://data/weather/vfx/freezing_rain.tres" id="5_vy03p"]
 
-[sub_resource type="Resource" id="Resource_2s8fx"]
-script = ExtResource("2_u751t")
+[sub_resource type="Resource" id="Resource_qaobq"]
+script = ExtResource("3_n6aus")
 target_stat = &"frostbite_hands"
 source_id = &"freezing_rain"
 operation = 1
 value = 2.0
 
-[sub_resource type="Resource" id="Resource_n6aus"]
-script = ExtResource("2_u751t")
+[sub_resource type="Resource" id="Resource_5uclo"]
+script = ExtResource("3_n6aus")
 target_stat = &"frostbite_feet"
 source_id = &"freezing_rain"
 operation = 1
 value = 2.0
 
-[sub_resource type="Resource" id="Resource_7y5cl"]
-script = ExtResource("3_vmu46")
+[sub_resource type="Resource" id="Resource_yrksn"]
+script = ExtResource("4_7y5cl")
 sound = &"weather_tell_freezing_rain"
 lighting_preset = &"nightfall"
 lighting_lead = 0.55
@@ -29,14 +30,15 @@ snowfall_rate = 0.5
 flushes_wildlife = true
 
 [resource]
-script = ExtResource("1_tre2d")
+script = ExtResource("1_vmu46")
 id = &"freezing_rain"
 display_name = "Freezing rain"
 tell_duration_range = Vector2(22, 34)
 active_duration_range = Vector2(100, 170)
-tell = SubResource("Resource_7y5cl")
-stat_modifiers = Array[ExtResource("2_u751t")]([SubResource("Resource_2s8fx"), SubResource("Resource_n6aus")])
+tell = SubResource("Resource_yrksn")
+stat_modifiers = Array[ExtResource("3_n6aus")]([SubResource("Resource_qaobq"), SubResource("Resource_5uclo")])
 visibility_multiplier = 0.7
 wind_speed_multiplier = 1.1
 snowfall_rate = 0.65
-snow_response = ExtResource("2_vmu46")
+snow_response = ExtResource("2_2s8fx")
+vfx_profile = ExtResource("5_vy03p")

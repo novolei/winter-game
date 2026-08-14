@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="WeatherVfxProfile" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/weather_vfx_profile.gd" id="1_rug01"]
+
+[resource]
+script = ExtResource("1_rug01")
+id = &"clear_break"
+mark_size = Vector2(0.025, 0.1)
+scale_range = Vector2(0.8, 1.2)
+spread_degrees = 4.0
+speed_range = Vector2(0.5, 1)
+wind_influence = 0.2
+fall_acceleration = 0.1
+opacity = 0.2

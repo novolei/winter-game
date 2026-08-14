@@ -1,38 +1,42 @@
 [gd_resource type="Resource" script_class="WeatherEventDefinition" format=3]
 
-[ext_resource type="Script" path="res://src/definitions/weather_event_definition.gd" id="1_2jons"]
-[ext_resource type="Resource" path="res://data/snow/responses/snow_fog.tres" id="2_tn52g"]
-[ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="2_xkk52"]
-[ext_resource type="Script" path="res://src/definitions/weather_tell.gd" id="3_tn52g"]
-[ext_resource type="Resource" path="res://data/weather/wind_map_calm.tres" id="4_fu56g"]
+[ext_resource type="Resource" path="res://data/weather/fog/snow_fog.tres" id="1_fu56g"]
+[ext_resource type="Script" path="res://src/definitions/weather_event_definition.gd" id="2_cpw3v"]
+[ext_resource type="Resource" path="res://data/snow/responses/snow_fog.tres" id="3_nhvp6"]
+[ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="4_lcjkb"]
+[ext_resource type="Script" path="res://src/definitions/weather_tell.gd" id="5_1t7e8"]
+[ext_resource type="Resource" path="res://data/weather/wind_map_calm.tres" id="6_vg8kq"]
+[ext_resource type="Resource" path="res://data/weather/vfx/snow_fog.tres" id="7_7u7dk"]
 
-[sub_resource type="Resource" id="Resource_cpw3v"]
-script = ExtResource("2_xkk52")
+[sub_resource type="Resource" id="Resource_eud4r"]
+script = ExtResource("4_lcjkb")
 target_stat = &"core_temperature"
 source_id = &"snow_fog"
 operation = 1
 value = 1.15
 
-[sub_resource type="Resource" id="Resource_nhvp6"]
-script = ExtResource("3_tn52g")
+[sub_resource type="Resource" id="Resource_6ext0"]
+script = ExtResource("5_1t7e8")
 sound = &"weather_tell_snow_fog"
 lighting_preset = &"nightfall"
 lighting_lead = 0.4
-wind_map = ExtResource("4_fu56g")
+wind_map = ExtResource("6_vg8kq")
 wind_speed_multiplier = 0.6
 snowfall_rate = 0.25
 
 [resource]
-script = ExtResource("1_2jons")
+script = ExtResource("2_cpw3v")
 id = &"snow_fog"
 display_name = "Snow fog"
 tell_duration_range = Vector2(20, 32)
 active_duration_range = Vector2(120, 210)
 fade_duration = 22.0
-tell = SubResource("Resource_nhvp6")
-stat_modifiers = Array[ExtResource("2_xkk52")]([SubResource("Resource_cpw3v")])
+tell = SubResource("Resource_6ext0")
+stat_modifiers = Array[ExtResource("4_lcjkb")]([SubResource("Resource_eud4r")])
 visibility_multiplier = 0.45
 wind_speed_multiplier = 0.5
 snowfall_rate = 0.4
-snow_response = ExtResource("2_tn52g")
-wind_map = ExtResource("4_fu56g")
+snow_response = ExtResource("3_nhvp6")
+vfx_profile = ExtResource("7_7u7dk")
+fog_profile = ExtResource("1_fu56g")
+wind_map = ExtResource("6_vg8kq")

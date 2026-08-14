@@ -1,38 +1,40 @@
 [gd_resource type="Resource" script_class="WeatherEventDefinition" format=3]
 
-[ext_resource type="Script" path="res://src/definitions/weather_event_definition.gd" id="1_sagux"]
-[ext_resource type="Resource" path="res://data/snow/responses/clear_break.tres" id="2_8ow7x"]
-[ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="2_sfml6"]
-[ext_resource type="Script" path="res://src/definitions/weather_tell.gd" id="3_8ow7x"]
-[ext_resource type="Resource" path="res://data/weather/wind_map_calm.tres" id="4_cqvib"]
+[ext_resource type="Script" path="res://src/definitions/weather_event_definition.gd" id="1_8ow7x"]
+[ext_resource type="Resource" path="res://data/snow/responses/clear_break.tres" id="2_cqvib"]
+[ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="3_hxwx4"]
+[ext_resource type="Script" path="res://src/definitions/weather_tell.gd" id="4_bum6d"]
+[ext_resource type="Resource" path="res://data/weather/vfx/clear_break.tres" id="5_dk421"]
+[ext_resource type="Resource" path="res://data/weather/wind_map_calm.tres" id="6_p41xi"]
 
-[sub_resource type="Resource" id="Resource_hxwx4"]
-script = ExtResource("2_sfml6")
+[sub_resource type="Resource" id="Resource_cr3oe"]
+script = ExtResource("3_hxwx4")
 target_stat = &"core_temperature"
 source_id = &"clear_break"
 operation = 1
 value = 0.55
 
-[sub_resource type="Resource" id="Resource_bum6d"]
-script = ExtResource("3_8ow7x")
+[sub_resource type="Resource" id="Resource_wkat7"]
+script = ExtResource("4_bum6d")
 sound = &"weather_tell_clear_break"
 lighting_preset = &"pale_day"
 wind_speed_multiplier = 0.8
 snowfall_rate = 0.05
 
 [resource]
-script = ExtResource("1_sagux")
+script = ExtResource("1_8ow7x")
 id = &"clear_break"
 display_name = "Clear break"
 tell_duration_range = Vector2(20, 30)
 active_duration_range = Vector2(120, 200)
 fade_duration = 25.0
-tell = SubResource("Resource_bum6d")
-stat_modifiers = Array[ExtResource("2_sfml6")]([SubResource("Resource_hxwx4")])
+tell = SubResource("Resource_wkat7")
+stat_modifiers = Array[ExtResource("3_hxwx4")]([SubResource("Resource_cr3oe")])
 visibility_multiplier = 1.4
 wind_speed_multiplier = 0.6
 snowfall_rate = 0.02
-snow_response = ExtResource("2_8ow7x")
+snow_response = ExtResource("2_cqvib")
+vfx_profile = ExtResource("5_dk421")
 lighting_preset = &"sunrise"
 lighting_fade_seconds = 12.0
-wind_map = ExtResource("4_cqvib")
+wind_map = ExtResource("6_p41xi")

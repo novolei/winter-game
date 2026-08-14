@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="WeatherFogProfile" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/weather_fog_profile.gd" id="1_u5v1s"]
+
+[resource]
+script = ExtResource("1_u5v1s")
+id = &"blizzard"
+tell_density = 0.004
+active_density = 0.028
+peak_density = 0.052
+macro_scale_m = Vector3(15, 6, 9)
+detail_scale_m = Vector3(5, 2.5, 3.2)
+noise_contrast = 0.42

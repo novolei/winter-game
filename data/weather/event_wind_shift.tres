@@ -1,27 +1,29 @@
 [gd_resource type="Resource" script_class="WeatherEventDefinition" format=3]
 
-[ext_resource type="Script" path="res://src/definitions/weather_event_definition.gd" id="1_d8ccj"]
-[ext_resource type="Resource" path="res://data/snow/responses/wind_shift.tres" id="2_ceuvd"]
-[ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="2_iqswk"]
-[ext_resource type="Script" path="res://src/definitions/weather_tell.gd" id="3_ceuvd"]
-[ext_resource type="Resource" path="res://data/weather/wind_map_calm.tres" id="4_8g8ci"]
-[ext_resource type="Resource" path="res://data/weather/wind_map_veered.tres" id="5_0vurl"]
+[ext_resource type="Script" path="res://src/definitions/weather_event_definition.gd" id="1_ceuvd"]
+[ext_resource type="Resource" path="res://data/snow/responses/wind_shift.tres" id="2_8g8ci"]
+[ext_resource type="Script" path="res://src/definitions/stat_modifier.gd" id="3_0vurl"]
+[ext_resource type="Script" path="res://src/definitions/weather_tell.gd" id="4_w3ron"]
+[ext_resource type="Resource" path="res://data/weather/wind_map_calm.tres" id="5_ig4v4"]
+[ext_resource type="Resource" path="res://data/weather/vfx/wind_shift.tres" id="6_5a2hd"]
+[ext_resource type="Resource" path="res://data/weather/wind_map_veered.tres" id="7_cqnm3"]
 
-[sub_resource type="Resource" id="Resource_w3ron"]
-script = ExtResource("3_ceuvd")
+[sub_resource type="Resource" id="Resource_54sc2"]
+script = ExtResource("4_w3ron")
 sound = &"weather_tell_wind_shift"
-wind_map = ExtResource("4_8g8ci")
+wind_map = ExtResource("5_ig4v4")
 wind_speed_multiplier = 0.55
 flushes_wildlife = true
 
 [resource]
-script = ExtResource("1_d8ccj")
+script = ExtResource("1_ceuvd")
 id = &"wind_shift"
 display_name = "Wind shift"
 tell_duration_range = Vector2(20, 30)
 active_duration_range = Vector2(90, 160)
 fade_duration = 12.0
-tell = SubResource("Resource_w3ron")
+tell = SubResource("Resource_54sc2")
 wind_speed_multiplier = 1.15
-snow_response = ExtResource("2_ceuvd")
-wind_map = ExtResource("5_0vurl")
+snow_response = ExtResource("2_8g8ci")
+vfx_profile = ExtResource("6_5a2hd")
+wind_map = ExtResource("7_cqnm3")

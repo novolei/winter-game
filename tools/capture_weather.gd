@@ -44,6 +44,7 @@ extends Node
 ##   --preset <id>      the look the day is wearing underneath (default pale_day)
 ##   --stand x,z        where to put the player (default: wherever he starts)
 ##   --seed N           the weather system's RNG seed (default 20260812)
+##   --no-mist 1        diagnostic A/B: keep the weather but remove its local veil
 
 var _out := ""
 var _event := "blizzard"
@@ -55,6 +56,7 @@ var _active := -1.0
 var _preset := "pale_day"
 var _stand := ""
 var _seed := 20260812
+var _no_mist := false
 var _shot := 0
 var _frame := 0
 var _done := false
@@ -74,6 +76,7 @@ func _ready() -> void:
 	_preset = _arg(args, "--preset", "pale_day")
 	_stand = _arg(args, "--stand", "")
 	_seed = int(_arg(args, "--seed", "20260812"))
+	_no_mist = _arg(args, "--no-mist", "0") == "1"
 	if _out == "":
 		push_error("capture_weather: --out is required")
 		get_tree().quit()
@@ -162,6 +165,8 @@ func _begin() -> void:
 		weather.minimum_tell_seconds = minf(weather.minimum_tell_seconds, _tell)
 	if _active > 0.0:
 		definition.active_duration_range = Vector2(_active, _active)
+	if _no_mist:
+		definition.fog_profile = null
 	if not weather.begin(StringName(_event)):
 		push_error("capture_weather: '%s' refused to begin" % _event)
 		get_tree().quit()
@@ -186,6 +191,8 @@ func _capture() -> void:
 	var weather = _service(&"weather")
 	if weather != null:
 		line += "  %-6s" % String(weather.phase())
+		if weather.has_method("phase_elapsed") and weather.has_method("phase_duration"):
+			line += " t=%.2f/%.2f" % [weather.phase_elapsed(), weather.phase_duration()]
 		line += " tell=%.2f" % weather.tell_progress()
 		line += " in=%5.1fs" % weather.seconds_until_arrival()
 		line += " intensity=%.3f" % weather.intensity()
@@ -207,10 +214,29 @@ func _capture() -> void:
 		if look != null:
 			line += "  look=%-10s" % String(look.id)
 		line += " exp=%.2f" % look.tonemap_exposure
-		line += " fog=%.2f" % look.fog_density
+		line += " depth_fog=%.2f" % look.fog_density
+		var environment: Environment = lighting.environment
+		if environment != null:
+			line += " volume=%s/%.5f" % [
+				str(environment.volumetric_fog_enabled),
+				environment.volumetric_fog_density,
+			]
 	var drift := get_node_or_null("Main/Wind/Spindrift")
 	if drift != null:
 		line += "  spindrift=%.3f" % drift.amount_ratio
+	var accent = _service(&"weather_vfx")
+	if accent != null and accent.has_method("density"):
+		line += " vfx=%.3f" % accent.density()
+	var mist := get_node_or_null("Main/WeatherSnowFog")
+	if mist != null and mist.has_method("density"):
+		line += " mist=%s/%.5f" % [str(mist.visible), mist.density()]
+		if mist.has_method("active_profile"):
+			var mist_profile = mist.active_profile()
+			if mist_profile != null:
+				line += "/%.5f" % mist_profile.peak_density
+		if mist.has_method("advection_offset"):
+			var mist_offset: Vector3 = mist.advection_offset()
+			line += " drift=(%.2f,%.2f)" % [mist_offset.x, mist_offset.z]
 	var crows := get_node_or_null("Main/Crows")
 	if crows != null and crows.has_method("perched_count"):
 		# Perched over alive. The pair is the cue: 4/4 is a wire with birds on it,

@@ -1,0 +1,32 @@
+[gd_resource type="Resource" script_class="WeatherVfxProfile" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/weather_vfx_profile.gd" id="1_70ng2"]
+
+[resource]
+script = ExtResource("1_70ng2")
+id = &"cold_snap"
+tell_density = 0.04
+active_density = 0.09
+mark_size = Vector2(0.03, 0.055)
+scale_range = Vector2(0.45, 1.45)
+spread_degrees = 28.0
+speed_range = Vector2(0.12, 0.3)
+downward_bias = 0.18
+wind_influence = 0.08
+fall_acceleration = 0.02
+emission_randomness = 0.65
+turbulence_influence_range = Vector2(0.04, 0.12)
+turbulence_scale = 1.4
+turbulence_drift = 0.04
+damping_range = Vector2(0.15, 0.35)
+angular_velocity_range = Vector2(-18, 18)
+angular_velocity_end_multiplier = 0.15
+rock_amplitude_range = Vector2(5, 12)
+rock_frequency_range = Vector2(0.15, 0.35)
+rock_end_multiplier = 0.7
+flutter_amplitude_range = Vector2(1, 3)
+flutter_frequency_range = Vector2(0.5, 1)
+flip_probability = 0.03
+flip_duration_range = Vector2(0.45, 0.65)
+flip_edge_scale = 0.35
+opacity = 0.38

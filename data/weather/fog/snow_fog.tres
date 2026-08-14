@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="WeatherFogProfile" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/weather_fog_profile.gd" id="1_53pl6"]
+
+[resource]
+script = ExtResource("1_53pl6")
+id = &"snow_fog"
+tell_density = 0.003
+active_density = 0.019
+peak_density = 0.034
+macro_scale_m = Vector3(17, 7, 11)
+detail_scale_m = Vector3(6, 3.5, 4.5)
+detail_weight = 0.24
+noise_contrast = 0.32
+wind_advection_multiplier = 0.08
+max_advection_speed_mps = 0.42
+wind_response_per_second = 1.4

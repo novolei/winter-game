@@ -1,0 +1,7 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/rendering/weather_snow_fog.gd" id="1_weather_fog"]
+
+[node name="WeatherSnowFog" type="FogVolume"]
+script = ExtResource("1_weather_fog")
+

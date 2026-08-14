@@ -37,6 +37,8 @@ extends Resource
 ##   `wind_map`                -> WindSystem.set_map()          (crossfaded)
 ##   `wind_speed_multiplier`   -> WindSystem.set_gale_multiplier()
 ##   `snowfall_rate`           -> Snowfall.set_snowfall_rate()
+##   `vfx_profile`             -> WeatherVfxLayer (continuous service polling)
+##   `fog_profile`             -> WeatherSnowFog (continuous service polling)
 ##   `stat_modifiers`          -> SurvivalSystem.push_modifier()
 ##   `tell.flushes_wildlife`   -> CrowFlock.scatter()
 ##
@@ -101,6 +103,17 @@ extends Resource
 @export var snow_response: SnowResponseDefinition = null
 
 @export_group("Look")
+## The event-specific air signature layered on top of the shared snow, wind and
+## lighting. The profile is deliberately only visual: it cannot alter the
+## survival model, visibility, snowfall rate or wind strength.
+@export var vfx_profile: WeatherVfxProfile = null
+
+## Optional middle-distance snow veil. It is separate from the particle accent
+## because its density, world-space noise and camera depth gates are volumetric
+## concerns. Null is the exact, allocation-free meaning of "this weather has no
+## local mist"; adding one remains a `.tres` authoring choice.
+@export var fog_profile: WeatherFogProfile = null
+
 ## Which of Art Bible section 4.2's six looks this weather wears. Empty means
 ## the sky is left wherever the tell put it -- see `WeatherTell.lighting_preset`,
 ## which explains why that is a shape and not an omission.
