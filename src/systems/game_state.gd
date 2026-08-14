@@ -14,6 +14,7 @@ const RUN_SEED_SERVICE := &"run_seed"
 
 const EVENT_RUN_STARTED := &"game.run_started"
 const EVENT_RUN_ENDED := &"game.run_ended"
+const EVENT_RUN_RESET := &"game.run_reset"
 const EVENT_SURVIVAL_DIED := &"survival.died"
 const EVENT_BEACONS_FINAL_STATE := &"beacons.final_state"
 
@@ -95,9 +96,7 @@ func is_running() -> bool:
 ##
 ## A missing half refuses before touching the other.  This is stricter than the
 ## temporary RunBoot bridge: once a real owner exists, a player freezing in a
-## calendar that never moves is not a useful partial success.  Restart is also
-## intentionally refused after an ending until the next slice can reset fuel,
-## route pickups and beacon tanks together rather than only healing the body.
+## calendar that never moves is not a useful partial success.
 func begin_run(seed := 0) -> bool:
 	if _state != STATE_IDLE:
 		return false
@@ -124,6 +123,33 @@ func begin_run(seed := 0) -> bool:
 		"day": _clock.current_day(),
 	})
 	return true
+
+
+## Starts another attempt only after every world-state owner has synchronously
+## consumed the shared reset boundary. EventBus dispatch is synchronous, so no
+## new body or calendar tick can observe inventory, pickups or beacon fuel from
+## the settled attempt.
+func restart_run(seed := 0) -> bool:
+	if _state != STATE_ENDED:
+		return false
+	_resolve()
+	if _survival == null or _clock == null:
+		return false
+	if _survival.is_running() or _clock.is_running():
+		return false
+	if _clock.schedule_count() == 0:
+		_clock.load_schedules_from_directory()
+	if _clock.schedule_count() == 0:
+		return false
+	if seed != 0:
+		run_seed = seed
+	else:
+		run_seed = 0
+		_ensure_run_seed()
+	_emit(EVENT_RUN_RESET, {"seed": run_seed})
+	_state = STATE_IDLE
+	_outcome = &""
+	return begin_run(run_seed)
 
 
 func _on_survival_died(payload) -> void:

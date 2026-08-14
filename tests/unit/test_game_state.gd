@@ -7,6 +7,8 @@ const SurvivalSystemScript := preload("res://src/systems/survival_system.gd")
 const EventBusScript := preload("res://src/core/event_bus.gd")
 
 const EVENT_RUN_ENDED := &"game.run_ended"
+const EVENT_RUN_RESET := &"game.run_reset"
+const EVENT_RUN_STARTED := &"game.run_started"
 const OUTCOME_RESCUED := &"rescued"
 const OUTCOME_ABANDONED := &"abandoned"
 const OUTCOME_DEAD := &"dead"
@@ -70,10 +72,12 @@ var _clock = null
 var _network = null
 var _bus = null
 var _events: Array = []
+var _event_order: Array[StringName] = []
 
 
 func before_each() -> void:
 	_events = []
+	_event_order = []
 
 
 func after_each() -> void:
@@ -102,6 +106,14 @@ func _new_game():
 
 func _record(payload) -> void:
 	_events.append(payload)
+
+
+func _record_reset(_payload) -> void:
+	_event_order.append(EVENT_RUN_RESET)
+
+
+func _record_started(_payload) -> void:
+	_event_order.append(EVENT_RUN_STARTED)
 
 
 func test_a_run_starts_the_body_and_loaded_clock_as_one_transition() -> void:
@@ -296,6 +308,29 @@ func test_any_dark_beacon_at_final_state_is_abandonment_not_death() -> void:
 	_bus.emit_event(&"beacons.final_state", {"lit": 4, "total": 5, "all_lit": false})
 	assert_eq(game.outcome(), OUTCOME_ABANDONED)
 	assert_false(game.outcome() == OUTCOME_DEAD, "being unseen was collapsed into dying")
+
+
+func test_restart_resets_the_world_before_starting_the_next_attempt() -> void:
+	_bus = EventBusScript.new()
+	_bus.subscribe(EVENT_RUN_RESET, _record_reset)
+	_bus.subscribe(EVENT_RUN_STARTED, _record_started)
+	var game = _new_game()
+	if game == null:
+		return
+	var survival := FakeSurvival.new()
+	var clock := FakeClock.new()
+	game.set_event_bus(_bus)
+	game.set_survival_system(survival)
+	game.set_world_clock(clock)
+	assert_true(game.begin_run(101))
+	_bus.emit_event(&"survival.died", {"stat": &"hunger"})
+	assert_true(game.restart_run(202), "a settled run could not start a clean attempt")
+	assert_eq(_event_order, [EVENT_RUN_STARTED, EVENT_RUN_RESET, EVENT_RUN_STARTED],
+		"the next body and clock started before old world state was cleared")
+	assert_eq(game.current_run_seed(), 202)
+	assert_true(game.is_running())
+	assert_eq(survival.start_count, 2)
+	assert_eq(clock.calls.count(&"start"), 2)
 
 
 func test_the_shipped_seven_days_can_reach_the_rescue_exit_deterministically() -> void:

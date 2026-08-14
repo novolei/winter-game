@@ -14,6 +14,7 @@ const BEACON_SCENE := preload("res://scenes/entities/beacon/beacon.tscn")
 const EVENT_WEATHER_ARRIVED := &"weather.arrived"
 const EVENT_DAY_STARTED := &"clock.day_started"
 const EVENT_RUN_FINISHED := &"clock.run_finished"
+const EVENT_RUN_RESET := &"game.run_reset"
 const EVENT_FINAL_STATE := &"beacons.final_state"
 
 @export var definitions_directory := DEFINITIONS_DIRECTORY
@@ -211,6 +212,17 @@ func _on_run_finished(_payload) -> void:
 		})
 
 
+func _on_run_reset(payload) -> void:
+	var seed := random_seed
+	if payload is Dictionary:
+		seed = int(payload.get("seed", random_seed))
+	_rng.seed = seed
+	_day = 1
+	for lamp in beacons():
+		lamp.reset_for_run()
+	set_day(1)
+
+
 func _resolve() -> void:
 	if not is_inside_tree():
 		return
@@ -231,6 +243,7 @@ func _subscribe() -> void:
 	_bus.subscribe(EVENT_WEATHER_ARRIVED, _on_weather_arrived)
 	_bus.subscribe(EVENT_DAY_STARTED, _on_day_started)
 	_bus.subscribe(EVENT_RUN_FINISHED, _on_run_finished)
+	_bus.subscribe(EVENT_RUN_RESET, _on_run_reset)
 
 
 func _unsubscribe() -> void:
@@ -239,3 +252,4 @@ func _unsubscribe() -> void:
 	_bus.unsubscribe(EVENT_WEATHER_ARRIVED, _on_weather_arrived)
 	_bus.unsubscribe(EVENT_DAY_STARTED, _on_day_started)
 	_bus.unsubscribe(EVENT_RUN_FINISHED, _on_run_finished)
+	_bus.unsubscribe(EVENT_RUN_RESET, _on_run_reset)

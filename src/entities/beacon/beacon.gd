@@ -131,6 +131,24 @@ func fuel_remaining() -> float:
 	return _fuel
 
 
+## Returns local state to an unstarted attempt without publishing gameplay
+## feedback from the run that just ended.
+func reset_for_run() -> void:
+	_near = false
+	_withdraw_offer()
+	_lit = false
+	_unlocked = false
+	_fuel = 0.0
+	_clock = 0.0
+	_wind_strength = 0.0
+	_wind_velocity = Vector3.ZERO
+	Fires.leave(self)
+	clear_recovery()
+	if _extinguish_smoke != null:
+		_extinguish_smoke.emitting = false
+	_drive_light()
+
+
 func nominal_fill() -> float:
 	if definition == null or definition.fuel_capacity <= 0.0:
 		return 0.0

@@ -75,6 +75,24 @@ func is_collected() -> bool:
 	return _collected
 
 
+## Restores the authored pickup without rebuilding its imported visual. This is
+## deliberately silent: it is a boundary between attempts, not a world event
+## the outgoing player should see or hear.
+func reset_for_run() -> void:
+	_near = false
+	_withdraw_offer()
+	_collected = false
+	visible = true
+	if definition == null or not definition.is_pickup():
+		return
+	collision_layer = 0
+	collision_mask = 1
+	monitoring = true
+	monitorable = false
+	if _shape != null:
+		_shape.set_deferred("disabled", false)
+
+
 func collect() -> bool:
 	if _collected or definition == null or not definition.is_pickup():
 		return false

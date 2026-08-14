@@ -34,6 +34,7 @@ extends Node
 
 const DEFAULT_ITEMS_DIRECTORY := "res://data/items"
 const SERVICE := &"fuel_economy"
+const EVENT_RUN_RESET := &"game.run_reset"
 
 ## Which stat an item's nutrition and hydration put back. Named here rather than
 ## carried per item because ItemDefinition's own field names already decide it:
@@ -51,6 +52,8 @@ var _definitions: Dictionary = {}
 var _store: Dictionary = {}
 
 var _survival = null
+var _bus = null
+var _subscribed := false
 
 # --- wiring ----------------------------------------------------------------
 
@@ -61,9 +64,12 @@ func _ready() -> void:
 		var registry := get_node_or_null("/root/ServiceRegistry")
 		if registry != null:
 			registry.register(SERVICE, self)
+		_bus = get_node_or_null("/root/EventBus")
+		_subscribe()
 
 
 func _exit_tree() -> void:
+	_unsubscribe()
 	if not is_inside_tree():
 		return
 	var registry := get_node_or_null("/root/ServiceRegistry")
@@ -72,6 +78,35 @@ func _exit_tree() -> void:
 
 func set_survival_system(system) -> void:
 	_survival = system
+
+
+func set_event_bus(bus) -> void:
+	_unsubscribe()
+	_bus = bus
+	_subscribe()
+
+
+## A new attempt keeps the authored catalogue but starts with an empty pack.
+func reset_for_run() -> void:
+	_store.clear()
+
+
+func _on_run_reset(_payload) -> void:
+	reset_for_run()
+
+
+func _subscribe() -> void:
+	if _bus == null or _subscribed:
+		return
+	_bus.subscribe(EVENT_RUN_RESET, _on_run_reset)
+	_subscribed = true
+
+
+func _unsubscribe() -> void:
+	if _bus == null or not _subscribed:
+		return
+	_bus.unsubscribe(EVENT_RUN_RESET, _on_run_reset)
+	_subscribed = false
 
 ## The body this feeds, resolved on first use rather than in _ready().
 ##

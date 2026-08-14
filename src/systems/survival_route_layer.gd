@@ -9,6 +9,7 @@ const SERVICE := &"survival_routes"
 const DEFAULT_ROUTES_DIRECTORY := "res://data/routes"
 const DEFAULT_NODES_DIRECTORY := "res://data/route_nodes"
 const NODE_SCENE := preload("res://scenes/entities/survival_route_node.tscn")
+const EVENT_RUN_RESET := &"game.run_reset"
 
 @export var routes_directory := DEFAULT_ROUTES_DIRECTORY
 @export var nodes_directory := DEFAULT_NODES_DIRECTORY
@@ -21,10 +22,12 @@ var _nodes: Dictionary = {}
 var _registry = null
 var _economy = null
 var _bus = null
+var _subscribed := false
 
 
 func _ready() -> void:
 	_resolve_services()
+	_subscribe()
 	if _registry != null:
 		_registry.register(SERVICE, self)
 	load_routes_from_directory(routes_directory)
@@ -34,6 +37,7 @@ func _ready() -> void:
 
 
 func _exit_tree() -> void:
+	_unsubscribe()
 	if _registry != null and _registry.get_service(SERVICE) == self:
 		_registry.unregister(SERVICE)
 
@@ -45,9 +49,34 @@ func set_fuel_economy(economy) -> void:
 
 
 func set_event_bus(bus) -> void:
+	_unsubscribe()
 	_bus = bus
+	_subscribe()
 	for node in route_nodes():
 		node.set_event_bus(_bus)
+
+
+func reset_for_run() -> void:
+	for node in route_nodes():
+		node.reset_for_run()
+
+
+func _on_run_reset(_payload) -> void:
+	reset_for_run()
+
+
+func _subscribe() -> void:
+	if _bus == null or _subscribed:
+		return
+	_bus.subscribe(EVENT_RUN_RESET, _on_run_reset)
+	_subscribed = true
+
+
+func _unsubscribe() -> void:
+	if _bus == null or not _subscribed:
+		return
+	_bus.unsubscribe(EVENT_RUN_RESET, _on_run_reset)
+	_subscribed = false
 
 
 func load_routes_from_directory(path := DEFAULT_ROUTES_DIRECTORY) -> int:

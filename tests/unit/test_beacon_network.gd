@@ -333,6 +333,22 @@ func test_an_ordinary_weather_arrival_does_not_touch_the_lamps() -> void:
 	assert_eq(network.lit_count(), 1)
 
 
+func test_run_reset_drains_every_beacon_and_returns_unlocks_to_day_one() -> void:
+	var network := _build_network()
+	network.set_day(5)
+	for lamp in network.beacons():
+		lamp.add_fuel_seconds(100.0)
+		lamp.light()
+	assert_eq(network.lit_count(), 5)
+	_bus.emit_event(&"game.run_reset", {"seed": 1729})
+	assert_eq(network.lit_count(), 0)
+	for index in IDS.size():
+		var lamp := network.beacon(IDS[index])
+		assert_almost_eq(lamp.fuel_remaining(), 0.0)
+		assert_eq(lamp.is_unlocked(), index == 0,
+			"restart did not restore the authored day-one unlock boundary")
+
+
 func test_the_run_end_publishes_the_visible_final_state() -> void:
 	var network := _build_network()
 	_bus.subscribe(&"beacons.final_state", _record)

@@ -12,6 +12,7 @@ extends TestCase
 
 const FuelEconomyScript := preload("res://src/systems/fuel_economy.gd")
 const SurvivalSystemScript := preload("res://src/systems/survival_system.gd")
+const EventBusScript := preload("res://src/core/event_bus.gd")
 
 var _economy = null
 var _survival = null
@@ -120,6 +121,21 @@ func test_store_mass_adds_up() -> void:
 	economy.add(&"log", 2)
 	economy.add(&"drink", 1)
 	assert_almost_eq(economy.store_mass_kg(), 7.0, 0.0001, "2 logs at 3 kg and a 1 kg drink")
+
+
+func test_run_reset_empties_inventory_without_discarding_the_catalogue() -> void:
+	var economy = _build()
+	var bus = EventBusScript.new()
+	economy.set_event_bus(bus)
+	economy.add(&"log", 2)
+	economy.add(&"meal", 1)
+	bus.emit_event(&"game.run_reset", {"seed": 1729})
+	assert_eq(economy.count_of(&"log"), 0)
+	assert_eq(economy.count_of(&"meal"), 0)
+	assert_eq(economy.store_mass_kg(), 0.0)
+	assert_true(economy.has_item(&"log"), "restart discarded item definitions with the backpack")
+	economy.set_event_bus(null)
+	bus.free()
 
 # --- fuel, the only real currency -------------------------------------------
 

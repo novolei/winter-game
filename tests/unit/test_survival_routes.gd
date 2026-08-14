@@ -164,6 +164,47 @@ func test_collecting_one_node_adds_exactly_its_authored_count_once() -> void:
 	node.free()
 
 
+func test_run_reset_restores_a_collected_route_pickup() -> void:
+	var definition := SurvivalRouteNodeDefinition.new()
+	definition.id = &"probe"
+	definition.route_id = &"probe_route"
+	definition.item_id = &"firewood"
+	definition.item_count = 2
+	var economy := FakeEconomy.new()
+	var node: SurvivalRouteNode = NodeScript.new()
+	node.definition = definition
+	node.set_fuel_economy(economy)
+	assert_true(node.collect())
+	node.reset_for_run()
+	assert_false(node.is_collected())
+	assert_true(node.visible)
+	assert_true(node.collect(), "the pickup stayed exhausted in the next attempt")
+	assert_eq(economy.count_of(&"firewood"), 4)
+	node.free()
+
+
+func test_route_layer_consumes_the_shared_run_reset_event() -> void:
+	_bus = EventBusScript.new()
+	var economy := FakeEconomy.new()
+	var layer: SurvivalRouteLayer = LayerScript.new()
+	layer.set_event_bus(_bus)
+	layer.set_fuel_economy(economy)
+	layer.load_routes_from_directory()
+	layer.load_nodes_from_directory()
+	layer.spawn_missing()
+	var pickup: SurvivalRouteNode = null
+	for candidate in layer.route_nodes():
+		if candidate.definition.is_pickup():
+			pickup = candidate
+			break
+	assert_not_null(pickup)
+	if pickup != null:
+		assert_true(pickup.collect())
+		_bus.emit_event(&"game.run_reset", {"seed": 1729})
+		assert_false(pickup.is_collected(), "the route layer ignored the new-run boundary")
+	layer.free()
+
+
 func test_a_pickup_publishes_what_was_found_and_where() -> void:
 	var definition := SurvivalRouteNodeDefinition.new()
 	definition.id = &"probe"
