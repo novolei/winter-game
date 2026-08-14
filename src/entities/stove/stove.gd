@@ -56,6 +56,15 @@ const EVENT_OFFER_EXITED := &"interaction.offer_exited"
 const EVENT_ACTIVATED := &"interaction.activated"
 const EVENT_REJECTED := &"interaction.rejected"
 
+const ACTION_LIGHT := &"light"
+const ACTION_ADD_FUEL := &"add_fuel"
+const ACTION_HEAT := &"heat"
+const ACTION_CONSUME := &"consume"
+const ACTION_EXTINGUISH := &"extinguish"
+const STAT_HUNGER := &"hunger"
+const STAT_THIRST := &"thirst"
+const CAPACITY_EPSILON := 0.0001
+
 const PALETTE_PATH := "res://data/palette/color_bible.tres"
 
 ## The two stats a fire puts back, and the channel it puts them on.
@@ -92,6 +101,7 @@ const TARGET_REST := &"fatigue:recovery"
 @export var interaction_area_size := Vector3(2.4, 2.2, 2.0)
 @export var interaction_refill_seconds := 600.0
 @export var interaction_capacity_seconds := 3600.0
+@export var interaction_extinguish_hold_seconds := 0.8
 
 ## ---------------------------------------------------------------------------
 ## Warmth
@@ -337,20 +347,101 @@ func stoke_for(seconds: float) -> float:
 		_publish_offer()
 	return added
 
-## The gameplay action. A cold stove with banked fuel merely lights; an empty
-## one first banks one whole item. A burning stove banks one more item. Fuel
-## choice remains data-driven inside FuelEconomy.
+## The gameplay action pictured by the one shared world prompt. Each short press
+## is one atomic chore and then republishes the next one: light, prepare one
+## needed item, consume it, or bank one useful refill. A lit stove also advertises
+## a hold gesture through that same E ring so the player can smother it at any
+## point without being forced to spend food, water, or another fuel item. The item
+## ids, conversions and costs all come from ItemDefinition; this queue never
+## names a meal or a drink.
 func interact() -> bool:
-	if _lit:
-		if not _can_accept_fuel():
+	var action := interaction_action()
+	return perform_interaction(
+		StringName(action.get("action", &"")),
+		StringName(action.get("item_id", &""))
+	)
+
+
+## Pure, value-only description of what the next E press will do. Prepared
+## supplies are offered only when their primary recovery fits in the missing
+## part of its bar. That prevents the contextual button from eating a whole hot
+## meal at full hunger merely because it happened to be in the pack.
+func interaction_action() -> Dictionary:
+	if not _lit:
+		var can_light := _fuel > 0.0 or _can_accept_fuel()
+		return _make_action(
+			ACTION_LIGHT,
+			&"",
+			"Light",
+			can_light,
+			&"" if can_light else &"no_fuel"
+		)
+
+	# Food first keeps a meal's small authored hydration bonus from making it a
+	# substitute for water. Within a category, use the largest recovery that
+	# fits; ties are stable by item id.
+	for raw_category in [ItemDefinition.Category.FOOD, ItemDefinition.Category.WATER]:
+		var category := int(raw_category)
+		var ready_item := _best_ready_item(category)
+		if ready_item != &"":
+			return _make_action(
+				ACTION_CONSUME,
+				ready_item,
+				_consumption_verb(ready_item),
+				true
+			)
+		var raw_item := _best_raw_item(category)
+		if raw_item == &"":
+			continue
+		var definition: ItemDefinition = _economy.definition_of(raw_item)
+		if definition != null and _fuel + CAPACITY_EPSILON >= definition.heat_seconds:
+			return _make_action(
+				ACTION_HEAT,
+				raw_item,
+				_heating_verb(raw_item),
+				true
+			)
+		if _can_accept_fuel():
+			return _make_action(ACTION_ADD_FUEL, &"", "Add fuel", true)
+
+	# Once the immediate chores are done, keep the original one-item-per-press
+	# refilling contract until the nominal capacity is reached. Smothering remains
+	# available at every intermediate state through the same prompt's hold gesture.
+	if _can_accept_fuel():
+		return _make_action(ACTION_ADD_FUEL, &"", "Add fuel", true)
+	return _make_action(ACTION_EXTINGUISH, &"", "Extinguish", true)
+
+
+## Executes exactly the value action the prompt advertised. Callers cannot ask
+## for "heat" with a different item, or replay yesterday's action after another
+## interaction changed the pack: the current pure action must still match.
+func perform_interaction(action_id: StringName, item_id := &"") -> bool:
+	var current := interaction_action()
+	if not _same_action(current, action_id, item_id) or not bool(current.get("enabled", false)):
+		return false
+
+	var completed := false
+	match action_id:
+		ACTION_LIGHT:
+			if _fuel <= 0.0 and stoke_for(_refill_request()) <= 0.0:
+				return false
+			completed = light()
+		ACTION_ADD_FUEL:
+			completed = stoke_for(_refill_request()) > 0.0
+		ACTION_HEAT:
+			completed = heat(item_id) != &""
+		ACTION_CONSUME:
+			completed = _economy != null and bool(_economy.consume(item_id))
+		ACTION_EXTINGUISH:
+			if not _lit:
+				return false
+			extinguish()
+			completed = true
+		_:
 			return false
-		return stoke_for(_refill_request()) > 0.0
-	if _fuel <= 0.0:
-		if not _can_accept_fuel() or stoke_for(_refill_request()) <= 0.0:
-			return false
-	var ignited := light()
-	_publish_offer()
-	return ignited
+	if completed:
+		_publish_offer()
+	return completed
 
 func light() -> bool:
 	if _lit or _fuel <= 0.0:
@@ -580,20 +671,42 @@ func _on_interaction_activated(payload) -> void:
 		return
 	if StringName(payload.get("id", &"")) != _offer_id() or not _near:
 		return
-	if not interact():
-		_emit_interaction_rejected()
+	if StringName(payload.get("gesture", &"tap")) == &"hold":
+		if not _lit:
+			_emit_interaction_rejected(&"stale_action")
+			_publish_offer()
+			return
+		extinguish()
+		return
+	var action_id := StringName(_last_offer.get("action", &""))
+	var item_id := StringName(_last_offer.get("item_id", &""))
+	var current := interaction_action()
+	if not _same_action(current, action_id, item_id):
+		_emit_interaction_rejected(&"stale_action")
+		_publish_offer()
+		return
+	if not bool(current.get("enabled", false)):
+		_emit_interaction_rejected(StringName(current.get("reason", &"unavailable")))
+		_publish_offer()
+		return
+	if not perform_interaction(action_id, item_id):
+		_emit_interaction_rejected(&"stale_action")
+		_publish_offer()
 
 
-func _emit_interaction_rejected() -> void:
+func _emit_interaction_rejected(reason_override := &"") -> void:
 	if _bus == null or not is_instance_valid(_bus):
 		return
 	var offer := _interaction_offer()
+	var reason := StringName(reason_override)
+	if reason == &"":
+		reason = StringName(offer.get("reason", &"unavailable"))
 	_bus.emit_event(EVENT_REJECTED, {
 		"id": _offer_id(),
 		"kind": &"stove",
 		"verb": String(offer.get("verb", "Use")),
 		"label": interaction_label,
-		"reason": StringName(offer.get("reason", &"unavailable")),
+		"reason": reason,
 		"world_position": _interaction_anchor(),
 	})
 
@@ -621,21 +734,122 @@ func _withdraw_offer() -> void:
 
 
 func _interaction_offer() -> Dictionary:
-	var can_light := not _lit and _fuel > 0.0
-	var can_add := _can_accept_fuel()
-	var enabled := can_light or can_add
-	var reason: StringName = &""
-	if not enabled:
-		reason = &"full" if _at_nominal_capacity() else &"no_fuel"
+	var offer := interaction_action()
+	offer["id"] = _offer_id()
+	offer["kind"] = &"stove"
+	offer["world_position"] = _interaction_anchor()
+	if _lit and StringName(offer.get("action", &"")) != ACTION_EXTINGUISH:
+		offer["alternate_hold"] = true
+		offer["hold_seconds"] = maxf(interaction_extinguish_hold_seconds, 0.05)
+		offer["hold_verb"] = "Extinguish"
+	# Deliberately no guide_line: the hearth uses the same ring-and-copy prompt
+	# as pigeon feeding, without drawing a vertical lead through the room.
+	return offer
+
+
+func _make_action(
+	action_id: StringName,
+	item_id: StringName,
+	verb: String,
+	enabled: bool,
+	reason := &""
+) -> Dictionary:
 	return {
-		"id": _offer_id(),
-		"kind": &"stove",
-		"verb": "Add fuel" if _lit else "Light",
+		"action": action_id,
+		"item_id": item_id,
+		"verb": verb,
 		"label": interaction_label,
-		"world_position": _interaction_anchor(),
 		"enabled": enabled,
-		"reason": reason,
+		"reason": StringName(reason),
 	}
+
+
+func _same_action(action: Dictionary, action_id: StringName, item_id: StringName) -> bool:
+	return StringName(action.get("action", &"")) == action_id \
+		and StringName(action.get("item_id", &"")) == item_id
+
+
+func _best_ready_item(category: int) -> StringName:
+	if _economy == null or _survival == null:
+		return &""
+	var best: StringName = &""
+	var best_recovery := -1.0
+	for item_id in _economy.item_ids():
+		if _economy.count_of(item_id) <= 0:
+			continue
+		var definition: ItemDefinition = _economy.definition_of(item_id)
+		if definition == null or definition.category != category:
+			continue
+		# A raw item with a declared conversion remains a preparation candidate;
+		# canned food is never silently eaten cold while standing at a lit stove.
+		if definition.heats_into != &"":
+			continue
+		var recovery := _primary_recovery(definition, category)
+		if recovery <= 0.0 or not _recovery_fits(recovery, category):
+			continue
+		if recovery > best_recovery + CAPACITY_EPSILON \
+				or (is_equal_approx(recovery, best_recovery) and (best == &"" or String(item_id) < String(best))):
+			best = item_id
+			best_recovery = recovery
+	return best
+
+
+func _best_raw_item(category: int) -> StringName:
+	if _economy == null or _survival == null:
+		return &""
+	var best: StringName = &""
+	var best_recovery := -1.0
+	for item_id in _economy.item_ids():
+		if _economy.count_of(item_id) <= 0:
+			continue
+		var definition: ItemDefinition = _economy.definition_of(item_id)
+		if definition == null or definition.heats_into == &"":
+			continue
+		var output: ItemDefinition = _economy.definition_of(definition.heats_into)
+		if output == null or output.category != category:
+			continue
+		var recovery := _primary_recovery(output, category)
+		if recovery <= 0.0 or not _recovery_fits(recovery, category):
+			continue
+		if recovery > best_recovery + CAPACITY_EPSILON \
+				or (is_equal_approx(recovery, best_recovery) and (best == &"" or String(item_id) < String(best))):
+			best = item_id
+			best_recovery = recovery
+	return best
+
+
+func _primary_recovery(definition: ItemDefinition, category: int) -> float:
+	if category == ItemDefinition.Category.FOOD:
+		return definition.nutrition
+	if category == ItemDefinition.Category.WATER:
+		return definition.hydration
+	return 0.0
+
+
+func _recovery_fits(amount: float, category: int) -> bool:
+	if _survival == null or not _survival.has_method("fraction_of"):
+		return false
+	var stat_id := STAT_HUNGER if category == ItemDefinition.Category.FOOD else STAT_THIRST
+	var missing := 1.0 - float(_survival.fraction_of(stat_id))
+	return amount <= missing + CAPACITY_EPSILON
+
+
+func _consumption_verb(item_id: StringName) -> String:
+	var definition: ItemDefinition = _economy.definition_of(item_id) if _economy != null else null
+	var display := String(item_id) if definition == null else definition.display_name
+	if definition != null and definition.category == ItemDefinition.Category.WATER:
+		return "Drink %s" % display
+	return "Eat %s" % display
+
+
+func _heating_verb(item_id: StringName) -> String:
+	var definition: ItemDefinition = _economy.definition_of(item_id) if _economy != null else null
+	var display := String(item_id) if definition == null else definition.display_name
+	if definition != null:
+		var output: ItemDefinition = _economy.definition_of(definition.heats_into)
+		if output != null and output.category == ItemDefinition.Category.WATER:
+			return "Melt %s" % display
+	return "Cook %s" % display
 
 
 func _can_accept_fuel() -> bool:

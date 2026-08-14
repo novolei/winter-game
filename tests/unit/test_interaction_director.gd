@@ -145,6 +145,31 @@ func test_hold_offer_activates_once_then_latches_until_release() -> void:
 	assert_eq(_events.size(), 2, "release did not unlock the next deliberate hold")
 
 
+func test_completed_hold_stays_latched_when_a_new_hold_offer_takes_focus() -> void:
+	var first := _offer(&"first_pigeon", Vector3(0.0, 0.0, -1.0), "Feed", "Pigeon")
+	first["hold_seconds"] = 0.8
+	_bus.emit_event(&"interaction.offer_entered", first)
+	_director.advance_interaction(0.8, true, true)
+	assert_eq(_events.size(), 1)
+
+	# The feeding producer withdraws the accepted pigeon synchronously, while E
+	# may still be physically down. A second bird becoming focus must not inherit
+	# that same press as a fresh hold.
+	_bus.emit_event(&"interaction.offer_exited", {"id": &"first_pigeon"})
+	var second := _offer(&"second_pigeon", Vector3(0.0, 0.0, -1.0), "Feed", "Pigeon")
+	second["hold_seconds"] = 0.8
+	_bus.emit_event(&"interaction.offer_entered", second)
+	assert_eq(_director.focused_id(), &"second_pigeon")
+	_director.advance_interaction(0.8, true, false)
+	assert_eq(_events.size(), 1,
+		"one uninterrupted E hold activated two successive pigeons")
+
+	_director.advance_interaction(0.0, false)
+	_director.advance_interaction(0.8, true, true)
+	assert_eq(_events.size(), 2,
+		"a physical release did not unlock the next deliberate pigeon hold")
+
+
 func test_releasing_or_losing_focus_resets_partial_hold() -> void:
 	var first := _offer(&"first", Vector3(0.0, 0.0, -2.0))
 	first["hold_seconds"] = 1.0
@@ -228,6 +253,75 @@ func test_tap_offer_still_activates_on_the_press_edge() -> void:
 	_director.advance_interaction(0.0, false)
 	_director.advance_interaction(0.0, true, true)
 	assert_eq(_events.size(), 2)
+
+
+func test_dual_gesture_short_press_activates_tap_once_on_release_and_cancels_on_content_change() -> void:
+	var offer := _offer(&"hearth", Vector3.ZERO, "Cook", "Stove")
+	offer["hold_seconds"] = 0.8
+	offer["alternate_hold"] = true
+	offer["hold_verb"] = "Extinguish"
+	# Dual gestures deliberately reuse only the pigeon's E ring. A producer
+	# cannot accidentally bring the vertical world guide back into an interior.
+	offer["guide_line"] = true
+	_bus.emit_event(&"interaction.offer_entered", offer)
+	var clean: Dictionary = _director.focused_offer()
+	assert_true(bool(clean.get("alternate_hold", false)))
+	assert_false(bool(clean.get("guide_line", true)))
+
+	assert_false(_director.advance_interaction(0.20, true, true),
+		"a dual offer fired its tap action on the press edge")
+	assert_eq(_events.size(), 0)
+	assert_true(_director.advance_interaction(0.0, false),
+		"releasing a short dual gesture did not activate its tap action")
+	assert_eq(_events.size(), 1)
+	if not _events.is_empty():
+		var payload: Dictionary = _events[0]
+		assert_eq(payload.get("gesture"), &"tap")
+		for value in payload.values():
+			assert_false(value is Object, "a dual tap payload carries a live Object")
+	assert_false(_director.advance_interaction(0.0, false))
+	assert_eq(_events.size(), 1, "one release repeated the dual tap action")
+
+	_director.advance_interaction(0.20, true, true)
+	offer["verb"] = "Drink"
+	_bus.emit_event(&"interaction.offer_changed", offer)
+	assert_almost_eq(_director.hold_progress(), 0.0, 0.0001,
+		"changed offer copy kept the previous action's partial gesture")
+	_director.advance_interaction(0.0, false)
+	assert_eq(_events.size(), 1,
+		"releasing after the pictured action changed dispatched a stale tap")
+
+
+func test_dual_gesture_long_press_activates_hold_once_and_focus_loss_cancels_release() -> void:
+	var offer := _offer(&"hearth", Vector3.ZERO, "Eat", "Stove")
+	offer["hold_seconds"] = 0.8
+	offer["alternate_hold"] = true
+	offer["hold_verb"] = "Extinguish"
+	_bus.emit_event(&"interaction.offer_entered", offer)
+
+	assert_false(_director.advance_interaction(0.39, true, true))
+	assert_true(_director.advance_interaction(0.41, true),
+		"completing the dual ring did not activate its hold action")
+	assert_eq(_events.size(), 1)
+	if not _events.is_empty():
+		var payload: Dictionary = _events[0]
+		assert_eq(payload.get("gesture"), &"hold")
+		for value in payload.values():
+			assert_false(value is Object, "a dual hold payload carries a live Object")
+	assert_false(_director.advance_interaction(2.0, true))
+	assert_eq(_events.size(), 1, "holding E repeated a completed dual gesture")
+	assert_false(_director.advance_interaction(0.0, false))
+	assert_eq(_events.size(), 1, "releasing a completed hold also fired its tap action")
+
+	_director.advance_interaction(0.20, true, true)
+	_bus.emit_event(&"interaction.offer_exited", {"id": &"hearth"})
+	_bus.emit_event(&"interaction.offer_entered", _offer(&"door", Vector3.ZERO))
+	assert_eq(_director.focused_id(), &"door")
+	assert_almost_eq(_director.hold_progress(), 1.0, 0.0001,
+		"the replacement tap offer did not start in its ordinary complete-ring state")
+	_director.advance_interaction(0.0, false)
+	assert_eq(_events.size(), 1,
+		"release after focus loss dispatched the departed offer's tap action")
 
 
 func test_leaving_the_focus_hands_focus_to_the_next_nearest_offer() -> void:

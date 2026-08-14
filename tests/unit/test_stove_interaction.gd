@@ -6,10 +6,12 @@ extends TestCase
 const StoveScript := preload("res://src/entities/stove/stove.gd")
 const DirectorScript := preload("res://src/ui/interaction_director.gd")
 const FuelEconomyScript := preload("res://src/systems/fuel_economy.gd")
+const SurvivalSystemScript := preload("res://src/systems/survival_system.gd")
 const EventBusScript := preload("res://src/core/event_bus.gd")
 
 var _bus: Node = null
 var _economy: Node = null
+var _survival: Node = null
 var _stove = null
 var _director = null
 var _occupant: Node3D = null
@@ -20,6 +22,10 @@ func before_each() -> void:
 	_bus = EventBusScript.new()
 	_economy = FuelEconomyScript.new()
 	_economy.load_from_directory()
+	_survival = SurvivalSystemScript.new()
+	_survival.load_from_directory()
+	_survival.start()
+	_economy.set_survival_system(_survival)
 	_occupant = Node3D.new()
 	_director = DirectorScript.new()
 	_director.set_event_bus(_bus)
@@ -29,24 +35,49 @@ func before_each() -> void:
 	_stove = StoveScript.new()
 	_stove.interaction_id = &"test_hearth"
 	_stove.set_fuel_economy(_economy)
+	_stove.set_survival_system(_survival)
 	_stove.set_event_bus(_bus)
 	_stove.set_occupant(_occupant)
 
 
 func after_each() -> void:
-	for node in [_stove, _director, _occupant, _economy, _bus]:
+	for node in [_stove, _director, _occupant, _economy, _survival, _bus]:
 		if node != null:
 			node.free()
 	_stove = null
 	_director = null
 	_occupant = null
 	_economy = null
+	_survival = null
 	_bus = null
 	_events.clear()
 
 
 func _record(payload) -> void:
 	_events.append(payload)
+
+
+func _drop_to(stat_id: StringName, value: float) -> void:
+	_survival.push_modifier(stat_id, &"test_drop", Modifier.Operation.MULTIPLY, 200.0)
+	var guard := 0
+	while _survival.value_of(stat_id) > value and not _survival.is_dead() and guard < 10000:
+		_survival.advance(0.25)
+		guard += 1
+	_survival.remove_source(&"test_drop")
+
+
+func _tap_e() -> bool:
+	var activated: bool = bool(_director.advance_interaction(0.10, true, true))
+	activated = _director.advance_interaction(0.0, false) or activated
+	return activated
+
+
+func _hold_e() -> bool:
+	var offer: Dictionary = _director.focused_offer()
+	var duration := float(offer.get("hold_seconds", 0.0))
+	var activated: bool = bool(_director.advance_interaction(duration, true, true))
+	activated = _director.advance_interaction(0.0, false) or activated
+	return activated
 
 
 func test_the_stove_builds_one_real_interaction_area() -> void:
@@ -94,6 +125,122 @@ func test_a_burning_stove_adds_one_item_without_double_spending() -> void:
 	assert_true(_director.activate_focused())
 	assert_eq(_economy.count_of(&"petrol"), 1, "one E consumed more than one fuel item")
 	assert_almost_eq(_stove.fuel_remaining(), 120.0 + worth, 0.001)
+
+
+func test_two_e_presses_cook_then_eat_through_the_world_interaction() -> void:
+	_drop_to(&"hunger", 0.20)
+	_stove.add_fuel_seconds(600.0)
+	_stove.light()
+	_economy.add(&"canned_stew", 1)
+	_stove.on_body_entered(_occupant)
+	_director.reconsider()
+	assert_eq(_director.focused_offer().get("verb"), "Cook Tin of stew")
+	var fuel_before: float = _stove.fuel_remaining()
+	var cook_cost: float = _economy.definition_of(&"canned_stew").heat_seconds
+
+	assert_true(_tap_e(), "the first E press never reached the stove's cook command")
+	assert_eq(_economy.count_of(&"canned_stew"), 0)
+	assert_eq(_economy.count_of(&"hot_stew"), 1)
+	assert_almost_eq(_stove.fuel_remaining(), fuel_before - cook_cost, 0.001)
+	assert_eq(_director.focused_offer().get("verb"), "Eat Hot stew",
+		"cooking did not refresh the same hearth prompt into the next action")
+
+	var hunger_before: float = _survival.value_of(&"hunger")
+	assert_true(_tap_e(), "the second E press never reached the eat command")
+	assert_eq(_economy.count_of(&"hot_stew"), 0)
+	assert_true(_survival.value_of(&"hunger") > hunger_before,
+		"the player ate at the hearth but hunger did not recover")
+
+
+func test_two_e_presses_melt_then_drink_through_the_world_interaction() -> void:
+	_drop_to(&"thirst", 0.20)
+	_stove.add_fuel_seconds(600.0)
+	_stove.light()
+	_economy.add(&"snow", 1)
+	_stove.on_body_entered(_occupant)
+	_director.reconsider()
+	assert_eq(_director.focused_offer().get("verb"), "Melt Packed snow")
+	var fuel_before: float = _stove.fuel_remaining()
+	var melt_cost: float = _economy.definition_of(&"snow").heat_seconds
+
+	assert_true(_tap_e(), "the first E press never reached the stove's melt command")
+	assert_eq(_economy.count_of(&"snow"), 0)
+	assert_eq(_economy.count_of(&"meltwater"), 1)
+	assert_almost_eq(_stove.fuel_remaining(), fuel_before - melt_cost, 0.001)
+	assert_eq(_director.focused_offer().get("verb"), "Drink Meltwater")
+
+	var thirst_before: float = _survival.value_of(&"thirst")
+	assert_true(_tap_e(), "the second E press never reached the drink command")
+	assert_eq(_economy.count_of(&"meltwater"), 0)
+	assert_true(_survival.value_of(&"thirst") > thirst_before,
+		"the player drank at the hearth but thirst did not recover")
+
+
+func test_hold_e_can_extinguish_without_processing_or_spending_while_hungry_and_thirsty() -> void:
+	_drop_to(&"hunger", 0.20)
+	_drop_to(&"thirst", 0.20)
+	_stove.add_fuel_seconds(600.0)
+	_stove.light()
+	_economy.add(&"snow", 1)
+	_economy.add(&"canned_stew", 1)
+	_economy.add(&"firewood", 1)
+	_stove.on_body_entered(_occupant)
+	_director.reconsider()
+	var offer: Dictionary = _director.focused_offer()
+	assert_true(bool(offer.get("alternate_hold", false)),
+		"the hearth did not expose its opt-in hold gesture")
+	assert_eq(offer.get("hold_verb"), "Extinguish")
+	assert_false(bool(offer.get("guide_line", false)),
+		"the hearth copied the pigeon's vertical lead instead of only its E ring")
+
+	var fuel_before: float = _stove.fuel_remaining()
+	assert_true(_hold_e(), "holding the shared E ring did not reach the stove")
+	assert_false(_stove.is_lit(), "the hold action left the fire burning")
+	assert_almost_eq(_stove.fuel_remaining(), fuel_before, 0.001,
+		"smothering destroyed the fuel already banked in the firebox")
+	assert_eq(_economy.count_of(&"snow"), 1,
+		"the hold also ran the short-press processing action")
+	assert_eq(_economy.count_of(&"canned_stew"), 1,
+		"the hold forced the player to cook or eat before banking the fire")
+	assert_eq(_economy.count_of(&"firewood"), 1,
+		"smothering silently added another log")
+
+
+func test_short_e_can_add_repeated_fuel_items_until_nominal_capacity() -> void:
+	_stove.add_fuel_seconds(120.0)
+	_stove.light()
+	_economy.add(&"firewood", 6)
+	_stove.on_body_entered(_occupant)
+	_director.reconsider()
+
+	for remaining in range(5, -1, -1):
+		assert_eq(_director.focused_offer().get("verb"), "Add fuel")
+		assert_true(_tap_e(), "a short E press stopped refilling below capacity")
+		assert_eq(_economy.count_of(&"firewood"), remaining)
+	assert_almost_eq(_stove.fuel_remaining(), 3720.0, 0.001,
+		"whole-item refilling did not preserve the documented capacity overflow")
+	assert_eq(_director.focused_offer().get("verb"), "Extinguish",
+		"the prompt did not stop offering fuel after the nominal capacity")
+
+
+func test_a_stale_processing_command_refuses_without_touching_another_item() -> void:
+	_drop_to(&"thirst", 0.20)
+	_stove.add_fuel_seconds(600.0)
+	_stove.light()
+	_economy.add(&"snow", 1)
+	_economy.add(&"canned_stew", 1)
+	_stove.on_body_entered(_occupant)
+	_director.reconsider()
+	assert_eq(_director.focused_offer().get("verb"), "Melt Packed snow")
+	assert_eq(_economy.take(&"snow", 1), 1, "the fixture did not stale the pictured item")
+
+	assert_true(_director.activate_focused(), "the cached value command was not dispatched")
+	assert_eq(_economy.count_of(&"meltwater"), 0)
+	assert_eq(_economy.count_of(&"canned_stew"), 1,
+		"a stale snow command fell through and cooked a different inventory item")
+	assert_eq(_events.size(), 1)
+	if not _events.is_empty():
+		assert_eq(_events[0].get("reason"), &"stale_action")
 
 
 func test_no_fuel_keeps_the_stove_visible_as_a_refusal_and_spends_nothing() -> void:

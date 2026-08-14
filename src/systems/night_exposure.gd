@@ -32,19 +32,18 @@ extends Node
 ## boundary, and this is a thing that happens throughout the attempt.
 ##
 ## ---------------------------------------------------------------------------
-## "OUTDOORS", WHEN THERE IS NO INDOORS -- THE SEAM
+## "OUTDOORS" -- THE INTERIOR SEAM
 ## ---------------------------------------------------------------------------
-## GDD section 3 says 天黑后仍在野外: after dark AND outdoors. There is no
-## interior reveal system in this project yet, and building one to satisfy half
-## a sentence would be the wrong shape at the wrong time. So the shelter half is
-## a seam with one honest default:
+## GDD section 3 says 天黑后仍在野外: after dark AND outdoors. InteriorReveal
+## publishes the player's threshold crossings through the EventBus, so the
+## shelter half has one source and one honest default:
 ##
 ##     set_sheltered(false)   <- the default. Everyone is outdoors, always.
 ##
-## Whoever builds interiors calls set_sheltered(true) when the player crosses the
-## threshold and false when they leave, and nothing else in this file changes.
-## Until then the doubling applies every night, everywhere, which is the strictly
-## more dangerous reading and the one the tuning should be judged against.
+## `interior.entered` sets it true and `interior.exited` sets it false. Their
+## payload is deliberately irrelevant here: InteriorReveal has already filtered
+## the crossing to its registered occupant, and making this system interpret a
+## building or scene node would couple the rule to the world that publishes it.
 ##
 ## Note what shelter is NOT: it is not warmth. Being indoors merely declines the
 ## doubling; it does not slow the ordinary drain, because GDD section 3 does not
@@ -62,6 +61,8 @@ const TARGET_STAT := &"core_temperature"
 const EVENT_DAY_STARTED := &"clock.day_started"
 const EVENT_NIGHT_STARTED := &"clock.night_started"
 const EVENT_RUN_FINISHED := &"clock.run_finished"
+const EVENT_INTERIOR_ENTERED := &"interior.entered"
+const EVENT_INTERIOR_EXITED := &"interior.exited"
 
 ## GDD section 3's 翻倍 -- literally "doubled". Exported so it can be tuned
 ## against a played night rather than a derived one, but it is a quoted number
@@ -131,6 +132,8 @@ func attach() -> void:
 	_bus.subscribe(EVENT_NIGHT_STARTED, _on_night_started)
 	_bus.subscribe(EVENT_DAY_STARTED, _on_day_started)
 	_bus.subscribe(EVENT_RUN_FINISHED, _on_run_finished)
+	_bus.subscribe(EVENT_INTERIOR_ENTERED, _on_interior_entered)
+	_bus.subscribe(EVENT_INTERIOR_EXITED, _on_interior_exited)
 	_subscribed = true
 
 func detach() -> void:
@@ -139,6 +142,8 @@ func detach() -> void:
 	_bus.unsubscribe(EVENT_NIGHT_STARTED, _on_night_started)
 	_bus.unsubscribe(EVENT_DAY_STARTED, _on_day_started)
 	_bus.unsubscribe(EVENT_RUN_FINISHED, _on_run_finished)
+	_bus.unsubscribe(EVENT_INTERIOR_ENTERED, _on_interior_entered)
+	_bus.unsubscribe(EVENT_INTERIOR_EXITED, _on_interior_exited)
 	_subscribed = false
 
 # --- the rule ---------------------------------------------------------------
@@ -174,8 +179,15 @@ func _on_day_started(_payload) -> void:
 	_night = false
 	_apply()
 
+func _on_interior_entered(_payload) -> void:
+	set_sheltered(true)
+
+func _on_interior_exited(_payload) -> void:
+	set_sheltered(false)
+
 func _on_run_finished(_payload) -> void:
 	_night = false
+	_sheltered = false
 	_apply()
 
 ## Remove first, ALWAYS, then push if it should be there.

@@ -30,6 +30,7 @@ var _prompt: Control = null
 var _prompt_revision := 0
 var _hold_elapsed := 0.0
 var _activation_latched := false
+var _dual_armed := false
 
 
 func _ready() -> void:
@@ -74,8 +75,7 @@ func set_event_bus(bus) -> void:
 
 func set_occupant(node: Node3D) -> void:
 	if node != _occupant:
-		_hold_elapsed = 0.0
-		_activation_latched = false
+		_cancel_pending_gesture()
 	_occupant = node
 	reconsider()
 
@@ -113,7 +113,7 @@ func reconsider() -> void:
 	# Once a hold has begun, the player has committed to the pictured offer.
 	# Two wandering pigeons can exchange "nearest" by a few centimetres; letting
 	# that steal focus would empty the ring even though neither bird left view.
-	if (_hold_elapsed > 0.0 or _activation_latched) and _focused != &"" \
+	if (_dual_armed or _hold_elapsed > 0.0 or _activation_latched) and _focused != &"" \
 			and _offers.has(_focused) \
 			and _offer_meets_facing(_offers[_focused] as Dictionary):
 		return
@@ -143,7 +143,7 @@ func reconsider() -> void:
 	_set_focus(next)
 
 
-func activate_focused() -> bool:
+func activate_focused(gesture := &"") -> bool:
 	if _focused == &"" or not _offers.has(_focused):
 		return false
 	var offer: Dictionary = _offers[_focused]
@@ -166,6 +166,13 @@ func activate_focused() -> bool:
 		"world_position": offer.get("world_position", Vector3.ZERO),
 		"target_position": offer.get("target_position", offer.get("world_position", Vector3.ZERO)),
 	}
+	if _is_dual_offer(offer):
+		var clean_gesture := StringName(gesture)
+		if clean_gesture == &"":
+			clean_gesture = &"tap"
+		if clean_gesture != &"tap" and clean_gesture != &"hold":
+			return false
+		payload["gesture"] = clean_gesture
 	_emit(EVENT_ACTIVATED, payload)
 	if _layer != null and _layer.audio() != null:
 		_layer.audio().play(&"ui.ripple")
@@ -174,36 +181,58 @@ func activate_focused() -> bool:
 	return true
 
 
-## Deterministic input seam shared by runtime and unit tests. Hold offers charge
-## while the action remains pressed; a completion cannot repeat until release.
-## Tap offers preserve the existing press-edge behaviour.
+## Deterministic input seam shared by runtime and unit tests. Hold-only offers
+## (pigeon feeding) charge exactly as before, and ordinary taps still fire on
+## the press edge. A producer may explicitly opt into a dual gesture: its short
+## press fires only on release, leaving the same ring time to become one
+## alternate hold without ever firing both actions.
 func advance_interaction(delta: float, pressed: bool, just_pressed := false) -> bool:
 	reconsider()
 	if not pressed:
+		var release_tap := _dual_armed and not _activation_latched \
+			and _focused != &"" and _offers.has(_focused) \
+			and _is_dual_offer(_offers[_focused] as Dictionary)
+		_dual_armed = false
 		_activation_latched = false
 		_clear_hold_progress()
-		return false
+		return activate_focused(&"tap") if release_tap else false
 	if _focused == &"" or not _offers.has(_focused):
-		_clear_hold_progress()
+		_cancel_pending_gesture()
 		return false
 	if _activation_latched:
 		return false
 
 	var offer: Dictionary = _offers[_focused]
 	var duration := float(offer.get("hold_seconds", 0.0))
+	if _is_dual_offer(offer):
+		if not _dual_armed:
+			if not just_pressed:
+				return false
+			_dual_armed = true
+		var dual_step := delta if is_finite(delta) else 0.0
+		_hold_elapsed = minf(_hold_elapsed + maxf(dual_step, 0.0), duration)
+		_update_prompt_hold_progress()
+		if _hold_elapsed + 0.00001 < duration:
+			return false
+		_dual_armed = false
+		var held := activate_focused(&"hold")
+		_activation_latched = true
+		return held
 	if duration <= 0.0:
 		if not just_pressed:
 			return false
+		var tapped := activate_focused()
 		_activation_latched = true
-		return activate_focused()
+		return tapped
 
 	var step := delta if is_finite(delta) else 0.0
 	_hold_elapsed = minf(_hold_elapsed + maxf(step, 0.0), duration)
 	_update_prompt_hold_progress()
 	if _hold_elapsed + 0.00001 < duration:
 		return false
+	var held := activate_focused()
 	_activation_latched = true
-	return activate_focused()
+	return held
 
 
 func _process(delta: float) -> void:
@@ -260,6 +289,9 @@ func _upsert_offer(payload) -> void:
 		if is_finite(guide_candidate.r) and is_finite(guide_candidate.g) \
 				and is_finite(guide_candidate.b) and is_finite(guide_candidate.a):
 			guide_color = guide_candidate
+	var hold_verb := String(payload.get("hold_verb", "")).strip_edges()
+	var alternate_hold := bool(payload.get("alternate_hold", false)) \
+		and not hold_verb.is_empty() and hold_seconds > 0.0
 	var clean := {
 		"id": id,
 		"kind": StringName(payload.get("kind", &"")),
@@ -270,8 +302,10 @@ func _upsert_offer(payload) -> void:
 		"enabled": bool(payload.get("enabled", true)),
 		"reason": StringName(payload.get("reason", &"")),
 		"hold_seconds": maxf(hold_seconds, 0.0),
+		"alternate_hold": alternate_hold,
+		"hold_verb": hold_verb if alternate_hold else "",
 		"facing_dot_min": clampf(facing_dot_min, -1.0, 1.0),
-		"guide_line": bool(payload.get("guide_line", false)),
+		"guide_line": false if alternate_hold else bool(payload.get("guide_line", false)),
 		"accent_color": accent_color,
 		"guide_color": guide_color,
 	}
@@ -280,6 +314,8 @@ func _upsert_offer(payload) -> void:
 	var content_changed := previous.is_empty() or not _same_offer_content(previous, clean)
 	var anchor_changed: bool = not previous.is_empty() \
 		and previous.get("world_position", Vector3.ZERO) != at
+	if was_focused and content_changed:
+		_cancel_pending_gesture()
 	_offers[id] = clean
 	reconsider()
 	if was_focused and id == _focused and content_changed:
@@ -292,7 +328,7 @@ func _upsert_offer(payload) -> void:
 func _set_focus(value: StringName) -> void:
 	if value == _focused:
 		return
-	_clear_hold_progress()
+	_cancel_pending_gesture()
 	_focused = value
 	_emit(EVENT_FOCUS_CHANGED, focused_offer() if _focused != &"" else null)
 	_rebuild_prompt()
@@ -310,7 +346,7 @@ func _rebuild_prompt() -> void:
 		_layer.tokens(),
 		_layer.fonts(),
 		_input_key_copy(),
-		String(offer.get("verb", "Use")),
+		_prompt_verb(offer),
 		String(offer.get("label", ""))
 	):
 		prompt.free()
@@ -357,6 +393,28 @@ func _clear_hold_progress() -> void:
 		return
 	_hold_elapsed = 0.0
 	_update_prompt_hold_progress()
+
+
+## Focus, content, or occupant changes invalidate an unfinished gesture, but a
+## completed activation stays locked until the physical key is released. If a
+## feeding pigeon leaves after accepting food, the same still-held E must not
+## charge and feed the next pigeon that becomes focus.
+func _cancel_pending_gesture() -> void:
+	_dual_armed = false
+	_clear_hold_progress()
+
+
+func _is_dual_offer(offer: Dictionary) -> bool:
+	return bool(offer.get("alternate_hold", false)) \
+		and not String(offer.get("hold_verb", "")).is_empty() \
+		and float(offer.get("hold_seconds", 0.0)) > 0.0
+
+
+func _prompt_verb(offer: Dictionary) -> String:
+	var primary := String(offer.get("verb", "Use"))
+	if not _is_dual_offer(offer):
+		return primary
+	return "%s / Hold %s" % [primary, String(offer.get("hold_verb", ""))]
 
 
 func _update_prompt_hold_progress() -> void:

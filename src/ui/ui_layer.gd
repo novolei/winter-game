@@ -61,6 +61,15 @@ func _ready() -> void:
 		build()
 	register_with(get_node_or_null("/root/ServiceRegistry"))
 
+
+func _exit_tree() -> void:
+	# A scene replacement must not leave the registry pointing at a freed
+	# CanvasLayer. The real-main survival smoke deliberately boots and tears down
+	# the shipped scene in one test, which makes this lifecycle boundary visible.
+	var registry := get_node_or_null("/root/ServiceRegistry")
+	if registry != null and registry.get_service(SERVICE_KEY) == self:
+		registry.unregister(SERVICE_KEY)
+
 ## Loads the tokens, builds the fonts and the voice. Separate from _ready() so a
 ## test can have a layer without a SceneTree -- and idempotent, because _ready()
 ## calls it and a test may have called it first.

@@ -12,12 +12,11 @@ extends TestCase
 ## figure in the fuel report was optimistic by a factor of two after sundown.
 ##
 ## ---------------------------------------------------------------------------
-## "OUTDOORS" WHEN THERE IS NO INDOORS
+## "OUTDOORS" AND THE INTERIOR THRESHOLD
 ## ---------------------------------------------------------------------------
-## The interior reveal system does not exist. So the shelter half of the rule is
-## a seam with one honest default -- everybody is outdoors, always -- and these
-## tests pin both halves: the doubling that ships, and the exemption that will
-## be driven by whoever builds interiors.
+## The shelter half has one honest default -- everybody is outdoors until the
+## real InteriorReveal events say otherwise. These tests pin both halves: the
+## doubling and the EventBus-driven indoor exemption.
 
 const NightExposureScript := preload("res://src/systems/night_exposure.gd")
 const SurvivalSystemScript := preload("res://src/systems/survival_system.gd")
@@ -65,6 +64,17 @@ func _nightfall() -> void:
 
 func _daybreak() -> void:
 	_bus.emit_event(WorldClockScript.EVENT_DAY_STARTED, 2)
+
+func _interior_payload() -> Dictionary:
+	# This is InteriorReveal._announce()'s production payload shape. The exposure
+	# rule deliberately ignores the values, but the test must cross the real
+	# EventBus seam with the same value type the publisher uses.
+	return {
+		"building": "Farmhouse",
+		"occupant": null,
+		"reveal": null,
+		"fade_seconds": 0.30,
+	}
 
 # --- the rule ---------------------------------------------------------------
 
@@ -127,12 +137,11 @@ func test_the_doubling_is_removable_by_its_own_name() -> void:
 
 # --- the shelter seam -------------------------------------------------------
 
-## The honest default while there are no interiors: nobody is ever sheltered,
-## so the doubling always applies at night. Written down as a test so that the
-## day it changes, it changes deliberately.
+## The honest default before a threshold event: nobody is sheltered, so the
+## doubling applies at night.
 func test_a_body_is_outdoors_until_something_says_otherwise() -> void:
 	var exposure = _build()
-	assert_false(exposure.is_sheltered(), "the default must be outdoors -- there are no interiors yet")
+	assert_false(exposure.is_sheltered(), "the default must be outdoors before a threshold event")
 	_nightfall()
 	assert_true(exposure.is_doubling(), "outdoors after dark and the cold is not doubled")
 
@@ -156,6 +165,48 @@ func test_stepping_back_out_after_dark_puts_it_back() -> void:
 	assert_almost_eq(
 		_survival.drain_rate_of(TEMPERATURE), by_day * 2.0, 0.000001,
 		"stepping back out into the dark cost nothing"
+	)
+
+func test_real_interior_events_lift_and_restore_the_night_doubling() -> void:
+	var exposure = _build()
+	var by_day: float = _survival.drain_rate_of(TEMPERATURE)
+	_nightfall()
+	_bus.emit_event(&"interior.entered", _interior_payload())
+	assert_true(exposure.is_sheltered(), "the real entered event did not shelter the player")
+	assert_almost_eq(
+		_survival.drain_rate_of(TEMPERATURE), by_day, 0.000001,
+		"entering through the EventBus left the outdoor night penalty on the body"
+	)
+	_bus.emit_event(&"interior.exited", _interior_payload())
+	assert_false(exposure.is_sheltered(), "the real exited event left the player sheltered")
+	assert_almost_eq(
+		_survival.drain_rate_of(TEMPERATURE), by_day * 2.0, 0.000001,
+		"leaving through the EventBus did not restore the outdoor night penalty"
+	)
+
+func test_duplicate_interior_events_are_idempotent_and_run_finish_clears_shelter() -> void:
+	var exposure = _build()
+	var by_day: float = _survival.drain_rate_of(TEMPERATURE)
+	_nightfall()
+	_bus.emit_event(&"interior.entered", _interior_payload())
+	_bus.emit_event(&"interior.entered", _interior_payload())
+	assert_eq(
+		_survival.modifier_count(&"core_temperature:drain"), 0,
+		"duplicate entered events left a night modifier on a sheltered body"
+	)
+	_bus.emit_event(&"interior.exited", _interior_payload())
+	_bus.emit_event(&"interior.exited", _interior_payload())
+	assert_eq(
+		_survival.modifier_count(&"core_temperature:drain"), 1,
+		"duplicate exited events stacked the night modifier"
+	)
+	_bus.emit_event(&"interior.entered", _interior_payload())
+	_bus.emit_event(WorldClockScript.EVENT_RUN_FINISHED, null)
+	assert_false(exposure.is_night(), "run finish left the exposure rule at night")
+	assert_false(exposure.is_sheltered(), "run finish leaked interior shelter into the next attempt")
+	assert_almost_eq(
+		_survival.drain_rate_of(TEMPERATURE), by_day, 0.000001,
+		"run finish left an exposure modifier on the body"
 	)
 
 ## Shelter is not warmth. GDD section 3 doubles the drain for being outdoors
