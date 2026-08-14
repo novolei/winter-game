@@ -1,0 +1,27 @@
+[gd_resource type="Resource" script_class="BeaconDefinition" format=3]
+
+[ext_resource type="PackedScene" path="res://assets/models/buildings/gas_station/gas_station.glb" id="1_c4jkj"]
+[ext_resource type="Script" path="res://src/definitions/beacon_definition.gd" id="2_ygplj"]
+
+[resource]
+script = ExtResource("2_ygplj")
+id = &"gas_station"
+display_name = "Gas station roof light"
+world_position = Vector3(-38, 0, 7)
+landmark_scene = ExtResource("1_c4jkj")
+landmark_yaw_degrees = 18.0
+light_offset = Vector3(0, 3.2, -0.2)
+interaction_radius_m = 5.0
+fuel_capacity = 900.0
+burn_rate = 0.25
+refill_request_seconds = 900.0
+warm_radius_m = 3.2
+warm_falloff_m = 2.6
+warmth_recovery_per_second = 0.002564102564102564
+rest_recovery_per_second = 0.0011904761904761906
+wind_extinguish_threshold = 0.74
+wind_extinguish_rate_per_second = 0.045
+unlock_day = 2
+light_energy = 3.3
+light_range_m = 22.0
+flame_height_m = 0.58

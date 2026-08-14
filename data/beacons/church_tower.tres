@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="BeaconDefinition" format=3]
+
+[ext_resource type="PackedScene" path="res://assets/models/buildings/church/church.glb" id="1_638mg"]
+[ext_resource type="Script" path="res://src/definitions/beacon_definition.gd" id="2_015ux"]
+
+[resource]
+script = ExtResource("2_015ux")
+id = &"church_tower"
+display_name = "Church bell tower"
+world_position = Vector3(42, 0, 22)
+landmark_scene = ExtResource("1_638mg")
+landmark_yaw_degrees = -24.0
+light_offset = Vector3(0, 5.25, -3.6)
+interaction_radius_m = 5.4
+fuel_capacity = 900.0
+burn_rate = 0.25
+refill_request_seconds = 900.0
+warm_radius_m = 3.4
+warm_falloff_m = 2.8
+warmth_recovery_per_second = 0.002380952380952381
+rest_recovery_per_second = 0.0011111111111111111
+wind_extinguish_threshold = 0.69
+wind_extinguish_rate_per_second = 0.055
+unlock_day = 3
+light_energy = 3.5
+light_range_m = 24.0

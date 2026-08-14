@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="BeaconDefinition" format=3]
+
+[ext_resource type="Script" path="res://src/definitions/beacon_definition.gd" id="1_3fe1s"]
+
+[resource]
+script = ExtResource("1_3fe1s")
+id = &"farmhouse_chimney"
+display_name = "Farmhouse chimney"
+world_position = Vector3(13, 0, -12)
+light_offset = Vector3(-0.6, 6.1, -0.6)
+interaction_radius_m = 3.2
+fuel_capacity = 900.0
+burn_rate = 0.25
+refill_request_seconds = 900.0
+warm_radius_m = 2.8
+warm_falloff_m = 2.2
+warmth_recovery_per_second = 0.002380952380952381
+rest_recovery_per_second = 0.0011111111111111111
+wind_extinguish_threshold = 0.78
+wind_extinguish_rate_per_second = 0.035
+light_energy = 3.1
+light_range_m = 19.0
+flame_height_m = 0.66

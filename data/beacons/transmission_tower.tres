@@ -1,0 +1,28 @@
+[gd_resource type="Resource" script_class="BeaconDefinition" format=3]
+
+[ext_resource type="PackedScene" path="res://assets/models/buildings/transmission_tower/transmission_tower.glb" id="1_krvp5"]
+[ext_resource type="Script" path="res://src/definitions/beacon_definition.gd" id="2_5h7mi"]
+
+[resource]
+script = ExtResource("2_5h7mi")
+id = &"transmission_tower"
+display_name = "Transmission tower"
+world_position = Vector3(42, 0, -38)
+landmark_scene = ExtResource("1_krvp5")
+landmark_yaw_degrees = -9.0
+light_offset = Vector3(0, 15, 0)
+interaction_radius_m = 5.0
+fuel_capacity = 900.0
+burn_rate = 0.25
+refill_request_seconds = 900.0
+warm_radius_m = 3.1
+warm_falloff_m = 2.7
+warmth_recovery_per_second = 0.002380952380952381
+rest_recovery_per_second = 0.0011111111111111111
+wind_extinguish_threshold = 0.58
+wind_extinguish_rate_per_second = 0.08
+unlock_day = 5
+warm_tone_index = 2
+light_energy = 4.0
+light_range_m = 29.0
+flame_height_m = 0.72
