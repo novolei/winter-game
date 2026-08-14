@@ -47,10 +47,15 @@ const EVENT_NIGHT_STARTED := &"clock.night_started"
 const EVENT_RUN_FINISHED := &"clock.run_finished"
 const EVENT_THREAT_DETECTED := &"threat.detected_player"
 const EVENT_THREAT_LOST := &"threat.lost_player"
-const EVENT_SHELTER_ENTERED := &"player.entered_shelter"
-const EVENT_SHELTER_EXITED := &"player.exited_shelter"
-## Payload: one of &"rescue", &"death", &"unseen" (GDD section 10).
-const EVENT_RUN_ENDED := &"game.ended"
+const EVENT_SHELTER_ENTERED := &"interior.entered"
+const EVENT_SHELTER_EXITED := &"interior.exited"
+const EVENT_RUN_ENDED := &"game.run_ended"
+const EVENT_RUN_RESET := &"game.run_reset"
+
+const OUTCOME_RESCUED := &"rescued"
+const OUTCOME_DEAD := &"dead"
+const OUTCOME_ABANDONED := &"abandoned"
+const RUN_END_SILENCE_SECONDS := 0.8
 
 enum Phase { NONE, DAY, NIGHT }
 
@@ -130,6 +135,7 @@ func set_event_bus(bus) -> void:
 		_bus.unsubscribe(EVENT_SHELTER_ENTERED, _on_shelter_entered)
 		_bus.unsubscribe(EVENT_SHELTER_EXITED, _on_shelter_exited)
 		_bus.unsubscribe(EVENT_RUN_ENDED, _on_run_ended)
+		_bus.unsubscribe(EVENT_RUN_RESET, _on_run_reset)
 	_bus = bus
 	if _bus != null:
 		_bus.subscribe(EVENT_DAY_STARTED, on_day_started)
@@ -140,6 +146,7 @@ func set_event_bus(bus) -> void:
 		_bus.subscribe(EVENT_SHELTER_ENTERED, _on_shelter_entered)
 		_bus.subscribe(EVENT_SHELTER_EXITED, _on_shelter_exited)
 		_bus.subscribe(EVENT_RUN_ENDED, _on_run_ended)
+		_bus.subscribe(EVENT_RUN_RESET, _on_run_reset)
 
 func set_map(map: MusicMap) -> void:
 	_map = map
@@ -443,4 +450,38 @@ func _on_shelter_exited(_payload) -> void:
 	set_in_shelter(false)
 
 func _on_run_ended(payload) -> void:
-	set_ending(payload if payload is StringName else StringName(str(payload)))
+	if not (payload is Dictionary):
+		return
+	match StringName((payload as Dictionary).get("outcome", &"")):
+		OUTCOME_RESCUED:
+			set_ending(&"rescue")
+		OUTCOME_DEAD, OUTCOME_ABANDONED:
+			# The ending design is explicit here: death loses every voice within
+			# 800 ms, while abandonment is carried by the helicopter and wind.
+			# Neither outcome starts a UI-owned music cue.
+			_ending = SITUATION_NONE
+			_phase = Phase.NONE
+			_phase_elapsed = 0.0
+			_situation = SITUATION_NONE
+			_gap_remaining = 0.0
+			_gap_armed = false
+			_gap_holds_after_threat = false
+			_mixer.fade_to_silence(RUN_END_SILENCE_SECONDS)
+
+
+func _on_run_reset(payload) -> void:
+	var seed := 0
+	if payload is Dictionary:
+		seed = int((payload as Dictionary).get("seed", 0))
+	_selector.reset(seed)
+	_phase = Phase.NONE
+	_phase_elapsed = 0.0
+	_danger = false
+	_in_shelter = false
+	_ending = SITUATION_NONE
+	_situation = SITUATION_NONE
+	_gap_remaining = 0.0
+	_gap_armed = false
+	_gap_holds_after_threat = false
+	_mixer = MusicMixer.new()
+	_apply()

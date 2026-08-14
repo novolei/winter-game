@@ -190,6 +190,9 @@ func test_smothering_the_fire_puts_it_out_without_spending_the_fuel() -> void:
 	stove.extinguish()
 	assert_false(stove.is_lit())
 	assert_almost_eq(stove.fuel_remaining(), 600.0, 0.001, "smothering the fire burnt the wood anyway")
+	assert_eq(_events.size(), 2)
+	if _events.size() >= 2:
+		assert_eq(_events[1].get("cause"), &"manual")
 
 # --- warmth out -------------------------------------------------------------
 
@@ -769,21 +772,43 @@ func test_a_fire_says_where_it_is_without_being_in_a_tree() -> void:
 		+ "caller's distance test and the warmth it then asks for disagree"
 	)
 
-## The payload said WHERE a fire was and not WHICH one, and a position is not an
-## identity: a fire that is carried, or two fires in one room, cannot be told
-## apart by it -- and a listener keyed on position can never erase a fire that
-## moved between lighting and going out.
-func test_the_announcement_names_which_fire_it_came_from() -> void:
+## The payload says both WHERE the fire was and WHICH authored fire emitted it,
+## without handing every subscriber a live scene node.
+func test_the_announcement_names_which_fire_it_came_from_without_a_live_node() -> void:
 	var stove = _build_lit(30.0)
 	assert_eq(_events.size(), 1, "lighting the stove said nothing")
 	if _events.is_empty():
 		return
-	assert_eq(_events[0].get("fire", null), stove, "the lighting said which place but not which fire")
+	assert_eq(_events[0].get("id"), stove.interaction_id)
 	stove.advance(60.0)
 	assert_eq(_events.size(), 2, "the fire dying said nothing")
 	if _events.size() < 2:
 		return
-	assert_eq(_events[1].get("fire", null), stove, "the fire going out said which place but not which fire")
+	assert_eq(_events[1].get("id"), stove.interaction_id)
+	assert_eq(_events[1].get("kind"), &"stove")
+	assert_eq(_events[1].get("label"), stove.interaction_label)
+	assert_eq(_events[1].get("world_position"), stove.fire_position())
+	assert_eq(_events[1].get("cause"), &"empty",
+		"natural burnout was indistinguishable from smothering")
+	for payload in _events:
+		for value in (payload as Dictionary).values():
+			assert_false(value is Object, "a stove event carried a live scene node")
+
+
+func test_heating_with_the_last_fuel_reports_a_real_empty_burnout() -> void:
+	# Build first: it owns the catalogue used to obtain the authored cost.
+	var stove = _build()
+	var heat_seconds: float = _economy.definition_of(&"snow").heat_seconds
+	_economy.add(&"snow", 1)
+	stove.add_fuel_seconds(heat_seconds)
+	assert_true(stove.light())
+	assert_eq(stove.heat(&"snow"), &"meltwater")
+	assert_false(stove.is_lit())
+	assert_almost_eq(stove.fuel_remaining(), 0.0, 0.0001)
+	assert_eq(_events.size(), 2, "the last cooking fuel ended silently")
+	if _events.size() >= 2:
+		assert_eq(_events[1].get("cause"), &"empty",
+			"processing the last fuel was mislabeled as a manual smother")
 
 ## THE BODY THE FIRE IS WARMING IS NOT NECESSARILY IN THE TREE.
 ##

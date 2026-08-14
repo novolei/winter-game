@@ -150,13 +150,30 @@ func activate_focused(gesture := &"") -> bool:
 	if not _offer_meets_facing(offer):
 		reconsider()
 		return false
-	if not bool(offer.get("enabled", true)):
+	var clean_gesture := StringName(gesture)
+	var dual := _is_dual_offer(offer)
+	if dual:
+		if clean_gesture == &"":
+			clean_gesture = &"tap"
+		if clean_gesture != &"tap" and clean_gesture != &"hold":
+			return false
+	var alternate_hold := dual and clean_gesture == &"hold"
+	var enabled := bool(offer.get("hold_enabled", true)) \
+		if alternate_hold else bool(offer.get("enabled", true))
+	if not enabled:
+		var reason := StringName(offer.get(
+			"hold_reason" if alternate_hold else "reason",
+			&"unavailable"
+		))
+		if reason == &"":
+			reason = &"unavailable"
 		_emit(EVENT_REJECTED, {
 			"id": _focused,
 			"kind": StringName(offer.get("kind", &"")),
-			"verb": String(offer.get("verb", "Use")),
+			"verb": String(offer.get("hold_verb", "Use")) \
+				if alternate_hold else String(offer.get("verb", "Use")),
 			"label": String(offer.get("label", "")),
-			"reason": StringName(offer.get("reason", &"unavailable")),
+			"reason": reason,
 			"world_position": offer.get("world_position", Vector3.ZERO),
 		})
 		return false
@@ -166,12 +183,7 @@ func activate_focused(gesture := &"") -> bool:
 		"world_position": offer.get("world_position", Vector3.ZERO),
 		"target_position": offer.get("target_position", offer.get("world_position", Vector3.ZERO)),
 	}
-	if _is_dual_offer(offer):
-		var clean_gesture := StringName(gesture)
-		if clean_gesture == &"":
-			clean_gesture = &"tap"
-		if clean_gesture != &"tap" and clean_gesture != &"hold":
-			return false
+	if dual:
 		payload["gesture"] = clean_gesture
 	_emit(EVENT_ACTIVATED, payload)
 	if _layer != null and _layer.audio() != null:
@@ -292,18 +304,23 @@ func _upsert_offer(payload) -> void:
 	var hold_verb := String(payload.get("hold_verb", "")).strip_edges()
 	var alternate_hold := bool(payload.get("alternate_hold", false)) \
 		and not hold_verb.is_empty() and hold_seconds > 0.0
+	var target_position: Variant = payload.get("target_position", at)
+	if not (target_position is Vector3):
+		target_position = at
 	var clean := {
 		"id": id,
 		"kind": StringName(payload.get("kind", &"")),
 		"verb": String(payload.get("verb", "Use")),
 		"label": String(payload.get("label", "")),
 		"world_position": at,
-		"target_position": payload.get("target_position", at),
+		"target_position": target_position,
 		"enabled": bool(payload.get("enabled", true)),
 		"reason": StringName(payload.get("reason", &"")),
 		"hold_seconds": maxf(hold_seconds, 0.0),
 		"alternate_hold": alternate_hold,
 		"hold_verb": hold_verb if alternate_hold else "",
+		"hold_enabled": bool(payload.get("hold_enabled", true)),
+		"hold_reason": StringName(payload.get("hold_reason", &"")),
 		"facing_dot_min": clampf(facing_dot_min, -1.0, 1.0),
 		"guide_line": false if alternate_hold else bool(payload.get("guide_line", false)),
 		"accent_color": accent_color,

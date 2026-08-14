@@ -377,6 +377,11 @@ func toggle() -> void:
 
 
 func open() -> void:
+	# A terminal result owns the pause until a new run has actually begun.
+	# Opening the ordinary pause surface on top would offer a false Continue
+	# path back into a settled attempt.
+	if is_inside_tree() and get_tree().paused and not _paused_by_menu:
+		return
 	if _root == null:
 		build()
 	if _is_open:

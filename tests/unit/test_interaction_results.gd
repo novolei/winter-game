@@ -43,10 +43,24 @@ func test_it_subscribes_once_to_every_result_event() -> void:
 		&"item.picked_up",
 		&"beacon.fueled",
 		&"beacon.lit",
+		&"beacon.extinguished",
 		&"stove.stoked",
+		&"stove.went_out",
 		&"interaction.rejected",
 	]:
 		assert_eq(_bus.subscriber_count(event_id), 1, "%s was not subscribed exactly once" % event_id)
+
+
+func test_replacing_the_bus_unsubscribes_burnout_events() -> void:
+	var replacement := EventBusScript.new()
+	_results.set_event_bus(replacement)
+	for event_id in [&"beacon.extinguished", &"stove.went_out"]:
+		assert_eq(_bus.subscriber_count(event_id), 0,
+			"%s remained subscribed on the old bus" % event_id)
+		assert_eq(replacement.subscriber_count(event_id), 1,
+			"%s was not subscribed on the replacement bus" % event_id)
+	_results.set_event_bus(_bus)
+	replacement.free()
 
 
 func test_beacon_fueled_and_lit_in_one_dispatch_turn_become_one_receipt() -> void:
@@ -127,6 +141,100 @@ func test_pickup_stove_and_rejection_each_surface_current_payloads() -> void:
 	if rejected != null:
 		assert_eq(rejected.copy_text(), "Beacon · Locked")
 		assert_true(rejected.is_rejected())
+
+
+func test_rejection_reasons_have_exact_player_copy() -> void:
+	var expected := {
+		&"no_fuel": "No fuel",
+		&"not_enough_fuel": "Not enough fuel",
+		&"no_food": "No food",
+		&"no_water": "No water",
+		&"stale_action": "Action changed",
+	}
+	var first = null
+	for reason in expected:
+		_emit(&"interaction.rejected", {
+			"id": &"farmhouse_hearth", "kind": &"stove", "label": "Farmhouse stove",
+			"reason": reason, "world_position": Vector3.ZERO,
+		})
+		_results.flush_pending()
+		var receipt = _results.active_for(&"rejected:farmhouse_hearth")
+		assert_not_null(receipt, "%s did not surface" % reason)
+		if receipt != null:
+			assert_eq(receipt.copy_text(), "Farmhouse stove · %s" % expected[reason],
+				"%s used the wrong rejection copy" % reason)
+			if first == null:
+				first = receipt
+			else:
+				assert_eq(receipt, first, "reason refresh allocated another receipt")
+
+
+func test_empty_burnouts_surface_value_receipts() -> void:
+	var stove_payload := {
+		"id": &"farmhouse_hearth", "kind": &"stove", "label": "Farmhouse stove",
+		"cause": &"empty", "world_position": Vector3(1.0, 0.0, 2.0),
+	}
+	_emit(&"stove.went_out", stove_payload)
+	# Event payloads are value snapshots. Mutating the producer's dictionary after
+	# dispatch must not rewrite the receipt waiting for the deferred flush.
+	stove_payload["label"] = "Mutated producer"
+	_emit(&"beacon.extinguished", {
+		"id": &"gas_station", "kind": &"beacon", "label": "Gas station",
+		"cause": &"empty", "world_position": Vector3(3.0, 0.0, 4.0),
+	})
+	_results.flush_pending()
+	var stove = _results.active_for(&"outage:stove:farmhouse_hearth")
+	var beacon = _results.active_for(&"outage:beacon:gas_station")
+	assert_not_null(stove)
+	assert_not_null(beacon)
+	if stove != null:
+		assert_eq(stove.copy_text(), "Went out · Farmhouse stove")
+		assert_eq(stove.amount_text(), "")
+	if beacon != null:
+		assert_eq(beacon.copy_text(), "Went out · Gas station")
+		assert_eq(beacon.amount_text(), "")
+
+
+func test_nonempty_burnout_causes_are_silent() -> void:
+	for cause in [&"manual", &"wind", &"blizzard"]:
+		_emit(&"stove.went_out", {
+			"id": StringName("stove_%s" % cause), "kind": &"stove",
+			"label": "Stove", "cause": cause, "world_position": Vector3.ZERO,
+		})
+		_emit(&"beacon.extinguished", {
+			"id": StringName("beacon_%s" % cause), "kind": &"beacon",
+			"label": "Beacon", "cause": cause, "world_position": Vector3.ZERO,
+		})
+	_results.flush_pending()
+	assert_eq(_results.pending_count(), 0)
+	assert_eq(_results.live_count(), 0,
+		"manual or weather extinguishes were presented as fuel depletion")
+	assert_eq(_layer.live_count(), 0)
+
+
+func test_repeated_empty_burnout_reuses_one_longer_but_transient_receipt() -> void:
+	var payload := {
+		"id": &"farmhouse_hearth", "kind": &"stove", "label": "Farmhouse stove",
+		"cause": &"empty", "world_position": Vector3.ZERO,
+	}
+	_emit(&"stove.went_out", payload)
+	_emit(&"stove.went_out", payload)
+	assert_eq(_results.pending_count(), 1, "one empty stove queued twice in one turn")
+	_results.flush_pending()
+	var first = _results.active_for(&"outage:stove:farmhouse_hearth")
+	assert_not_null(first)
+	_emit(&"stove.went_out", payload)
+	_results.flush_pending()
+	var refreshed = _results.active_for(&"outage:stove:farmhouse_hearth")
+	assert_eq(refreshed, first, "the same empty fire allocated another receipt")
+	assert_eq(_layer.live_count(), 1)
+	var breath: Breath = _layer.breath_for(refreshed)
+	assert_not_null(breath)
+	if breath != null:
+		assert_eq(breath.hold_seconds, InteractionResultSurfacing.OUTAGE_HOLD_SECONDS)
+		var lifetime := breath.bloom_seconds + breath.hold_seconds + breath.exit_seconds + 0.01
+		_layer.advance(lifetime)
+		assert_eq(_layer.live_count(), 0, "the fuel-out receipt became permanent UI")
 
 
 func test_repeated_pickup_updates_one_control_and_refreshes_its_hold() -> void:

@@ -15,6 +15,7 @@ const RUN_SEED_SERVICE := &"run_seed"
 const EVENT_RUN_STARTED := &"game.run_started"
 const EVENT_RUN_ENDED := &"game.run_ended"
 const EVENT_RUN_RESET := &"game.run_reset"
+const EVENT_RESTART_REQUESTED := &"game.restart_requested"
 const EVENT_SURVIVAL_DIED := &"survival.died"
 const EVENT_BEACONS_FINAL_STATE := &"beacons.final_state"
 
@@ -183,7 +184,15 @@ func _finish(result: StringName, details: Dictionary) -> void:
 	var payload := details.duplicate(true)
 	payload["outcome"] = result
 	payload["seed"] = run_seed
+	payload["day"] = _clock.current_day() if _clock != null else 0
 	_emit(EVENT_RUN_ENDED, payload)
+
+
+func _on_restart_requested(payload) -> void:
+	var seed := 0
+	if payload is Dictionary:
+		seed = int((payload as Dictionary).get("seed", 0))
+	restart_run(seed)
 
 
 func _ensure_run_seed() -> void:
@@ -217,6 +226,7 @@ func _subscribe() -> void:
 		return
 	_bus.subscribe(EVENT_SURVIVAL_DIED, _on_survival_died)
 	_bus.subscribe(EVENT_BEACONS_FINAL_STATE, _on_beacons_final_state)
+	_bus.subscribe(EVENT_RESTART_REQUESTED, _on_restart_requested)
 	_subscribed = true
 
 
@@ -225,6 +235,7 @@ func _unsubscribe() -> void:
 		return
 	_bus.unsubscribe(EVENT_SURVIVAL_DIED, _on_survival_died)
 	_bus.unsubscribe(EVENT_BEACONS_FINAL_STATE, _on_beacons_final_state)
+	_bus.unsubscribe(EVENT_RESTART_REQUESTED, _on_restart_requested)
 	_subscribed = false
 
 

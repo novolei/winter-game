@@ -18,6 +18,14 @@ var _last: Dictionary = {}
 ## A seed of 0 means randomise -- the shipping behaviour. Tests pass a fixed
 ## seed so a distribution can be asserted.
 func _init(seed_value := 0) -> void:
+	reset(seed_value)
+
+
+## Starts one attempt's draw history. Clearing both the generator and the
+## repeat memory is required: resetting only one still lets the previous run
+## bias which cue the new run hears first.
+func reset(seed_value := 0) -> void:
+	_last.clear()
 	if seed_value == 0:
 		_rng.randomize()
 	else:

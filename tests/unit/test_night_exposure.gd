@@ -209,6 +209,20 @@ func test_duplicate_interior_events_are_idempotent_and_run_finish_clears_shelter
 		"run finish left an exposure modifier on the body"
 	)
 
+
+func test_run_reset_clears_a_night_and_interior_death_before_day_one() -> void:
+	var exposure = _build()
+	var by_day: float = _survival.drain_rate_of(TEMPERATURE)
+	_nightfall()
+	_bus.emit_event(&"interior.entered", _interior_payload())
+	_bus.emit_event(&"game.run_reset", {"seed": 202})
+	assert_false(exposure.is_night(), "restart inherited the dead run's night")
+	assert_false(exposure.is_sheltered(), "restart inherited the room where the body died")
+	assert_almost_eq(
+		_survival.drain_rate_of(TEMPERATURE), by_day, 0.000001,
+		"restart left the old night modifier on the new body"
+	)
+
 ## Shelter is not warmth. GDD section 3 doubles the drain for being outdoors
 ## AFTER DARK; being indoors in daylight is simply the ordinary rate, and a
 ## house that halved the daytime drain would be a mechanic nobody designed.

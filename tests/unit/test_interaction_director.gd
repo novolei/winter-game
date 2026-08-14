@@ -15,6 +15,7 @@ var _bus: Node = null
 var _director = null
 var _occupant: Node3D = null
 var _events: Array = []
+var _rejections: Array = []
 
 
 class FacingOccupant:
@@ -34,6 +35,7 @@ func before_each() -> void:
 	_occupant = FacingOccupant.new()
 	_director.set_occupant(_occupant)
 	_bus.subscribe(&"interaction.activated", _record_activation)
+	_bus.subscribe(&"interaction.rejected", _record_rejection)
 
 
 func after_each() -> void:
@@ -48,10 +50,15 @@ func after_each() -> void:
 		_bus.free()
 		_bus = null
 	_events.clear()
+	_rejections.clear()
 
 
 func _record_activation(payload) -> void:
 	_events.append(payload)
+
+
+func _record_rejection(payload) -> void:
+	_rejections.append(payload)
 
 
 func _offer(id: StringName, at: Vector3, verb := "Use", label := "Thing") -> Dictionary:
@@ -257,6 +264,9 @@ func test_tap_offer_still_activates_on_the_press_edge() -> void:
 
 func test_dual_gesture_short_press_activates_tap_once_on_release_and_cancels_on_content_change() -> void:
 	var offer := _offer(&"hearth", Vector3.ZERO, "Cook", "Stove")
+	# Offers cross a system boundary. A malformed producer cannot smuggle its
+	# scene node through target_position into the activated command.
+	offer["target_position"] = self
 	offer["hold_seconds"] = 0.8
 	offer["alternate_hold"] = true
 	offer["hold_verb"] = "Extinguish"
@@ -267,6 +277,7 @@ func test_dual_gesture_short_press_activates_tap_once_on_release_and_cancels_on_
 	var clean: Dictionary = _director.focused_offer()
 	assert_true(bool(clean.get("alternate_hold", false)))
 	assert_false(bool(clean.get("guide_line", true)))
+	assert_eq(clean.get("target_position"), Vector3.ZERO)
 
 	assert_false(_director.advance_interaction(0.20, true, true),
 		"a dual offer fired its tap action on the press edge")
@@ -322,6 +333,74 @@ func test_dual_gesture_long_press_activates_hold_once_and_focus_loss_cancels_rel
 	_director.advance_interaction(0.0, false)
 	assert_eq(_events.size(), 1,
 		"release after focus loss dispatched the departed offer's tap action")
+
+
+func test_dual_gesture_can_reject_its_disabled_tap_while_its_hold_stays_enabled() -> void:
+	var offer := _offer(&"hearth", Vector3.ZERO, "Eat", "Stove")
+	offer["enabled"] = false
+	offer["reason"] = &"no_food"
+	offer["hold_seconds"] = 0.8
+	offer["alternate_hold"] = true
+	offer["hold_verb"] = "Extinguish"
+	offer["hold_enabled"] = true
+	offer["hold_reason"] = &""
+	_bus.emit_event(&"interaction.offer_entered", offer)
+
+	var clean: Dictionary = _director.focused_offer()
+	assert_false(bool(clean.get("enabled", true)))
+	assert_eq(clean.get("reason"), &"no_food")
+	assert_true(bool(clean.get("hold_enabled", false)))
+	assert_eq(clean.get("hold_reason"), &"")
+	assert_false(_director.advance_interaction(0.2, true, true))
+	assert_false(_director.advance_interaction(0.0, false),
+		"the disabled short action reported itself as completed")
+	assert_eq(_events.size(), 0, "a rejected tap still published an activation")
+	assert_eq(_rejections.size(), 1, "the disabled tap failed without a reason")
+	if not _rejections.is_empty():
+		var rejected: Dictionary = _rejections[0]
+		assert_eq(rejected.get("verb"), "Eat")
+		assert_eq(rejected.get("reason"), &"no_food")
+		for value in rejected.values():
+			assert_false(value is Object, "a tap rejection carries a live Object")
+
+	assert_true(_director.advance_interaction(0.8, true, true),
+		"the enabled alternate hold inherited the primary action's disabled state")
+	assert_eq(_events.size(), 1)
+	if not _events.is_empty():
+		var activated: Dictionary = _events[0]
+		assert_eq(activated.get("gesture"), &"hold")
+		for value in activated.values():
+			assert_false(value is Object, "an enabled alternate hold carries a live Object")
+	assert_eq(_rejections.size(), 1, "the enabled hold emitted a second rejection")
+
+
+func test_dual_gesture_hold_has_its_own_disabled_reason_without_blocking_tap() -> void:
+	var offer := _offer(&"hearth", Vector3.ZERO, "Cook", "Stove")
+	offer["enabled"] = true
+	offer["reason"] = &""
+	offer["hold_seconds"] = 0.8
+	offer["alternate_hold"] = true
+	offer["hold_verb"] = "Extinguish"
+	offer["hold_enabled"] = false
+	offer["hold_reason"] = &"cannot_extinguish"
+	_bus.emit_event(&"interaction.offer_entered", offer)
+
+	assert_false(_director.advance_interaction(0.2, true, true))
+	assert_true(_director.advance_interaction(0.0, false),
+		"the enabled tap inherited the alternate hold's disabled state")
+	assert_eq(_events.size(), 1)
+	assert_eq(_rejections.size(), 0)
+
+	assert_false(_director.advance_interaction(0.8, true, true),
+		"a disabled alternate hold reported itself as completed")
+	assert_eq(_events.size(), 1, "the disabled hold still published an activation")
+	assert_eq(_rejections.size(), 1, "the disabled hold failed without its own reason")
+	if not _rejections.is_empty():
+		var rejected: Dictionary = _rejections[0]
+		assert_eq(rejected.get("verb"), "Extinguish")
+		assert_eq(rejected.get("reason"), &"cannot_extinguish")
+		for value in rejected.values():
+			assert_false(value is Object, "a hold rejection carries a live Object")
 
 
 func test_leaving_the_focus_hands_focus_to_the_next_nearest_offer() -> void:

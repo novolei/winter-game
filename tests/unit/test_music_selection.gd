@@ -154,6 +154,12 @@ func test_the_same_seed_replays_the_same_draws() -> void:
 		first.append(a.pick(map, &"day").cue_id)
 		second.append(b.pick(map, &"day").cue_id)
 	assert_eq(first, second, "the same seed must produce the same sequence")
+	a.reset(SEED)
+	var replay: Array = []
+	for i in 20:
+		replay.append(a.pick(map, &"day").cue_id)
+	assert_eq(replay, first,
+		"reset kept the previous attempt's RNG position or repeat memory")
 
 func test_each_situation_remembers_its_own_last_track() -> void:
 	## long_walk is cast for both day and dusk. Drawing it for day must not

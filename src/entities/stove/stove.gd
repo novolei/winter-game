@@ -379,7 +379,11 @@ func interaction_action() -> Dictionary:
 
 	# Food first keeps a meal's small authored hydration bonus from making it a
 	# substitute for water. Within a category, use the largest recovery that
-	# fits; ties are stable by item id.
+	# fits; ties are stable by item id. Keep disabled descriptions only as
+	# fallbacks: a real drink must still outrank "no food", and a real meal must
+	# still outrank snow that cannot yet be melted.
+	var processing_shortage: Dictionary = {}
+	var supply_shortage: Dictionary = {}
 	for raw_category in [ItemDefinition.Category.FOOD, ItemDefinition.Category.WATER]:
 		var category := int(raw_category)
 		var ready_item := _best_ready_item(category)
@@ -391,18 +395,38 @@ func interaction_action() -> Dictionary:
 				true
 			)
 		var raw_item := _best_raw_item(category)
-		if raw_item == &"":
-			continue
-		var definition: ItemDefinition = _economy.definition_of(raw_item)
-		if definition != null and _fuel + CAPACITY_EPSILON >= definition.heat_seconds:
-			return _make_action(
-				ACTION_HEAT,
-				raw_item,
-				_heating_verb(raw_item),
-				true
+		if raw_item != &"":
+			var definition: ItemDefinition = _economy.definition_of(raw_item)
+			if definition != null and _fuel + CAPACITY_EPSILON >= definition.heat_seconds:
+				return _make_action(
+					ACTION_HEAT,
+					raw_item,
+					_heating_verb(raw_item),
+					true
+				)
+			if _can_accept_fuel():
+				return _make_action(ACTION_ADD_FUEL, &"", "Add fuel", true)
+			if processing_shortage.is_empty():
+				processing_shortage = _make_action(
+					ACTION_HEAT,
+					raw_item,
+					_heating_verb(raw_item),
+					false,
+					&"not_enough_fuel"
+				)
+		elif supply_shortage.is_empty() and _has_authored_recovery_that_fits(category):
+			supply_shortage = _make_action(
+				ACTION_CONSUME,
+				&"",
+				"Eat" if category == ItemDefinition.Category.FOOD else "Drink",
+				false,
+				&"no_food" if category == ItemDefinition.Category.FOOD else &"no_water"
 			)
-		if _can_accept_fuel():
-			return _make_action(ACTION_ADD_FUEL, &"", "Add fuel", true)
+
+	if not processing_shortage.is_empty():
+		return processing_shortage
+	if not supply_shortage.is_empty():
+		return supply_shortage
 
 	# Once the immediate chores are done, keep the original one-item-per-press
 	# refilling contract until the nominal capacity is reached. Smothering remains
@@ -459,7 +483,7 @@ func light() -> bool:
 
 ## Smothering it. The fuel stays in the firebox -- banking the fire and
 ## relighting in the evening is the whole of husbanding it.
-func extinguish() -> void:
+func extinguish(cause := &"manual") -> void:
 	if not _lit:
 		return
 	_lit = false
@@ -467,7 +491,7 @@ func extinguish() -> void:
 	# advance() -- so there is one place that has to remember to leave.
 	Fires.leave(self)
 	_drive_light()
-	_emit(EVENT_WENT_OUT)
+	_emit(EVENT_WENT_OUT, StringName(cause))
 	_publish_offer()
 
 ## Public and carrying all the logic; _process only forwards to it. That lets a
@@ -478,7 +502,7 @@ func advance(delta: float) -> void:
 		return
 	_fuel = maxf(_fuel - delta * burn_rate, 0.0)
 	if _fuel <= 0.0:
-		extinguish()
+		extinguish(&"empty")
 	else:
 		_drive_light()
 
@@ -565,7 +589,7 @@ func heat(item_id: StringName) -> StringName:
 	_economy.add(definition.heats_into, 1)
 	if _fuel <= 0.0:
 		# The job that takes the last of the wood also takes the fire.
-		extinguish()
+		extinguish(&"empty")
 	else:
 		_drive_light()
 	return definition.heats_into
@@ -742,6 +766,8 @@ func _interaction_offer() -> Dictionary:
 		offer["alternate_hold"] = true
 		offer["hold_seconds"] = maxf(interaction_extinguish_hold_seconds, 0.05)
 		offer["hold_verb"] = "Extinguish"
+		offer["hold_enabled"] = true
+		offer["hold_reason"] = &""
 	# Deliberately no guide_line: the hearth uses the same ring-and-copy prompt
 	# as pigeon feeding, without drawing a vertical lead through the room.
 	return offer
@@ -816,6 +842,30 @@ func _best_raw_item(category: int) -> StringName:
 			best = item_id
 			best_recovery = recovery
 	return best
+
+
+## Whether the catalogue contains any food or water whose authored primary
+## recovery fits the body's current missing fraction. Inventory is deliberately
+## ignored here: this answers whether an empty pack is worth explaining, while
+## _best_ready_item() / _best_raw_item() answer whether there is work to do.
+## No hunger/thirst threshold is duplicated here; changing item recovery data
+## changes this decision through the same _recovery_fits() relation as use.
+func _has_authored_recovery_that_fits(category: int) -> bool:
+	if _economy == null or _survival == null:
+		return false
+	for item_id in _economy.item_ids():
+		var definition: ItemDefinition = _economy.definition_of(item_id)
+		if definition == null:
+			continue
+		var recovery_definition := definition
+		if definition.heats_into != &"":
+			recovery_definition = _economy.definition_of(definition.heats_into)
+		if recovery_definition == null or recovery_definition.category != category:
+			continue
+		var recovery := _primary_recovery(recovery_definition, category)
+		if recovery > 0.0 and _recovery_fits(recovery, category):
+			return true
+	return false
 
 
 func _primary_recovery(definition: ItemDefinition, category: int) -> float:
@@ -941,9 +991,26 @@ func _source() -> StringName:
 ## in one room cannot be told apart by it, and a listener keyed on position can
 ## never erase a fire that was moved between lighting it and its going out. The
 ## position stays because most listeners only want the place.
-func _emit(event: StringName) -> void:
-	if _bus != null:
-		_bus.emit_event(event, {"fire": self, "position": fire_position()})
+func _emit(event: StringName, cause := &"") -> void:
+	if _bus == null:
+		return
+	var spot := fire_position()
+	var payload := {
+		# Fires announce stable values rather than handing a live scene node to
+		# every subscriber. Position remains for the existing warmth consumer;
+		# id remains the identity when two fires share or change a position.
+		"position": spot,
+		"id": interaction_id,
+		"kind": &"stove",
+		"label": interaction_label,
+		"icon_id": &"stoke_fire",
+		"world_position": spot,
+		"fuel_seconds": _fuel,
+		"lit": _lit,
+	}
+	if StringName(cause) != &"":
+		payload["cause"] = StringName(cause)
+	_bus.emit_event(event, payload)
 
 func _emit_stoked(seconds: float) -> void:
 	if _bus == null or not is_instance_valid(_bus):

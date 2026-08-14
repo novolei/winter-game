@@ -11,6 +11,7 @@ const FuelEconomyScript := preload("res://src/systems/fuel_economy.gd")
 const SurvivalSystemScript := preload("res://src/systems/survival_system.gd")
 const WorldClockScript := preload("res://src/systems/world_clock.gd")
 const NightExposureScript := preload("res://src/systems/night_exposure.gd")
+const GameStateScript := preload("res://src/systems/game_state.gd")
 
 const SERVICE_KEYS: Array[StringName] = [
 	&"player",
@@ -30,6 +31,8 @@ const SERVICE_KEYS: Array[StringName] = [
 ]
 
 var _main: Node = null
+var _tree: SceneTree = null
+var _tree_was_paused := false
 var _bus: Node = null
 var _economy: Node = null
 var _survival: Node = null
@@ -43,15 +46,24 @@ var _stove = null
 var _director = null
 var _door = null
 var _reveal = null
+var _result_surfacing = null
+var _run_result = null
+var _exit_menu = null
+var _game = null
 var _activations: Array = []
 var _interior_events: Array[StringName] = []
+var _run_events: Array[StringName] = []
+var _reload_calls := 0
 
 
 func before_each() -> void:
-	var tree := Engine.get_main_loop() as SceneTree
-	if tree == null or tree.root == null:
+	_tree = Engine.get_main_loop() as SceneTree
+	if _tree == null or _tree.root == null:
 		return
-	_registry = tree.root.get_node_or_null("ServiceRegistry")
+	_tree_was_paused = _tree.paused
+	_tree.paused = false
+	_reload_calls = 0
+	_registry = _tree.root.get_node_or_null("ServiceRegistry")
 	_snapshot_services()
 
 	_bus = EventBusScript.new()
@@ -59,6 +71,7 @@ func before_each() -> void:
 	_economy.load_from_directory()
 	_survival = SurvivalSystemScript.new()
 	_survival.load_from_directory()
+	_survival.set_event_bus(_bus)
 	_survival.start()
 	# The authored rates put hunger near .29 and thirst near .15. A hot meal and
 	# one meltwater then both fit without wasting recovery, so the contextual
@@ -85,6 +98,9 @@ func before_each() -> void:
 	_routes = _main.get_node_or_null("SurvivalRoutes")
 	_stove = _main.get_node_or_null("Farmhouse/Stove")
 	_director = _main.get_node_or_null("UI/Interaction")
+	_result_surfacing = _main.get_node_or_null("UI/ResultSurfacing")
+	_run_result = _main.get_node_or_null("RunResult")
+	_exit_menu = _main.get_node_or_null("ExitMenu")
 	_door = _main.get_node_or_null("Farmhouse/Door")
 	_reveal = _main.get_node_or_null("Farmhouse/InteriorReveal")
 	_wire_private_dependencies(_main)
@@ -92,7 +108,7 @@ func before_each() -> void:
 	# add_child() is the part this test is for: it synchronously executes the
 	# real main graph's _ready methods, builds the route nodes, starts the placed
 	# stove and registers the exact production services.
-	tree.root.add_child(_main)
+	_tree.root.add_child(_main)
 	_wire_occupants()
 	for route_node in _routes.route_nodes() if _routes != null else []:
 		route_node.set_event_bus(_bus)
@@ -101,6 +117,12 @@ func before_each() -> void:
 
 
 func after_each() -> void:
+	if _tree != null:
+		_tree.paused = false
+	if _game != null and is_instance_valid(_game):
+		_game.set_event_bus(null)
+		_game.free()
+		_game = null
 	if _bus != null and is_instance_valid(_bus):
 		# Removes NightExposure's named drain before its collaborators disappear.
 		_bus.emit_event(WorldClockScript.EVENT_RUN_FINISHED, null)
@@ -132,8 +154,16 @@ func after_each() -> void:
 	_director = null
 	_door = null
 	_reveal = null
+	_result_surfacing = null
+	_run_result = null
+	_exit_menu = null
 	_activations.clear()
 	_interior_events.clear()
+	_run_events.clear()
+	_reload_calls = 0
+	if _tree != null:
+		_tree.paused = _tree_was_paused
+	_tree = null
 
 
 func test_real_main_routes_e_through_hearth_and_interior_survival() -> void:
@@ -215,6 +245,95 @@ func test_real_main_routes_e_through_hearth_and_interior_survival() -> void:
 		"the real threshold did not publish one balanced entered/exited pair")
 
 
+func test_real_main_surfaces_shortage_death_and_restarts_through_e() -> void:
+	for node in [_main, _player, _stove, _director, _result_surfacing,
+			_run_result, _exit_menu, _survival, _clock, _bus]:
+		assert_not_null(node)
+	if null in [_main, _player, _stove, _director, _result_surfacing,
+			_run_result, _exit_menu, _survival, _clock, _bus]:
+		return
+
+	# The placed fire itself must announce exhaustion through the shipped result
+	# consumer; no synthetic outage event is used here.
+	_stove.advance(_stove.fuel_remaining() + 1.0)
+	_result_surfacing.flush_pending()
+	var outage = _result_surfacing.active_for(&"outage:stove:farmhouse_hearth")
+	assert_not_null(outage, "the real farmhouse fire died without a visible result")
+	if outage != null:
+		assert_eq(outage.copy_text(), "Went out · Stove")
+
+	# A lit but empty-pack hearth explains the missing remedy on short E while
+	# preserving the same prompt's long-E smother action.
+	_stove.add_fuel_seconds(60.0)
+	assert_true(_stove.light())
+	_survival.advance(510.0)
+	_stove.on_body_entered(_player)
+	_director.reconsider()
+	var shortage_offer: Dictionary = _director.focused_offer()
+	assert_eq(shortage_offer.get("verb"), "Eat")
+	assert_false(bool(shortage_offer.get("enabled", true)))
+	assert_eq(shortage_offer.get("reason"), &"no_food")
+	assert_true(bool(shortage_offer.get("hold_enabled", false)))
+	assert_false(_press_e(), "a missing-food tap claimed to mutate the world")
+	_result_surfacing.flush_pending()
+	var shortage = _result_surfacing.active_for(&"rejected:stove:farmhouse_hearth")
+	assert_not_null(shortage, "the real E rejection never reached the receipt layer")
+	if shortage != null:
+		assert_eq(shortage.copy_text(), "Stove · No food")
+
+	# Hand the already-live body and clock to the real lifecycle owner, then let
+	# the real survival drain produce death. The test never emits survival.died.
+	_stove.extinguish()
+	_stove.clear_recovery()
+	_survival.stop()
+	_clock.stop()
+	_bus.subscribe(&"game.restart_requested", _record_restart_requested)
+	_bus.subscribe(&"game.run_reset", _record_run_reset)
+	_bus.subscribe(&"clock.day_started", _record_day_started)
+	_bus.subscribe(&"game.run_started", _record_run_started)
+	_game = GameStateScript.new()
+	_game.auto_start = false
+	_game.set_event_bus(_bus)
+	_game.set_survival_system(_survival)
+	_game.set_world_clock(_clock)
+	assert_true(_game.begin_run(101))
+	_run_events.clear()
+	_run_result.set_reload_action(_record_reload)
+	_survival.advance(1201.0)
+	assert_eq(_game.state(), GameStateScript.STATE_ENDED)
+	assert_eq(_game.outcome(), GameStateScript.OUTCOME_DEAD)
+	assert_false(_survival.is_running())
+	assert_false(_clock.is_running())
+	assert_true(_run_result.is_active())
+	assert_eq(_run_result.day_text(), "第 一 日。")
+	assert_true(_tree.paused, "the real death left input and simulation running")
+	_exit_menu.open()
+	assert_false(_exit_menu.is_open(), "Escape could still expose Continue after death")
+
+	_run_result.advance(_run_result.RESTART_READY_SECONDS)
+	var restart_key := InputEventAction.new()
+	restart_key.action = &"interact"
+	restart_key.pressed = true
+	_run_result._unhandled_input(restart_key)
+	assert_eq(_run_events, [
+		&"restart_requested", &"run_reset", &"day_started", &"run_started",
+	], "E restart crossed the lifecycle boundary out of order")
+	assert_true(_run_result.is_reload_pending())
+	assert_true(_tree.paused, "the settled scene resumed before replacement")
+	assert_true(_survival.is_running())
+	assert_false(_survival.is_dead())
+	assert_eq(_clock.current_day(), 1)
+	assert_true(_clock.is_running())
+	assert_eq(_economy.item_ids().filter(func(item_id): return _economy.count_of(item_id) > 0).size(), 0,
+		"restart inherited inventory from the dead attempt")
+	assert_false(_exposure.is_night())
+	assert_false(_exposure.is_sheltered())
+	assert_true(_run_result.flush_reload())
+	assert_eq(_reload_calls, 1, "successful restart did not replace the scene exactly once")
+	assert_false(_tree.paused)
+	assert_false(_run_result.is_active())
+
+
 func _pick_up(node_id: StringName, item_id: StringName, expected_count: int) -> void:
 	var pickup = _routes.route_node(node_id)
 	assert_not_null(pickup, "the real route layer did not spawn %s" % node_id)
@@ -280,6 +399,27 @@ func _record_interior_entered(_payload) -> void:
 
 func _record_interior_exited(_payload) -> void:
 	_interior_events.append(&"exited")
+
+
+func _record_restart_requested(_payload) -> void:
+	_run_events.append(&"restart_requested")
+
+
+func _record_run_reset(_payload) -> void:
+	_run_events.append(&"run_reset")
+
+
+func _record_day_started(_payload) -> void:
+	_run_events.append(&"day_started")
+
+
+func _record_run_started(_payload) -> void:
+	_run_events.append(&"run_started")
+
+
+func _record_reload() -> int:
+	_reload_calls += 1
+	return OK
 
 
 func _snapshot_services() -> void:

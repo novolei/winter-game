@@ -118,6 +118,17 @@ scan_log="${tmp_dir}/scan.log"
 	--script res://tests/framework/test_runner.gd 2>&1 | tee "${raw_log}"
 godot_status="${PIPESTATUS[0]}"
 
+# A second short process makes the shipped Main the actual current_scene and
+# verifies the terminal E path through SceneTree.reload_current_scene(). The
+# unit runner cannot do this without replacing itself.
+restart_smoke_status=0
+restart_smoke_sentinel='Restart scene smoke: PASS'
+if [ "${godot_status}" -eq 0 ]; then
+	"${GODOT_BIN}" --headless --path "${project_dir}" \
+		--script res://tests/framework/restart_scene_smoke.gd 2>&1 | tee -a "${raw_log}"
+	restart_smoke_status="${PIPESTATUS[0]}"
+fi
+
 # Godot writes CRLF here. Strip the CR so end-of-line anchors match.
 tr -d '\r' < "${raw_log}" > "${scan_log}.crlf"
 
@@ -130,6 +141,11 @@ problems=()
 
 if [ "${godot_status}" -ne 0 ]; then
 	problems+=("Godot exited with status ${godot_status} (the runner exits 1 when any test fails).")
+fi
+if [ "${restart_smoke_status}" -ne 0 ]; then
+	problems+=("the production restart scene smoke exited with status ${restart_smoke_status}.")
+elif [ "${godot_status}" -eq 0 ] && ! grep -qxF -- "${restart_smoke_sentinel}" "${scan_log}"; then
+	problems+=("the production restart scene smoke did not report its success sentinel.")
 fi
 
 for pattern in "${FORBIDDEN_PATTERNS[@]}"; do

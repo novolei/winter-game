@@ -61,6 +61,7 @@ const TARGET_STAT := &"core_temperature"
 const EVENT_DAY_STARTED := &"clock.day_started"
 const EVENT_NIGHT_STARTED := &"clock.night_started"
 const EVENT_RUN_FINISHED := &"clock.run_finished"
+const EVENT_RUN_RESET := &"game.run_reset"
 const EVENT_INTERIOR_ENTERED := &"interior.entered"
 const EVENT_INTERIOR_EXITED := &"interior.exited"
 
@@ -132,6 +133,7 @@ func attach() -> void:
 	_bus.subscribe(EVENT_NIGHT_STARTED, _on_night_started)
 	_bus.subscribe(EVENT_DAY_STARTED, _on_day_started)
 	_bus.subscribe(EVENT_RUN_FINISHED, _on_run_finished)
+	_bus.subscribe(EVENT_RUN_RESET, _on_run_reset)
 	_bus.subscribe(EVENT_INTERIOR_ENTERED, _on_interior_entered)
 	_bus.subscribe(EVENT_INTERIOR_EXITED, _on_interior_exited)
 	_subscribed = true
@@ -142,6 +144,7 @@ func detach() -> void:
 	_bus.unsubscribe(EVENT_NIGHT_STARTED, _on_night_started)
 	_bus.unsubscribe(EVENT_DAY_STARTED, _on_day_started)
 	_bus.unsubscribe(EVENT_RUN_FINISHED, _on_run_finished)
+	_bus.unsubscribe(EVENT_RUN_RESET, _on_run_reset)
 	_bus.unsubscribe(EVENT_INTERIOR_ENTERED, _on_interior_entered)
 	_bus.unsubscribe(EVENT_INTERIOR_EXITED, _on_interior_exited)
 	_subscribed = false
@@ -186,6 +189,12 @@ func _on_interior_exited(_payload) -> void:
 	set_sheltered(false)
 
 func _on_run_finished(_payload) -> void:
+	_night = false
+	_sheltered = false
+	_apply()
+
+
+func _on_run_reset(_payload) -> void:
 	_night = false
 	_sheltered = false
 	_apply()

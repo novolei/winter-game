@@ -11,12 +11,15 @@ const ReceiptScript := preload("res://src/ui/interaction_receipt.gd")
 const EVENT_ITEM_PICKED_UP := &"item.picked_up"
 const EVENT_BEACON_FUELED := &"beacon.fueled"
 const EVENT_BEACON_LIT := &"beacon.lit"
+const EVENT_BEACON_EXTINGUISHED := &"beacon.extinguished"
 const EVENT_STOVE_STOKED := &"stove.stoked"
+const EVENT_STOVE_WENT_OUT := &"stove.went_out"
 const EVENT_INTERACTION_REJECTED := &"interaction.rejected"
 
 ## UI design section 5.3: 呵 200 / 持 1400 / 散 900.
 const SUCCESS_HOLD_SECONDS := 1.4
 const REJECT_HOLD_SECONDS := 2.0
+const OUTAGE_HOLD_SECONDS := 2.6
 const STACK_GAP_DESIGN_PX := 8.0
 const MAX_LIVE := 3
 
@@ -151,10 +154,7 @@ func _surface_spec(spec: Dictionary) -> void:
 		var viewport := _canvas_size()
 		existing.layout_for(viewport)
 		_layout_live(viewport)
-		_layer.refresh_hold(
-			existing,
-			REJECT_HOLD_SECONDS if bool(spec.get("rejected", false)) else SUCCESS_HOLD_SECONDS
-		)
+		_layer.refresh_hold(existing, _hold_seconds(spec))
 		return
 
 	while _live_order.size() >= MAX_LIVE:
@@ -175,10 +175,7 @@ func _surface_spec(spec: Dictionary) -> void:
 	_live[key] = receipt
 	_live_order.append(key)
 	_layout_live(viewport)
-	_layer.surface(
-		receipt,
-		REJECT_HOLD_SECONDS if bool(spec.get("rejected", false)) else SUCCESS_HOLD_SECONDS
-	)
+	_layer.surface(receipt, _hold_seconds(spec))
 
 
 func _layout_live(viewport: Vector2) -> void:
@@ -209,8 +206,12 @@ func _spec_for(event_id: StringName, payload: Dictionary) -> Dictionary:
 			return _beacon_spec(payload, true)
 		EVENT_BEACON_LIT:
 			return _beacon_spec(payload, false)
+		EVENT_BEACON_EXTINGUISHED:
+			return _outage_spec(payload, &"beacon")
 		EVENT_STOVE_STOKED:
 			return _stove_spec(payload)
+		EVENT_STOVE_WENT_OUT:
+			return _outage_spec(payload, &"stove")
 		EVENT_INTERACTION_REJECTED:
 			return _rejected_spec(payload)
 	return {}
@@ -277,6 +278,29 @@ func _stove_spec(payload: Dictionary) -> Dictionary:
 	}
 
 
+func _outage_spec(payload: Dictionary, kind: StringName) -> Dictionary:
+	# Only exhaustion is player-actionable. Smothering and weather already read
+	# through their own animation/VFX, and surfacing them here would misreport an
+	# intentional or forced extinguish as a supply shortage.
+	if StringName(payload.get("cause", &"")) != &"empty":
+		return {}
+	var id := StringName(payload.get("id", &""))
+	if id == &"":
+		return {}
+	var fallback := _kind_label(kind)
+	return {
+		"key": StringName("outage:%s:%s" % [String(kind), String(id)]),
+		"kind": kind,
+		"copy": "Went out · %s" % _label(payload, fallback),
+		"amount": "",
+		"icon_id": StringName(payload.get("icon_id", _icon_for_kind(kind))),
+		"cause": &"empty",
+		"world_position": _position(payload),
+		"rejected": false,
+		"hold_seconds": OUTAGE_HOLD_SECONDS,
+	}
+
+
 func _rejected_spec(payload: Dictionary) -> Dictionary:
 	var id := StringName(payload.get("id", &"interaction"))
 	var kind := StringName(payload.get("kind", &"interaction"))
@@ -295,8 +319,9 @@ func _rejected_spec(payload: Dictionary) -> Dictionary:
 
 
 func _merge_specs(first: Dictionary, second: Dictionary) -> Dictionary:
-	if StringName(first.get("kind", &"")) != &"beacon" \
-			or StringName(second.get("kind", &"")) != &"beacon":
+	var first_is_beacon_fold := first.has("saw_fueled") or first.has("saw_lit")
+	var second_is_beacon_fold := second.has("saw_fueled") or second.has("saw_lit")
+	if not first_is_beacon_fold or not second_is_beacon_fold:
 		return second.duplicate(true)
 	var merged := first.duplicate(true)
 	merged["saw_fueled"] = bool(first.get("saw_fueled", false)) \
@@ -371,13 +396,22 @@ func _canvas_size() -> Vector2:
 	return Vector2(1920.0, 1080.0)
 
 
+func _hold_seconds(spec: Dictionary) -> float:
+	var fallback := REJECT_HOLD_SECONDS \
+		if bool(spec.get("rejected", false)) else SUCCESS_HOLD_SECONDS
+	var value := float(spec.get("hold_seconds", fallback))
+	return maxf(value, 0.0) if is_finite(value) else fallback
+
+
 func _subscribe() -> void:
 	if _bus == null or not is_instance_valid(_bus):
 		return
 	_bus.subscribe(EVENT_ITEM_PICKED_UP, _on_item_picked_up)
 	_bus.subscribe(EVENT_BEACON_FUELED, _on_beacon_fueled)
 	_bus.subscribe(EVENT_BEACON_LIT, _on_beacon_lit)
+	_bus.subscribe(EVENT_BEACON_EXTINGUISHED, _on_beacon_extinguished)
 	_bus.subscribe(EVENT_STOVE_STOKED, _on_stove_stoked)
+	_bus.subscribe(EVENT_STOVE_WENT_OUT, _on_stove_went_out)
 	_bus.subscribe(EVENT_INTERACTION_REJECTED, _on_interaction_rejected)
 
 
@@ -387,7 +421,9 @@ func _unsubscribe() -> void:
 	_bus.unsubscribe(EVENT_ITEM_PICKED_UP, _on_item_picked_up)
 	_bus.unsubscribe(EVENT_BEACON_FUELED, _on_beacon_fueled)
 	_bus.unsubscribe(EVENT_BEACON_LIT, _on_beacon_lit)
+	_bus.unsubscribe(EVENT_BEACON_EXTINGUISHED, _on_beacon_extinguished)
 	_bus.unsubscribe(EVENT_STOVE_STOKED, _on_stove_stoked)
+	_bus.unsubscribe(EVENT_STOVE_WENT_OUT, _on_stove_went_out)
 	_bus.unsubscribe(EVENT_INTERACTION_REJECTED, _on_interaction_rejected)
 
 
@@ -403,8 +439,16 @@ func _on_beacon_lit(payload) -> void:
 	ingest(EVENT_BEACON_LIT, payload)
 
 
+func _on_beacon_extinguished(payload) -> void:
+	ingest(EVENT_BEACON_EXTINGUISHED, payload)
+
+
 func _on_stove_stoked(payload) -> void:
 	ingest(EVENT_STOVE_STOKED, payload)
+
+
+func _on_stove_went_out(payload) -> void:
+	ingest(EVENT_STOVE_WENT_OUT, payload)
 
 
 func _on_interaction_rejected(payload) -> void:
@@ -456,5 +500,9 @@ static func _reason_copy(reason: StringName) -> String:
 	match reason:
 		&"locked": return "Locked"
 		&"no_fuel": return "No fuel"
+		&"not_enough_fuel": return "Not enough fuel"
+		&"no_food": return "No food"
+		&"no_water": return "No water"
+		&"stale_action": return "Action changed"
 		&"full": return "Already full"
 	return "Unavailable"

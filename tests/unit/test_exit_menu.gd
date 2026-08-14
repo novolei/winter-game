@@ -86,6 +86,18 @@ func test_continue_is_the_primary_way_back_to_the_world() -> void:
 	assert_false(_menu.is_open())
 	assert_eq(_quit_calls, 0)
 
+
+func test_an_external_terminal_pause_cannot_open_a_false_continue_menu() -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	var was_paused := tree.paused
+	tree.paused = false
+	tree.root.add_child(_menu)
+	tree.paused = true
+	_menu.open()
+	var opened: bool = _menu.is_open()
+	tree.paused = was_paused
+	assert_false(opened, "death pause exposed Continue back into a settled run")
+
 func test_exit_button_requires_confirmation() -> void:
 	_menu.toggle()
 	_menu.request_exit()

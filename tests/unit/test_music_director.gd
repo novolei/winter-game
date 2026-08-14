@@ -341,8 +341,51 @@ func test_the_event_bus_drives_the_director() -> void:
 	_bus.emit_event(&"clock.night_started", 1)
 	assert_eq(director.current_situation(), &"dusk", "clock.night_started should open nightfall")
 
-	_bus.emit_event(&"game.ended", &"rescue")
-	assert_eq(director.current_situation(), &"ending_rescue", "game.ended should call the ending")
+	_bus.emit_event(&"interior.entered", {"building": "Farmhouse"})
+	assert_eq(director.current_situation(), &"shelter", "the real interior event did not reach music")
+	_bus.emit_event(&"interior.exited", {"building": "Farmhouse"})
+	assert_eq(director.current_situation(), &"dusk")
+
+	_bus.emit_event(&"game.run_ended", {"outcome": &"rescued", "day": 7, "seed": 101})
+	assert_eq(director.current_situation(), &"ending_rescue",
+		"the real GameState payload did not call the rescue ending")
+
+
+func test_death_and_abandonment_silence_music_instead_of_starting_ui_cues() -> void:
+	for outcome in [&"dead", &"abandoned"]:
+		var director = _playing_music()
+		_bus = EventBusScript.new()
+		director.set_event_bus(_bus)
+		_bus.emit_event(&"game.run_ended", {"outcome": outcome, "day": 4, "seed": 101})
+		assert_eq(director.current_situation(), &"",
+			"%s became an authored ending track instead of silence" % outcome)
+		director.advance(DirectorScript.RUN_END_SILENCE_SECONDS)
+		assert_true(director.is_silent(), "%s left music under the terminal world" % outcome)
+		director.set_event_bus(null)
+		_bus.free()
+		_bus = null
+		director.free()
+		_director = null
+
+
+func test_run_reset_clears_terminal_danger_and_shelter_before_dawn() -> void:
+	_bus = EventBusScript.new()
+	var director = DirectorScript.new()
+	_director = director
+	director.set_map(_map())
+	director.set_selector(SelectorScript.new(SEED))
+	director.set_event_bus(_bus)
+	_bus.emit_event(&"clock.day_started", 1)
+	_bus.emit_event(&"interior.entered", {"building": "Farmhouse"})
+	_bus.emit_event(&"threat.detected_player", {})
+	_bus.emit_event(&"game.run_ended", {"outcome": &"rescued", "day": 7, "seed": 101})
+	assert_eq(director.current_situation(), &"ending_rescue")
+	_bus.emit_event(&"game.run_reset", {"seed": 202})
+	assert_eq(director.current_situation(), &"", "restart kept an ending or threat situation")
+	assert_true(director.is_silent(), "restart kept an old voice alive")
+	_bus.emit_event(&"clock.day_started", 1)
+	assert_eq(director.current_situation(), &"dawn",
+		"day one could not resume because shelter or danger leaked across runs")
 
 func test_replacing_the_bus_drops_the_old_subscriptions() -> void:
 	_bus = EventBusScript.new()

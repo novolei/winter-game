@@ -30,7 +30,7 @@ const TestDiscovery := preload("res://tests/framework/test_discovery.gd")
 ## silence, the loop moves on, and the report prints "N passed, 0 failed" with
 ## quit(0) over a suite that lost a whole file. Nothing compared N against
 ## anything -- so an empty suite was indistinguishable from a passing one.
-const MINIMUM_TESTS := 2394
+const MINIMUM_TESTS := 2416
 
 var _passed := 0
 var _failed := 0

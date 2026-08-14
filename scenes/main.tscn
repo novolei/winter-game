@@ -57,6 +57,7 @@
 [ext_resource type="PackedScene" path="res://scenes/effects/weather_snow_fog.tscn" id="52_weather_snow_fog"]
 [ext_resource type="PackedScene" path="res://scenes/effects/farmhouse_window_light.tscn" id="53_window_light"]
 [ext_resource type="Script" uid="uid://clsslsjuupe0p" path="res://src/entities/perch_snow_shed.gd" id="54_perch_snow"]
+[ext_resource type="Script" uid="uid://kwuv8ib1h25o" path="res://src/ui/run_result_surfacing.gd" id="55_run_result"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_room_main"]
 size = Vector3(6.88, 3.2, 5.68)
@@ -319,6 +320,9 @@ script = ExtResource("42_surfacing")
 
 [node name="TimePrompt" type="Node" parent="UI" unique_id=562402480]
 script = ExtResource("41_timeprompt")
+
+[node name="RunResult" type="CanvasLayer" parent="."]
+script = ExtResource("55_run_result")
 
 [node name="ExitMenu" type="CanvasLayer" parent="." unique_id=889797961]
 script = ExtResource("49_exit_menu")

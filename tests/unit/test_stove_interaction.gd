@@ -206,6 +206,122 @@ func test_hold_e_can_extinguish_without_processing_or_spending_while_hungry_and_
 		"smothering silently added another log")
 
 
+func test_a_disabled_cook_tap_rejects_while_the_same_hold_extinguishes() -> void:
+	_drop_to(&"hunger", 0.20)
+	var heat_cost: float = _economy.definition_of(&"canned_stew").heat_seconds
+	_stove.add_fuel_seconds(heat_cost - 1.0)
+	_stove.light()
+	_economy.add(&"canned_stew", 1)
+	_stove.on_body_entered(_occupant)
+	_director.reconsider()
+
+	var offer: Dictionary = _director.focused_offer()
+	assert_eq(offer.get("verb"), "Cook Tin of stew")
+	assert_false(bool(offer.get("enabled", true)))
+	assert_eq(offer.get("reason"), &"not_enough_fuel")
+	assert_true(bool(offer.get("hold_enabled", false)))
+	assert_eq(offer.get("hold_reason"), &"")
+	var fuel_before: float = _stove.fuel_remaining()
+	assert_false(_tap_e(), "the disabled cooking action reported success")
+	assert_true(_stove.is_lit(), "a rejected short tap smothered the fire")
+	assert_eq(_economy.count_of(&"canned_stew"), 1,
+		"the rejected cooking action consumed the raw meal")
+	assert_almost_eq(_stove.fuel_remaining(), fuel_before, 0.001)
+	assert_eq(_events.size(), 1)
+	if not _events.is_empty():
+		assert_eq(_events[0].get("reason"), &"not_enough_fuel")
+		for value in (_events[0] as Dictionary).values():
+			assert_false(value is Object, "a stove shortage rejection carries a live Object")
+
+	assert_true(_hold_e(), "the enabled hold was blocked by the disabled cooking action")
+	assert_false(_stove.is_lit(), "holding E left the short-fueled stove burning")
+	assert_eq(_economy.count_of(&"canned_stew"), 1,
+		"extinguishing also processed the raw meal")
+	assert_almost_eq(_stove.fuel_remaining(), fuel_before, 0.001,
+		"extinguishing spent the remaining firebox heat")
+
+
+func test_raw_snow_without_heat_or_carried_fuel_surfaces_disabled_melt() -> void:
+	_drop_to(&"thirst", 0.20)
+	var heat_cost: float = _economy.definition_of(&"snow").heat_seconds
+	_stove.add_fuel_seconds(heat_cost - 1.0)
+	_stove.light()
+	_economy.add(&"snow", 1)
+	_stove.on_body_entered(_occupant)
+	_director.reconsider()
+
+	var offer: Dictionary = _director.focused_offer()
+	assert_eq(offer.get("verb"), "Melt Packed snow")
+	assert_false(bool(offer.get("enabled", true)))
+	assert_eq(offer.get("reason"), &"not_enough_fuel")
+	assert_true(bool(offer.get("hold_enabled", false)),
+		"the processing shortage hid the lit stove's extinguish hold")
+	assert_eq(_economy.count_of(&"snow"), 1)
+	for value in offer.values():
+		assert_false(value is Object, "the disabled melt offer carries a live Object")
+
+
+func test_missing_food_is_derived_from_authored_recovery_that_fits_the_body() -> void:
+	_drop_to(&"hunger", 0.90)
+	_stove.add_fuel_seconds(600.0)
+	_stove.light()
+	var missing := 1.0 - float(_survival.fraction_of(&"hunger"))
+	var fitting_food: ItemDefinition = ItemDefinition.new()
+	fitting_food.id = &"test_small_ration"
+	fitting_food.display_name = "Small ration"
+	fitting_food.category = ItemDefinition.Category.FOOD
+	fitting_food.nutrition = maxf(missing - 0.01, 0.001)
+	_economy.load_definitions([fitting_food])
+	_stove.on_body_entered(_occupant)
+	_director.reconsider()
+
+	var offer: Dictionary = _director.focused_offer()
+	assert_true(fitting_food.nutrition < missing,
+		"the authored fitting-food fixture does not fit the actual missing fraction")
+	assert_eq(offer.get("verb"), "Eat")
+	assert_false(bool(offer.get("enabled", true)))
+	assert_eq(offer.get("reason"), &"no_food")
+	assert_true(bool(offer.get("hold_enabled", false)))
+
+	var oversized_food: ItemDefinition = ItemDefinition.new()
+	oversized_food.id = &"test_large_ration"
+	oversized_food.display_name = "Large ration"
+	oversized_food.category = ItemDefinition.Category.FOOD
+	oversized_food.nutrition = missing + 0.01
+	_economy.load_definitions([oversized_food])
+	var no_fit: Dictionary = _stove.interaction_action()
+	assert_true(oversized_food.nutrition > missing,
+		"the authored oversized-food fixture unexpectedly fits")
+	assert_eq(no_fit.get("action"), &"extinguish",
+		"a fixed hunger threshold ignored that no authored recovery fits")
+	assert_true(bool(no_fit.get("enabled", false)))
+
+
+func test_missing_water_surfaces_disabled_drink_from_authored_recovery() -> void:
+	_drop_to(&"thirst", 0.90)
+	_stove.add_fuel_seconds(600.0)
+	_stove.light()
+	var missing := 1.0 - float(_survival.fraction_of(&"thirst"))
+	var fitting_water: ItemDefinition = ItemDefinition.new()
+	fitting_water.id = &"test_small_drink"
+	fitting_water.display_name = "Small drink"
+	fitting_water.category = ItemDefinition.Category.WATER
+	fitting_water.hydration = maxf(missing - 0.01, 0.001)
+	_economy.load_definitions([fitting_water])
+	_stove.on_body_entered(_occupant)
+	_director.reconsider()
+
+	var offer: Dictionary = _director.focused_offer()
+	assert_true(fitting_water.hydration < missing,
+		"the authored fitting-water fixture does not fit the actual missing fraction")
+	assert_eq(offer.get("verb"), "Drink")
+	assert_false(bool(offer.get("enabled", true)))
+	assert_eq(offer.get("reason"), &"no_water")
+	assert_true(bool(offer.get("hold_enabled", false)))
+	for value in offer.values():
+		assert_false(value is Object, "the no-water offer carries a live Object")
+
+
 func test_short_e_can_add_repeated_fuel_items_until_nominal_capacity() -> void:
 	_stove.add_fuel_seconds(120.0)
 	_stove.light()

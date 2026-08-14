@@ -9,6 +9,7 @@ const EventBusScript := preload("res://src/core/event_bus.gd")
 const EVENT_RUN_ENDED := &"game.run_ended"
 const EVENT_RUN_RESET := &"game.run_reset"
 const EVENT_RUN_STARTED := &"game.run_started"
+const EVENT_RESTART_REQUESTED := &"game.restart_requested"
 const OUTCOME_RESCUED := &"rescued"
 const OUTCOME_ABANDONED := &"abandoned"
 const OUTCOME_DEAD := &"dead"
@@ -35,6 +36,7 @@ class FakeClock extends RefCounted:
 	var running := false
 	var finished := false
 	var schedules := 0
+	var day := 1
 	var calls: Array[StringName] = []
 
 	func schedule_count() -> int:
@@ -64,7 +66,7 @@ class FakeClock extends RefCounted:
 		return finished
 
 	func current_day() -> int:
-		return 1
+		return day
 
 
 var _game = null
@@ -268,6 +270,7 @@ func test_survival_death_stops_the_calendar_and_publishes_one_terminal_result() 
 		return
 	var survival := FakeSurvival.new()
 	var clock := FakeClock.new()
+	clock.day = 4
 	game.set_event_bus(_bus)
 	game.set_survival_system(survival)
 	game.set_world_clock(clock)
@@ -281,6 +284,7 @@ func test_survival_death_stops_the_calendar_and_publishes_one_terminal_result() 
 	if not _events.is_empty():
 		assert_eq(_events[0].get("outcome"), OUTCOME_DEAD)
 		assert_eq(_events[0].get("cause"), &"core_temperature")
+		assert_eq(_events[0].get("day"), 4, "the terminal result lost the day it reports")
 
 
 func test_all_five_lit_at_final_state_is_rescue() -> void:
@@ -329,6 +333,28 @@ func test_restart_resets_the_world_before_starting_the_next_attempt() -> void:
 		"the next body and clock started before old world state was cleared")
 	assert_eq(game.current_run_seed(), 202)
 	assert_true(game.is_running())
+	assert_eq(survival.start_count, 2)
+	assert_eq(clock.calls.count(&"start"), 2)
+
+
+func test_a_value_only_restart_request_uses_the_same_reset_transaction() -> void:
+	_bus = EventBusScript.new()
+	_bus.subscribe(EVENT_RUN_RESET, _record_reset)
+	_bus.subscribe(EVENT_RUN_STARTED, _record_started)
+	var game = _new_game()
+	if game == null:
+		return
+	var survival := FakeSurvival.new()
+	var clock := FakeClock.new()
+	game.set_event_bus(_bus)
+	game.set_survival_system(survival)
+	game.set_world_clock(clock)
+	assert_true(game.begin_run(101))
+	_bus.emit_event(&"survival.died", {"stat": &"hunger"})
+	_bus.emit_event(EVENT_RESTART_REQUESTED, {"seed": 202})
+	assert_eq(_event_order, [EVENT_RUN_STARTED, EVENT_RUN_RESET, EVENT_RUN_STARTED])
+	assert_true(game.is_running())
+	assert_eq(game.current_run_seed(), 202)
 	assert_eq(survival.start_count, 2)
 	assert_eq(clock.calls.count(&"start"), 2)
 
