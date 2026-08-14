@@ -71,6 +71,10 @@ class BusStandIn extends RefCounted:
 	func emit_event(event: StringName, payload = null) -> void:
 		seen.append({"event": event, "payload": payload})
 
+	func dispatch(event: StringName, payload = null) -> void:
+		if subscriptions.has(event):
+			(subscriptions[event] as Callable).call(payload)
+
 	func count(event: StringName) -> int:
 		var total := 0
 		for entry in seen:
@@ -214,6 +218,13 @@ class ClockStandIn extends RefCounted:
 
 	func current_schedule():
 		return schedule_for_day(day)
+
+
+class RunSeedOwner extends Node:
+	var seed := 0
+
+	func current_run_seed() -> int:
+		return seed
 
 
 var _system: Node = null
@@ -903,6 +914,64 @@ func test_the_weather_asks_the_clock_what_day_it_already_is() -> void:
 	_system.attach()
 	assert_true(_system.queued_ids().size() > 0,
 		"the weather system woke up on day 5 and planned nothing for it")
+
+
+func test_the_registered_run_owner_seeds_the_first_weather_plan() -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	assert_not_null(tree)
+	if tree == null:
+		return
+	var registry = tree.root.get_node_or_null("ServiceRegistry")
+	assert_not_null(registry)
+	if registry == null:
+		return
+	var previous: Object = registry.get_service(&"run_seed")
+	var owner := RunSeedOwner.new()
+	owner.seed = 1729
+	registry.register(&"run_seed", owner)
+	_system.random_seed = 0
+	_system.load_events([_event(&"snow_fog")])
+	tree.root.add_child(_system)
+	_system.attach()
+	var received := int(_system.current_run_seed())
+	tree.root.remove_child(_system)
+	owner.free()
+	if previous != null:
+		registry.register(&"run_seed", previous)
+	else:
+		registry.unregister(&"run_seed")
+	assert_eq(received, 1729,
+		"the first weather draw was not bound to GameState's replay seed")
+
+
+func test_run_reset_clears_weather_and_replays_its_random_sequence() -> void:
+	var schedule := DaySchedule.new()
+	schedule.day_number = 2
+	schedule.allowed_weather_events = [&"snow_fog", &"wind_shift", &"cold_snap"] as Array[StringName]
+	_clock.schedules[2] = schedule
+	_system.random_seed = 0
+	_system.events_per_phase = 2
+	_system.load_events([
+		_event(&"snow_fog"), _event(&"wind_shift"), _event(&"cold_snap"),
+	])
+	_system.attach()
+	_bus.dispatch(&"game.run_reset", {"seed": 1729})
+	_bus.dispatch(&"clock.day_started", 2)
+	var first_ids: Array[StringName] = _system.queued_ids()
+	var first_gap := float(_system.seconds_to_next_event())
+	assert_true(_system.begin(first_ids[0]))
+	_system.advance(25.0)
+	assert_false(_system.phase() == _system.PHASE_CLEAR)
+	_bus.dispatch(&"game.run_reset", {"seed": 1729})
+	assert_eq(_system.phase(), _system.PHASE_CLEAR)
+	assert_eq(_system.event_id(), &"")
+	assert_eq(_system.queued_ids().size(), 0)
+	assert_eq(_system.current_run_seed(), 1729)
+	_bus.dispatch(&"clock.day_started", 2)
+	assert_eq(_system.queued_ids(), first_ids,
+		"the same run seed drew a different weather order after restart")
+	assert_almost_eq(_system.seconds_to_next_event(), first_gap, 0.0001,
+		"the same run seed drew a different first warning time after restart")
 
 
 func test_a_second_weather_cannot_start_on_top_of_one_already_running() -> void:

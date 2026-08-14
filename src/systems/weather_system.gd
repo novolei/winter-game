@@ -116,6 +116,8 @@ const EVENT_SNOW_INPUTS_CHANGED := &"snow.inputs_changed"
 const EVENT_DAY_STARTED := &"clock.day_started"
 const EVENT_NIGHT_STARTED := &"clock.night_started"
 const EVENT_RUN_FINISHED := &"clock.run_finished"
+const EVENT_RUN_RESET := &"game.run_reset"
+const RUN_SEED_SERVICE := &"run_seed"
 
 ## What `CrowFlock.scatter()` is told took the birds. Its own constants name the
 ## player, nightfall and a gust; the weather is a fourth cause and is passed as a
@@ -203,6 +205,7 @@ var _sky_default := 0.0
 var _default_map: WindMap = null
 var _subscribed := false
 var _rng := RandomNumberGenerator.new()
+var _run_seed := 0
 
 
 # --- lifecycle ----------------------------------------------------------------
@@ -348,13 +351,17 @@ func attach() -> void:
 			_wildlife = _find_wildlife(get_tree().get_root() if get_tree() != null else null)
 	if _default_map == null:
 		_default_map = load(default_wind_map_path) as WindMap
-	_rng.seed = random_seed if random_seed != 0 else int(Time.get_ticks_usec())
+	var seed := random_seed
+	if seed == 0:
+		seed = _registered_run_seed()
+	set_run_seed(seed)
 	ask_the_clock()
 	if _bus == null or _subscribed:
 		return
 	_bus.subscribe(EVENT_DAY_STARTED, _on_day_started)
 	_bus.subscribe(EVENT_NIGHT_STARTED, _on_night_started)
 	_bus.subscribe(EVENT_RUN_FINISHED, _on_run_finished)
+	_bus.subscribe(EVENT_RUN_RESET, _on_run_reset)
 	_subscribed = true
 
 
@@ -364,7 +371,32 @@ func detach() -> void:
 	_bus.unsubscribe(EVENT_DAY_STARTED, _on_day_started)
 	_bus.unsubscribe(EVENT_NIGHT_STARTED, _on_night_started)
 	_bus.unsubscribe(EVENT_RUN_FINISHED, _on_run_finished)
+	_bus.unsubscribe(EVENT_RUN_RESET, _on_run_reset)
 	_subscribed = false
+
+
+## Explicit non-zero random_seed remains the capture/test override. Ordinary
+## play receives GameState's generic replay seed through ServiceRegistry on the
+## first attempt and through game.run_reset on every later one.
+func set_run_seed(value: int) -> void:
+	_run_seed = value
+	if _run_seed == 0:
+		_run_seed = int(Time.get_ticks_usec() % 2147483646) + 1
+	_rng.seed = _run_seed
+
+
+func current_run_seed() -> int:
+	return _run_seed
+
+
+func _registered_run_seed() -> int:
+	var registry := _registry()
+	if registry == null:
+		return 0
+	var owner: Object = registry.get_service(RUN_SEED_SERVICE)
+	if owner == null or not owner.has_method("current_run_seed"):
+		return 0
+	return int(owner.current_run_seed())
 
 
 ## The half of the day/night wiring a subscription cannot do. See `attach()`.
@@ -566,6 +598,18 @@ func _on_night_started(payload) -> void:
 func _on_run_finished(_payload) -> void:
 	_queue.clear()
 	clear_now()
+
+
+func _on_run_reset(payload) -> void:
+	_queue.clear()
+	_next_in = 0.0
+	clear_now()
+	var seed := random_seed
+	if seed == 0 and payload is Dictionary:
+		seed = int(payload.get("seed", 0))
+	if seed == 0:
+		seed = _registered_run_seed()
+	set_run_seed(seed)
 
 
 ## Draws the phase's weather from the day's budget. Returns how many are queued.
