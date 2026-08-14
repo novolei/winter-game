@@ -54,7 +54,7 @@ static var NODES: Array[Dictionary] = [
 	_node(&"north_broken_gateway", &"northern_supply_run", 2, Vector3(-9, 0, 14), 74,
 		"res://assets/models/props/synty_broken_gateway.glb"),
 	_node(&"north_abandoned_crate", &"northern_supply_run", 3, Vector3(10, 0, 18), -23,
-		"res://assets/models/props/synty_field_crate.glb"),
+		"res://assets/models/props/synty_field_crate.glb", &"canned_stew", 5),
 	_node(&"church_coal_cache", &"northern_supply_run", 4, Vector3(34, 0, 20), 11,
 		"res://assets/models/props/supply_cache.glb", &"coal", 2),
 
@@ -65,7 +65,7 @@ static var NODES: Array[Dictionary] = [
 	_node(&"east_road_sign", &"eastern_pilgrim_track", 1, Vector3(44, 0, 2), 91,
 		"res://assets/models/props/field_marker.glb"),
 	_node(&"east_supply_sacks", &"eastern_pilgrim_track", 2, Vector3(45, 0, -9), 14,
-		"res://assets/models/props/synty_supply_sacks.glb"),
+		"res://assets/models/props/synty_supply_sacks.glb", &"canned_stew", 5),
 	_node(&"east_road_blockade", &"eastern_pilgrim_track", 3, Vector3(44, 0, -19), 89,
 		"res://assets/models/props/synty_road_blockade.glb"),
 	_node(&"tower_petrol_cache", &"eastern_pilgrim_track", 4, Vector3(43, 0, -30), -17,
@@ -76,7 +76,7 @@ static var NODES: Array[Dictionary] = [
 	_node(&"south_evacuation_cart", &"southern_evacuation_road", 0, Vector3(30, 0, -41), 78,
 		"res://assets/models/props/evacuation_cart.glb"),
 	_node(&"south_departure_pack", &"southern_evacuation_road", 1, Vector3(18, 0, -42), -31,
-		"res://assets/models/props/departure_pack.glb"),
+		"res://assets/models/props/departure_pack.glb", &"canned_stew", 4),
 	_node(&"south_coal_cache", &"southern_evacuation_road", 2, Vector3(4, 0, -40), 7,
 		"res://assets/models/props/synty_evacuation_cache.glb", &"coal", 2),
 	_node(&"south_broken_gateway", &"southern_evacuation_road", 3, Vector3(-14, 0, -39), 83,
@@ -85,15 +85,15 @@ static var NODES: Array[Dictionary] = [
 		"res://assets/models/props/field_marker.glb"),
 
 	# West: the route becomes a working timber story near camp. Two smaller wood
-	# finds bookend tools and an empty drum, giving the return journey a cadence.
+	# finds bookend tools and a snow-filled drum, giving the return journey a cadence.
 	_node(&"logging_wood_station", &"western_timber_track", 0, Vector3(-39, 0, -29), 12,
 		"res://assets/models/props/synty_woodwork_station.glb"),
 	_node(&"logging_firewood", &"western_timber_track", 1, Vector3(-38, 0, -25), -14,
 		"res://assets/models/props/woodpile.glb", &"firewood", 4),
 	_node(&"west_chopping_block", &"western_timber_track", 2, Vector3(-37, 0, -17), 29,
 		"res://assets/models/props/chopping_block.glb"),
-	_node(&"west_empty_barrel", &"western_timber_track", 3, Vector3(-36, 0, -8), -9,
-		"res://assets/models/props/synty_wooden_barrel.glb"),
+	_node(&"west_snow_barrel", &"western_timber_track", 3, Vector3(-36, 0, -8), -9,
+		"res://assets/models/props/synty_wooden_barrel.glb", &"snow", 14),
 	_node(&"gas_firewood", &"western_timber_track", 4, Vector3(-37, 0, 1), 21,
 		"res://assets/models/props/woodpile.glb", &"firewood", 2),
 ]

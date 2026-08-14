@@ -11,3 +11,5 @@ sequence = 2
 world_position = Vector3(45, 0, -9)
 yaw_degrees = 14.0
 model_scene = ExtResource("1_v1c3p")
+item_id = &"canned_stew"
+item_count = 5

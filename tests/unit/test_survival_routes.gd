@@ -124,7 +124,7 @@ func test_each_leg_has_five_ordered_story_beats() -> void:
 		assert_eq(order, [0, 1, 2, 3, 4], "%s has no five-beat cadence" % route_id)
 
 
-func test_pickups_are_finite_and_cover_all_three_fuel_forms() -> void:
+func test_pickups_are_finite_and_cover_fuel_and_the_seven_day_provisions() -> void:
 	var pickups := 0
 	var forms: Dictionary = {}
 	for node in _nodes():
@@ -132,10 +132,12 @@ func test_pickups_are_finite_and_cover_all_three_fuel_forms() -> void:
 			continue
 		pickups += 1
 		forms[node.item_id] = int(forms.get(node.item_id, 0)) + node.item_count
-	assert_eq(pickups, 6)
+	assert_eq(pickups, 10)
 	assert_eq(forms.get(&"firewood", 0), 6)
 	assert_eq(forms.get(&"petrol", 0), 4)
 	assert_eq(forms.get(&"coal", 0), 4)
+	assert_eq(forms.get(&"canned_stew", 0), 14)
+	assert_eq(forms.get(&"snow", 0), 14)
 
 
 func test_every_pickup_names_an_item_the_shared_economy_ships() -> void:
@@ -248,7 +250,7 @@ func test_the_generic_layer_discovers_content_without_an_id_list() -> void:
 	var layer: SurvivalRouteLayer = LayerScript.new()
 	assert_eq(layer.load_routes_from_directory(), 4)
 	assert_eq(layer.load_nodes_from_directory(), 20)
-	assert_eq(layer.pickup_count(), 6)
+	assert_eq(layer.pickup_count(), 10)
 	assert_true(layer.total_route_length_m() >= 240.0)
 	layer.free()
 

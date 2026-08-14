@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="SurvivalRouteNodeDefinition" format=3]
+
+[ext_resource type="PackedScene" path="res://assets/models/props/synty_wooden_barrel.glb" id="1_262qw"]
+[ext_resource type="Script" path="res://src/definitions/survival_route_node_definition.gd" id="2_1ys3o"]
+
+[resource]
+script = ExtResource("2_1ys3o")
+id = &"west_snow_barrel"
+route_id = &"western_timber_track"
+sequence = 3
+world_position = Vector3(-36, 0, -8)
+yaw_degrees = -9.0
+model_scene = ExtResource("1_262qw")
+item_id = &"snow"
+item_count = 14
